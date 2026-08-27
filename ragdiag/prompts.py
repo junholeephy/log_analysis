@@ -1,0 +1,214 @@
+"""판정 프롬프트.
+
+단계마다 일부러 정보를 빼고 준다. 그게 이 설계의 핵심이다.
+
+- Stage 1은 rag_data를 보지 않는다. 검색된 문서를 같이 주면 모델이 "사용자가 원한 것"을
+  문서에 있는 내용 쪽으로 끌어당긴다(anchoring). 그러면 요구와 문서가 저절로 일치해
+  보여서 sufficiency가 항상 후하게 나온다.
+- Stage 2는 챗봇 답변을 보지 않는다. 답변을 보여주면 판정자가 답변을 문서의 대리물로
+  착각한다 - "답변이 이렇게 말했으니 문서에 있었겠지".
+"""
+
+from __future__ import annotations
+
+from pydantic import BaseModel
+
+from ragdiag.schema import (  # noqa: F401  (NeedAnalysis는 run.py에서 재사용)
+    Case,
+    GroundingCheck,
+    NeedAnalysis,
+    SufficiencyJudgment,
+)
+
+
+# ---------------------------------------------------------------------------
+# 출력 계약
+#
+# API 경로(messages.parse)는 서버가 스키마를 강제하지만 CLI 경로(claude -p)에는
+# 그런 장치가 없다. 그래서 계약을 프롬프트에 실어야 한다. 손으로 두 번 쓰면
+# schema.py와 어긋나므로 Pydantic 모델에서 생성한다.
+# ---------------------------------------------------------------------------
+
+_TYPE_NAMES = {"string": "문자열", "integer": "정수", "boolean": "true 또는 false",
+               "number": "숫자"}
+
+
+def _type_str(prop: dict, defs: dict) -> str:
+    if "enum" in prop:
+        return " | ".join(f'"{v}"' for v in prop["enum"])
+    if prop.get("type") == "array":
+        item = prop.get("items", {})
+        if "$ref" in item:
+            sub = defs[item["$ref"].rsplit("/", 1)[-1]]
+            fields = ", ".join(
+                f"{n}: {_type_str(p, defs)}" for n, p in sub["properties"].items()
+            )
+            return f"배열. 각 원소는 {{{fields}}}"
+        return f"배열 of {_TYPE_NAMES.get(item.get('type'), item.get('type'))}"
+    return _TYPE_NAMES.get(prop.get("type", ""), prop.get("type", "값"))
+
+
+def output_contract(model: type[BaseModel]) -> str:
+    """Pydantic 모델에서 출력 계약 문구를 생성한다.
+
+    필드 순서를 그대로 유지하고 "이 순서대로 채우라"고 명시한다. 순서에 설계가
+    담겨 있기 때문이다 - reasoning이 먼저 나와야 결론이 근거의 결과가 되고,
+    evidence가 verdict보다 앞서야 인용이 판정의 사후 정당화가 되지 않는다.
+    """
+    schema = model.model_json_schema()
+    defs = schema.get("$defs", {})
+    lines = []
+    for name, prop in schema["properties"].items():
+        desc = prop.get("description", "")
+        lines.append(f"  {name}: {_type_str(prop, defs)}" + (f"  // {desc}" if desc else ""))
+    return (
+        "## 출력 형식\n\n"
+        "아래 필드를 **선언된 순서 그대로** 가진 JSON 객체 하나만 출력해라.\n"
+        "설명, 인사말, 코드펜스 없이 JSON만 출력해라.\n\n"
+        "{\n" + "\n".join(lines) + "\n}"
+    )
+
+
+NEED_SYSTEM = """\
+너는 사내 지식 챗봇의 대화 로그를 분석하는 감사자다.
+
+주어지는 것: 사용자의 이전 질문들, 마지막 질문에 대한 챗봇 답변, 그리고 그 답변에
+대한 사용자의 불만.
+
+할 일: 사용자가 무엇을 원했는데 받지 못했는지를 정확히 짚어내는 것.
+
+중요: 검색된 문서는 주어지지 않는다. 이건 의도된 것이다. 너는 오직 사용자 쪽 신호만
+보고 "무엇을 원했는가"를 판단해야 한다. 문서에 무엇이 있었을지 추측하지 마라.
+
+complaint_type 기준:
+- content_gap: 필요한 정보가 답변에 없거나 부족했다. 더 구체적/상세한 것을 원한 경우 포함.
+- wrong_content: 답변에 담긴 정보가 사실과 다르거나 잘못됐다.
+- format_or_style: 내용 자체는 맞는데 길이, 말투, 형식, 구성이 문제다.
+- other: 위 어디에도 맞지 않거나, 불만이 모호해서 판별할 수 없다.
+
+resolved_question은 "그거", "아까 말한 방법" 같은 대명사와 생략을 앞 대화로 모두 풀어서,
+그 문장만 읽어도 무엇을 묻는지 알 수 있게 다시 써라.
+
+context_dependent는 구조로 판별해라. 마지막 질문 문장 하나만 놓고 본다.
+- true: 지시대명사가 있다("그거", "그건", "저것", "아까 그 방법"). 또는 질문의
+  **대상 명사가 통째로 빠져** 무엇에 관한 질문인지 그 문장만으로는 알 수 없다.
+  예: "그거 연장도 가능한가요?" -> 무엇을 연장하는지 문장에 없다 -> true
+- false: 대상 명사가 문장에 있고, 배경이나 수식어만 생략됐다.
+  예: "미주랑 유럽 각각 1일 숙박비 상한 알려주세요" -> "해외 출장"이라는 배경은 빠졌지만
+  대상인 "숙박비 상한"이 문장에 있다 -> false
+
+**확신이 없으면 false다.** 대화의 후속 질문은 거의 언제나 무언가를 생략한다. 생략 자체를
+기준으로 삼으면 대부분이 true가 되어 이 플래그가 아무것도 걸러내지 못한다. 이건 소수의
+명확한 케이스를 짚기 위한 것이다.
+
+unmet_need는 추상적으로 쓰지 마라. "더 자세한 정보"가 아니라 "미주 지역 출장비의
+1일 상한 금액"처럼 검색으로 확인 가능한 수준까지 구체적으로 써라.
+
+다만 **사용자가 요구하지 않은 것을 덧붙이지 마라.** 구체적으로 쓰되, 사용자가 실제로
+표현한 범위 안에서만 구체적이어야 한다.
+"정확한 금액이요"라는 불만에 "직급·부서별 금액표"까지 요구로 적으면, 문서에 금액이
+멀쩡히 있어도 부족하다는 판정이 나온다. 요구를 넓히는 쪽이 좁히는 쪽보다 해롭다 -
+멀쩡한 코퍼스에 아무도 요청하지 않은 문서를 채우게 만들기 때문이다.
+불만이 모호하면 모호한 범위 그대로 적어라. 없는 구체성을 지어내지 마라.
+
+"""
+NEED_SYSTEM += output_contract(NeedAnalysis)
+
+SUFFICIENCY_SYSTEM = """\
+너는 RAG 검색 품질 감사자다.
+
+주어지는 것: 사용자의 질문, 사용자가 원했던 정보, 그리고 그때 검색되어 챗봇에게
+전달된 문서 청크들.
+
+할 일: 이 문서들만으로 사용자의 요구를 충족할 수 있었는지 판정하는 것.
+
+반드시 지킬 규칙:
+
+1. 너의 배경지식을 쓰지 마라. 오직 아래 주어진 청크에만 근거해라. 네가 답을 알고
+   있더라도, 청크에 없으면 없는 것이다.
+
+2. 충족을 주장하려면 근거 인용을 반드시 제시해라. 인용은 청크에서 글자 그대로
+   복사해야 한다. 요약하지 말고, 의역하지 말고, 다듬지 마라. 복사해라.
+   제시한 인용은 원문과 자동으로 대조된다.
+
+3. 인용을 뽑을 수 없으면 verdict는 insufficient다. 예외 없다.
+
+verdict를 정하기 전에 반드시 이 시험을 적용해라:
+
+  **뽑은 인용 하나하나에 대해 "이 문장이 사용자 요구의 어느 부분에 답하는가?"를 물어라.
+  어느 부분에도 답하지 못하면 그건 근거가 아니다. 주제가 같다는 것, 인접한 항목이라는
+  것만으로는 근거가 되지 않는다.**
+
+verdict 기준:
+- sufficient: 요구된 정보가 청크 안에 온전히 있다.
+- partial: 요구가 여러 부분으로 나뉘고, 그중 최소 한 부분에 **실제로 답하는** 인용이
+  있으며, 나머지 부분은 청크에 없다.
+- insufficient: 요구의 **어느 부분에도** 답하는 인용이 없다. 주제가 같은 문서가 있어도,
+  인접한 항목만 있어도(예: 비자 수수료를 물었는데 여권 발급비 규정만 있는 경우)
+  물어본 것 자체가 없으면 insufficient다. 이때 evidence는 빈 배열이어야 한다.
+
+"관련 문서가 있으니 partial"은 틀린 추론이다. 관련성이 아니라 답변 가능성이 기준이다.
+
+챗봇이 실제로 뭐라고 답했는지는 주어지지 않는다. 이것도 의도된 것이다. 문서만 보고
+판정해라.
+
+missing에는 청크에 없어서 답할 수 없었던 것을 구체적으로 써라. sufficient면 빈 문자열.
+
+"""
+SUFFICIENCY_SYSTEM += output_contract(SufficiencyJudgment)
+
+GROUNDING_SYSTEM = """\
+너는 RAG 답변이 검색 문서를 실제로 활용했는지 확인하는 감사자다.
+
+주어지는 것: 챗봇의 답변과, 그 답변을 만들 때 주어졌던 문서 청크들.
+
+판정 기준:
+- used: 답변의 핵심 내용이 청크에서 나왔다.
+- ignored: 청크에 관련 내용이 있는데 답변이 그걸 쓰지 않았다. 일반론으로 때우거나,
+  모른다고 하거나, 엉뚱한 이야기를 한 경우.
+- contradicted: 답변이 청크의 내용과 어긋나는 주장을 했다.
+
+답변이 좋은지 나쁜지를 평가하는 게 아니다. 오직 문서를 썼는지만 본다.
+
+"""
+GROUNDING_SYSTEM += output_contract(GroundingCheck)
+
+
+def _numbered_chunks(chunks: list[str]) -> str:
+    if not chunks:
+        return "(검색된 문서가 없음)"
+    return "\n\n".join(f"[청크 {i}]\n{c}" for i, c in enumerate(chunks))
+
+
+def need_user_message(case: Case) -> str:
+    history = "\n".join(f"{i + 1}. {q}" for i, q in enumerate(case.pre_queries)) or "(없음)"
+    return f"""\
+## 이전 질문들 (시간순, 마지막이 이번 답변을 부른 질문)
+{history}
+
+## 마지막 질문에 대한 챗봇 답변
+{case.llm_ans_on_last_q}
+
+## 그 답변에 대한 사용자의 불만
+{case.current_query}"""
+
+
+def sufficiency_user_message(case: Case, need: NeedAnalysis) -> str:
+    return f"""\
+## 사용자의 질문
+{need.resolved_question}
+
+## 사용자가 원했던 정보
+{need.unmet_need}
+
+## 그때 검색되어 전달된 문서 ({len(case.rag_chunks)}개 청크)
+{_numbered_chunks(case.rag_chunks)}"""
+
+
+def grounding_user_message(case: Case) -> str:
+    return f"""\
+## 챗봇 답변
+{case.llm_ans_on_last_q}
+
+## 답변 생성에 주어졌던 문서 ({len(case.rag_chunks)}개 청크)
+{_numbered_chunks(case.rag_chunks)}"""

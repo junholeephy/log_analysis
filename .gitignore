@@ -1,0 +1,22 @@
+# 파이썬
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 실행 산출물 (git은 줄 끝 주석을 지원하지 않으므로 주석은 따로 쓴다)
+# LLM 판정 캐시
+.cache/
+# 케이스별 진단 결과
+results.jsonl
+# fixtures/synthetic.py 에서 생성됨
+fixtures/synthetic.json
+
+# 데이터 - 올리지 않는다
+data/
+# 입력 형식 예시(사내 스키마). 올리려면 이 줄을 지우세요
+data_format_ex.json
+
+# 도구
+.omc/
+.DS_Store
