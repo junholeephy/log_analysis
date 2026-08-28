@@ -270,10 +270,11 @@ def _letter_of(result: str, table) -> str:
     return label.letter if label else ""
 
 
-def to_cases(selected: list[Selected]) -> list[Case]:
-    from ragdiag.conv import to_case
+def to_cases(selected: list[Selected], history_turns: int = 0) -> list[Case]:
+    from ragdiag.conv import MAX_HISTORY_TURNS, to_case
 
-    cases = [to_case(s.conversation, s.turn.turn) for s in selected]
+    turns = history_turns or MAX_HISTORY_TURNS
+    cases = [to_case(s.conversation, s.turn.turn, turns) for s in selected]
     return [c for c in cases if c is not None]
 
 

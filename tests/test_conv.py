@@ -245,3 +245,50 @@ def test_missing_optional_fields_do_not_crash():
     assert conv.turns[0].user_question == ""
     assert conv.turns[0].retrieved == []
     assert to_case(conv, 2) is not None
+
+
+# ---------------------------------------------------------------------------
+# 히스토리 상한 — 대명사 해소에 필요한 것은 직전 2~3턴이다
+# ---------------------------------------------------------------------------
+
+def _long_conv(n=8):
+    turns = [{"turn": i, "user_question": f"질문{i}", "llm_response": f"답변{i}",
+              "retrieved_data": json.dumps([f"청크{i}"]),
+              "llm_eval_result": None if i == 1 else "조건 변경"}
+             for i in range(1, n + 1)]
+    return parse_conversations({"users": [{"user_id": "u", "conversations": [
+        {"conversation_id": "c", "turns": turns}]}]})[0]
+
+
+def test_history_is_capped_to_the_most_recent_turns():
+    case = to_case(_long_conv(), followup_turn=8, history_turns=3)
+    assert case.pre_queries == ["질문5", "질문6", "질문7"]
+
+
+def test_the_question_that_produced_the_answer_always_survives():
+    """잘라내더라도 비판받은 답변을 부른 질문은 남아야 한다.
+
+    이게 없으면 Step 1 이 무엇에 대한 답변인지 모른 채 불만을 읽는다.
+    """
+    for cap in (1, 2, 3, 5):
+        case = to_case(_long_conv(), followup_turn=8, history_turns=cap)
+        assert len(case.pre_queries) == cap
+        assert case.last_query == "질문7"
+        assert case.llm_ans_on_last_q == "답변7"
+
+
+def test_zero_means_no_limit():
+    case = to_case(_long_conv(), followup_turn=8, history_turns=0)
+    assert len(case.pre_queries) == 7
+
+
+def test_short_conversation_is_unaffected():
+    case = to_case(_long_conv(n=3), followup_turn=3, history_turns=3)
+    assert case.pre_queries == ["질문1", "질문2"]
+
+
+def test_default_cap_is_three():
+    from ragdiag.conv import MAX_HISTORY_TURNS
+
+    assert MAX_HISTORY_TURNS == 3
+    assert len(to_case(_long_conv(), followup_turn=8).pre_queries) == 3

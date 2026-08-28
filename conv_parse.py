@@ -128,7 +128,7 @@ def run_golden(args) -> int:
     cases = []
     for conv in conversations:
         followup = max(t.turn for t in conv.turns)
-        case = to_case(conv, followup)
+        case = to_case(conv, followup, args.history_turns or 10**6)
         if case and case.case_id in expected:
             cases.append((case, expected[case.case_id]))
     if args.limit:
@@ -198,6 +198,9 @@ def main() -> int:
 
     p.add_argument("--limit", type=int, help="앞에서 N건만 (비용 확인용)")
     p.add_argument("--workers", type=int, default=4, help="동시 실행 턴 수")
+    p.add_argument("--history-turns", type=int, default=3,
+                   help="Step 1 에 넘길 이전 질문 개수 상한 (기본 3). "
+                        "0 이면 제한 없음")
     p.add_argument("--no-cache", action="store_true")
     p.add_argument("--dry-run", action="store_true",
                    help="필터까지만 적용하고 LLM 호출 없이 대상 건수를 보여준다")
@@ -224,7 +227,7 @@ def main() -> int:
         print("\n필터를 통과한 턴이 없습니다. 조건을 완화하세요.", file=sys.stderr)
         return 1
 
-    cases = to_cases(selected)
+    cases = to_cases(selected, history_turns=args.history_turns)
     # to_cases 는 케이스를 만들 수 없는 턴을 걸러내므로 길이가 줄 수 있다.
     # 짝을 유지해야 결과를 원래 대화에 되돌릴 수 있다.
     pairs_in = [(s, c) for s, c in zip(selected, cases) if c is not None]

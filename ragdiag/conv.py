@@ -37,6 +37,12 @@ from typing import Any, Optional
 from ragdiag.load import mask
 from ragdiag.schema import Case
 
+# Step 1 에 넘길 이전 질문의 최대 개수.
+# 대명사 해소에 필요한 것은 보통 직전 2~3턴이다. 그보다 오래된 질문은 노이즈에
+# 가깝고, resolved_question 을 엉뚱한 주제로 끌고 갈 수 있다. 긴 대화(필터에
+# "51턴 이상" 구간이 있다)에서는 입력 토큰도 턴 수에 비례해 늘어난다.
+MAX_HISTORY_TURNS = 3
+
 
 # ---------------------------------------------------------------------------
 # 정규화 헬퍼 — 실데이터의 흔한 흠집을 흡수한다
@@ -251,11 +257,18 @@ def load_conversations(path: str | Path) -> list[Conversation]:
 # 진단 케이스로 변환
 # ---------------------------------------------------------------------------
 
-def to_case(conv: Conversation, followup_turn: int) -> Optional[Case]:
+def to_case(
+    conv: Conversation,
+    followup_turn: int,
+    history_turns: int = MAX_HISTORY_TURNS,
+) -> Optional[Case]:
     """후속 턴 번호를 받아 진단 케이스를 만든다.
 
     followup_turn 이 불만이 표현된 턴이고, 그 직전 턴이 비판받은 답변이다.
     직전 턴이 없으면(첫 턴을 지목한 경우) 판정할 대상이 없으므로 None.
+
+    history_turns 는 Step 1 에 넘길 이전 질문의 개수 상한이다. 잘라내더라도
+    **비판받은 답변을 부른 질문은 항상 포함된다** — 그게 마지막 항목이다.
     """
     followup = conv.turn_at(followup_turn)
     if followup is None:
@@ -264,6 +277,7 @@ def to_case(conv: Conversation, followup_turn: int) -> Optional[Case]:
     if not prior:
         return None
     answered = prior[-1]
+    questions = [t.user_question for t in prior if t.user_question]
 
     return Case(
         case_id=f"{conv.user.user_id}:{conv.conversation_id}:{followup_turn}",
@@ -274,9 +288,8 @@ def to_case(conv: Conversation, followup_turn: int) -> Optional[Case]:
         position_name=conv.user.position_name,
         conversation_id=conv.conversation_id,
         turn=followup_turn,
-        # 히스토리는 비판받은 답변까지의 질문 전부. 이전 포맷은 prev_question 하나뿐이라
-        # 대명사 해소가 얕았는데, 이제 전체를 넘길 수 있다.
-        pre_queries=[t.user_question for t in prior if t.user_question],
+        # 최근 history_turns 개만 넘긴다. 마지막 항목이 비판받은 답변을 부른 질문이다.
+        pre_queries=questions[-history_turns:] if history_turns > 0 else questions,
         llm_ans_on_last_q=answered.llm_response,
         current_query=followup.user_question,
         # 비판받은 답변을 만든 문서여야 한다. 후속 턴의 검색 결과가 아니다.
