@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ragdiag"
+version = "0.1.0"
+description = "RAG 챗봇 대화 로그 실패 분류기"
+requires-python = ">=3.13"
+dependencies = ["pydantic>=2.0", "PyYAML>=6.0"]
+
+[project.optional-dependencies]
+# 대시보드를 볼 때만. 분류 파이프라인에는 불필요하다.
+dashboard = ["streamlit>=1.30", "pandas>=2.0"]
+# --backend api 를 쓸 때만.
+api = ["anthropic>=0.40"]
+dev = ["pytest>=8.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+# src 배치라 패키지를 설치하지 않고도 테스트가 돈다.
+# 사내에서는 PYTHONPATH=BB/src 로 같은 일을 한다 - 공용 venv 를 건드리지 않는다.
+pythonpath = ["src"]
+testpaths = ["tests"]

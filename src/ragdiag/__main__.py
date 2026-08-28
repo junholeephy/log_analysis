@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 """conv_eval 로그를 taxonomy case 로 분류한다.
 
-  python conv_parse.py --conv-data conv-eval.json --filter filter.json
+  PYTHONPATH=BB/src python -m ragdiag --config configs/local.yaml --dry-run
+  PYTHONPATH=BB/src python -m ragdiag --config configs/local.yaml
 
 필터가 고른 턴만 3단계로 분류한다:
 
@@ -12,7 +13,10 @@
 결과는 pre_data_format 형태로 나온다. 원본 필드는 그대로 두고 분류 결과는
 `classification` 아래에 모은다.
 
-필요한 환경변수는 두 개뿐이다:
+설정은 --config 로 준다. 사내에서는 코드를 못 고치므로 바뀔 값은 전부 거기 있다.
+CLI 플래그는 설정을 덮어쓴다 - 한 번만 다르게 돌려볼 때 쓴다.
+
+설정 없이 돌리려면 환경변수 두 개면 된다:
   export LLM_API_URL=http://<서버>:8000
   export LLM_API_KEY=<키>
 """
@@ -20,6 +24,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -30,6 +35,10 @@ from ragdiag.backends import (
     backend_from_env,
     env_first,
 )
+from ragdiag import contracts
+from ragdiag.config import ConfigError
+from ragdiag.config import apply as apply_config
+from ragdiag.config import load as load_config
 from ragdiag.judge import Judge
 from ragdiag.pipeline import (
     build_outcome,
@@ -37,16 +46,32 @@ from ragdiag.pipeline import (
     load_and_select,
     make_judge,
 )
+from ragdiag.summary import RunSummary, Timer, peak_memory_gb, version
 
 
-def make_backend(args):
-    if args.backend == "cli":
-        return ClaudeCodeBackend(model=args.model or "claude-opus-5",
-                                 timeout=args.timeout)
+def make_backend(args, config=None):
+    """CLI 인자 > 설정 > 환경변수 순으로 고른다."""
+    pick = (lambda flag, key, default=None:
+            flag if flag is not None else
+            (config.get(key, default) if config else default))
+
+    # 아무도 안 정했으면 환경으로 고른다. LLM_API_URL 이 있으면 로컬 서버,
+    # 없으면 개발 장비의 claude CLI. 이 자동 선택이 없으면 --golden 같은
+    # 검증 명령이 이 장비에서 안 돈다.
+    backend = pick(args.backend, "llm.backend",
+                   "local" if env_first(URL_VARS) else "cli")
+    model = pick(args.model, "llm.model")
+    timeout = pick(args.timeout, "llm.timeout_sec", 600)
+    if backend == "cli":
+        return ClaudeCodeBackend(model=model or "claude-opus-5", timeout=timeout)
     return backend_from_env(
-        base_url=args.base_url, api_key=args.api_key, model=args.model,
-        json_mode=args.json_mode, thinking=args.thinking,
-        max_tokens=args.max_tokens, timeout=args.timeout,
+        base_url=pick(args.base_url, "llm.url"),
+        api_key=pick(args.api_key, "llm.key"),
+        model=model,
+        json_mode=pick(args.json_mode, "llm.json_mode", "auto"),
+        thinking=pick(args.thinking, "llm.thinking", "auto"),
+        max_tokens=pick(args.max_tokens, "llm.max_tokens", 16000),
+        timeout=timeout,
     )
 
 
@@ -61,7 +86,7 @@ def run_legacy_regression(args) -> int:
     import collections
 
     sys.path.insert(0, str(Path(__file__).parent))
-    from fixtures.synthetic import build, expected_cases
+    from ragdiag.fixtures.synthetic import build, expected_cases
 
     from ragdiag.classify import classify_all
     from ragdiag.load import parse_cases
@@ -118,7 +143,7 @@ def run_legacy_regression(args) -> int:
 def run_golden(args) -> int:
     """Step 1 관측만 돌려 필드별 일치율을 잰다. Step 2·3 은 호출하지 않는다."""
     sys.path.insert(0, str(Path(__file__).parent))
-    from fixtures.observations import build
+    from ragdiag.fixtures.observations import build
 
     from ragdiag.conv import parse_conversations, to_case
     from ragdiag.golden import FieldScore, render, score_observation
@@ -175,7 +200,7 @@ def run_judge_golden(args, judge) -> int:
     """Step 2·3 판정을 채점한다. 관측 채점과 층이 다르다."""
     from concurrent.futures import ThreadPoolExecutor
 
-    from fixtures.judgments import GROUNDING, SUFFICIENCY
+    from ragdiag.fixtures.judgments import GROUNDING, SUFFICIENCY
 
     from ragdiag.golden import JudgeScore, render_judge, score_sufficiency
     from ragdiag.schema import Case
@@ -221,83 +246,154 @@ def run_judge_golden(args, judge) -> int:
 
 def main() -> int:
     p = argparse.ArgumentParser(
+        prog="python -m ragdiag",
         description="conv_eval 로그를 taxonomy case 로 분류",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    p.add_argument("--conv-data", help="conv_eval JSON 경로")
+    p.add_argument("--config", help="설정 YAML. configs/example.yaml 참고")
+
+    p.add_argument("--conv-data", help="conv_eval JSON 경로 (설정을 덮어쓴다)")
     p.add_argument("--golden", action="store_true",
                    help="Step 1 관측 골든셋을 돌려 필드별 일치율을 잰다")
     p.add_argument("--legacy-regression", action="store_true",
-                   help="구 case20/case22 회귀셋 23건을 새 파이프라인으로 돌려 대조한다")
+                   help="구 회귀셋 23건을 새 파이프라인으로 돌려 대조한다")
     p.add_argument("--filter", help="필터 JSON. 없으면 진단 가능한 후속 턴 전부")
-    p.add_argument("--out", default="conv_parsed.json", help="결과 저장 경로")
+    p.add_argument("--out", help="결과 저장 경로")
 
-    p.add_argument("--backend", choices=["local", "cli"],
-                   default="local" if env_first(URL_VARS) else "cli",
+    # 아래 기본값은 전부 None 이다. 설정과 CLI 를 구분하기 위해서다 -
+    # argparse 기본값을 넣으면 "사용자가 준 것"과 "기본값"을 못 가린다.
+    p.add_argument("--backend", choices=["local", "cli", "api"],
                    help="local: OpenAI 호환 서버 / cli: claude -p (개발 장비 검증용)")
     p.add_argument("--base-url", help="LLM 주소 (또는 $LLM_API_URL)")
     p.add_argument("--api-key", help="(또는 $LLM_API_KEY)")
     p.add_argument("--model", help="생략하면 서버의 /v1/models 에서 자동 탐지")
-    p.add_argument("--json-mode", default="auto",
+    p.add_argument("--json-mode",
                    choices=["auto", "json_schema", "guided_json", "json_object", "none"])
-    p.add_argument("--thinking", default="auto", choices=["auto", "on", "off"])
-    p.add_argument("--max-tokens", type=int, default=16000)
-    p.add_argument("--timeout", type=int, default=600)
+    p.add_argument("--thinking", choices=["auto", "on", "off"])
+    p.add_argument("--max-tokens", type=int)
+    p.add_argument("--timeout", type=int)
 
     p.add_argument("--limit", type=int, help="앞에서 N건만 (비용 확인용)")
-    p.add_argument("--workers", type=int, default=4, help="동시 실행 턴 수")
-    p.add_argument("--history-turns", type=int, default=3,
-                   help="Step 1 에 넘길 이전 질문 개수 상한 (기본 3). "
-                        "0 이면 제한 없음")
+    p.add_argument("--workers", type=int, help="동시 실행 턴 수")
+    p.add_argument("--history-turns", type=int,
+                   help="Step 1 에 넘길 이전 질문 개수 상한. 0 이면 제한 없음")
     p.add_argument("--no-cache", action="store_true")
     p.add_argument("--dry-run", action="store_true",
-                   help="필터까지만 적용하고 LLM 호출 없이 대상 건수를 보여준다")
+                   help="합성 데이터 스모크. 필터까지만 적용하고 LLM 을 부르지 않는다")
     args = p.parse_args()
+
+    # 설정은 계산 전에 읽고 검증한다. 30분 뒤에 키 하나로 죽으면 사이클 하나를 버린다.
+    try:
+        config = load_config(args.config)
+    except ConfigError as e:
+        print(e, file=sys.stderr)
+        return 2
+    changed = apply_config(config)
+    if changed:
+        print(f"설정 {config.source} 적용: {', '.join(changed)}", file=sys.stderr)
 
     if args.golden:
         return run_golden(args)
-
     if args.legacy_regression:
         return run_legacy_regression(args)
 
-    if not args.conv_data:
-        print("--conv-data 또는 --golden 중 하나가 필요합니다.", file=sys.stderr)
+    conv_data = args.conv_data or config.get("paths.conv_data")
+    if not conv_data:
+        print("분석할 로그가 없습니다. --conv-data 또는 설정의 paths.conv_data "
+              "가 필요합니다.", file=sys.stderr)
+        return 2
+    if not Path(conv_data).exists():
+        print(f"로그 파일이 없습니다: {conv_data}", file=sys.stderr)
         return 2
 
-    selection = load_and_select(args.conv_data, args.filter,
-                                history_turns=args.history_turns, limit=args.limit)
+    filter_path = args.filter or config.get("paths.filter")
+    out_path = args.out or config.get("paths.out", "conv_parsed.json")
+    workers = args.workers or config.get("run.workers")
+    limit = args.limit or config.get("run.limit")
+    history = args.history_turns if args.history_turns is not None else None
+
+    summary = RunSummary(version=version())
+    timer = Timer().__enter__()
+
+    # --- 계약 대조. 분류 전에 한다 -------------------------------------------
+    # 여기서 나온 줄들이 사내에서 이쪽으로 돌아오는 포맷 정보의 전부다.
+    payload = json.loads(Path(conv_data).read_text(encoding="utf-8"))
+    summary.input_shape = contracts.shape(payload)
+    report = contracts.check_log(payload)
+    summary.contract_ok = report.n_ok
+    summary.contract_mismatches = report.mismatches
+
+    def finish(status: str, code: int) -> int:
+        summary.status = status
+        summary.runtime_sec = timer.seconds
+        summary.peak_gb = peak_memory_gb()
+        print()
+        print(summary.render())
+        return code
+
+    try:
+        selection = load_and_select(conv_data, filter_path,
+                                    history_turns=history, limit=limit)
+    except (OSError, ValueError, KeyError) as e:
+        summary.notes.append(f"로그를 읽지 못했다: {type(e).__name__}: {e}")
+        return finish("FAILED (입력)", 2)
+
     print(selection.report, file=sys.stderr)
+    summary.metrics.append(("selected", f"{len(selection):,} turns"))
 
     if not selection.cases:
-        print("\n필터를 통과한 턴이 없습니다. 조건을 완화하세요.", file=sys.stderr)
-        return 1
+        summary.notes.append("필터를 통과한 턴이 없다. 조건을 확인할 것.")
+        return finish("NO DATA", 1)
 
     if args.dry_run:
         print(f"\n분류 대상 {len(selection)}턴 (LLM 호출 없음)", file=sys.stderr)
         for sel, case in zip(selection.selected[:10], selection.cases[:10]):
             print(f"  {case.case_id}  turn {case.turn}  "
-                  f"{sel.turn.eval_result} / {sel.turn.emotion_result}", file=sys.stderr)
-        return 0
+                  f"{sel.turn.eval_result} / {sel.turn.emotion_result}",
+                  file=sys.stderr)
+        return finish("DRY RUN", 0)
 
     try:
-        backend = make_backend(args)
+        backend = make_backend(args, config)
     except JudgeError as e:
         print(e, file=sys.stderr)
-        return 2
+        summary.notes.append("LLM 백엔드를 만들지 못했다. 위 메시지를 옮겨 적을 것.")
+        return finish("FAILED (백엔드)", 2)
 
     detected = " (자동 탐지)" if getattr(backend, "discovered", False) else ""
     print(f"\n분류 대상 {len(selection)}턴 · {backend.model}{detected} "
-          f"· 동시 {args.workers}", file=sys.stderr)
+          f"· 동시 {workers or 4}", file=sys.stderr)
+    summary.metrics.append(("model", f"{backend.model}"))
 
-    judge = make_judge(backend, use_cache=not args.no_cache)
-    results = judge_cases(selection.cases, judge, workers=args.workers)
+    use_cache = not args.no_cache and config.get("paths.cache") is not False
+    judge = make_judge(backend, use_cache=use_cache)
+    results = judge_cases(selection.cases, judge, workers=workers)
     outcome = build_outcome(selection.owners, results, selection.report)
 
-    outcome.save(args.out)
+    outcome.save(out_path)
     print(outcome.summary())
-    print(f"\n결과: {args.out}", file=sys.stderr)
-    return 1 if outcome.n_failed else 0
+    print(f"\n결과: {out_path}", file=sys.stderr)
+
+    summary.metrics.append(("classified", f"{len(results) - outcome.n_failed:,} ok / "
+                                          f"{outcome.n_failed:,} failed"))
+    summary.metrics.append(("llm calls", f"{outcome.n_llm_calls:,}"))
+    for case_id, n in _top_cases(outcome):
+        summary.metrics.append(("", f"{case_id:<14} {n:,}"))
+    if outcome.n_failed:
+        summary.notes.append(f"분류 실패 {outcome.n_failed}건. 결과 파일의 "
+                             f"error 필드를 볼 것.")
+    return finish("OK" if not outcome.n_failed else "PARTIAL",
+                  1 if outcome.n_failed else 0)
+
+
+def _top_cases(outcome, limit: int = 5):
+    """상위 case 몇 개. 지표 이름은 사이클 사이에 바뀌지 않아야 한다."""
+    from collections import Counter
+
+    counts = Counter(r.classification.primary_case
+                     for r in outcome.results if r.classification)
+    return counts.most_common(limit)
 
 
 if __name__ == "__main__":

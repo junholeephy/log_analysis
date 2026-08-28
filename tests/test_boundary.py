@@ -11,6 +11,7 @@
 정적 분석은 그 둘을 가려내지 못한다.
 """
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -55,8 +56,11 @@ def imported_modules(module: str) -> set[str]:
         "print(json.dumps(sorted(m for m in sys.modules "
         "if m.startswith('ragdiag.'))))"
     )
+    # 사내에서 붙이는 방식과 같게 한다 - PYTHONPATH=BB/src 로만 붙이고
+    # 패키지를 venv 에 설치하지 않는다.
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
     proc = subprocess.run([sys.executable, "-c", code], cwd=ROOT,
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, env=env)
     assert proc.returncode == 0, f"{module} import 실패:\n{proc.stderr}"
     import json as _json
     return set(_json.loads(proc.stdout.strip().splitlines()[-1]))
@@ -105,7 +109,7 @@ def test_readme_copy_list_matches_this_test():
         pytest.skip("README 에 복사 목록 표시가 없음")
     block = text.split("<!-- copy-list -->")[1].split("<!-- /copy-list -->")[0]
     listed = {f"ragdiag.{name}" for name in
-              __import__("re").findall(r"ragdiag/(\w+)\.py", block)}
+              __import__("re").findall(r"(?:src/)?ragdiag/(\w+)\.py", block)}
     assert listed == set(CORE), (
         f"README 에만 있음: {sorted(listed - set(CORE))} / "
         f"테스트에만 있음: {sorted(set(CORE) - listed)}"

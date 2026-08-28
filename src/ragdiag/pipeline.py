@@ -64,12 +64,14 @@ class Outcome:
 
 
 def judge_cases(cases: list[Case], judge: Judge,
-                workers: int = settings.DEFAULT_WORKERS) -> list[TurnResult]:
+                workers: Optional[int] = None) -> list[TurnResult]:
     """Case 목록을 판정한다. 3스텝 판정이 도는 곳이다.
 
     한 턴이 실패해도 나머지는 계속 간다 - 결과의 error 필드로 확인할 것.
     """
-    return classify_all(cases, judge, max_workers=workers)
+    # 기본 인자는 def 시점에 굳어 --config 적용이 안 먹는다. 여기서 푼다.
+    return classify_all(cases, judge,
+                        max_workers=workers or settings.DEFAULT_WORKERS)
 
 
 def build_outcome(owners: list, results: list[TurnResult],
@@ -115,7 +117,7 @@ class Selection:
 
 
 def load_and_select(conv_path: str | Path, filter_path: Optional[str | Path] = None,
-                    history_turns: int = settings.MAX_HISTORY_TURNS,
+                    history_turns: Optional[int] = None,
                     limit: Optional[int] = None) -> Selection:
     """로그를 읽고 필터를 걸어 Case 까지 만든다."""
     from ragdiag.conv import load_conversations
@@ -129,7 +131,8 @@ def load_and_select(conv_path: str | Path, filter_path: Optional[str | Path] = N
     if limit:
         selected = selected[:limit]
 
-    cases = to_cases(selected, history_turns=history_turns)
+    cases = to_cases(selected,
+                     history_turns=history_turns or settings.MAX_HISTORY_TURNS)
     pairs = [(s, c) for s, c in zip(selected, cases) if c is not None]
     return Selection(owners=[s.conversation for s, _ in pairs],
                      cases=[c for _, c in pairs], report=report,
@@ -138,9 +141,9 @@ def load_and_select(conv_path: str | Path, filter_path: Optional[str | Path] = N
 
 def run_from_conv_eval(conv_path: str | Path, judge: Judge,
                        filter_path: Optional[str | Path] = None,
-                       history_turns: int = settings.MAX_HISTORY_TURNS,
+                       history_turns: Optional[int] = None,
                        limit: Optional[int] = None,
-                       workers: int = settings.DEFAULT_WORKERS) -> Outcome:
+                       workers: Optional[int] = None) -> Outcome:
     """로그 경로 하나로 끝까지 돌린다. 편의 함수일 뿐 특별한 로직은 없다."""
     selection = load_and_select(conv_path, filter_path, history_turns, limit)
     if not selection.cases:

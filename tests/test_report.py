@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from fixtures.synthetic import build
+from ragdiag.fixtures.synthetic import build
 from ragdiag.decide import Diagnosis
 from ragdiag.backends import Usage
 from ragdiag.judge import CaseResult

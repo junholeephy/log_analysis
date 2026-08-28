@@ -261,7 +261,7 @@ def load_conversations(path: str | Path) -> list[Conversation]:
 def to_case(
     conv: Conversation,
     followup_turn: int,
-    history_turns: int = MAX_HISTORY_TURNS,
+    history_turns: Optional[int] = None,
 ) -> Optional[Case]:
     """후속 턴 번호를 받아 진단 케이스를 만든다.
 
@@ -271,6 +271,10 @@ def to_case(
     history_turns 는 Step 1 에 넘길 이전 질문의 개수 상한이다. 잘라내더라도
     **비판받은 답변을 부른 질문은 항상 포함된다** — 그게 마지막 항목이다.
     """
+    # 기본 인자는 def 시점에 굳는다. 설정을 나중에 적용해도 안 먹으므로
+    # None 으로 받고 여기서 푼다.
+    if history_turns is None:
+        history_turns = settings.MAX_HISTORY_TURNS
     followup = conv.turn_at(followup_turn)
     if followup is None:
         return None

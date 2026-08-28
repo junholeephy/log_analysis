@@ -136,11 +136,11 @@ def check_length(answer: str, requested: Optional[LengthRequest]) -> Check:
     measured = f"{chars}자 · {sentences}문장 · {lines}줄"
 
     if requested.kind == "vague_short":
-        over = chars > VAGUE_SHORT_MAX_CHARS
+        over = chars > settings.VAGUE_SHORT_MAX_CHARS
         return Check(
             "length",
             "violated" if over else "ok",
-            f"모호한 짧게 요구 (기준 {VAGUE_SHORT_MAX_CHARS}자) · {measured}",
+            f"모호한 짧게 요구 (기준 {settings.VAGUE_SHORT_MAX_CHARS}자) · {measured}",
         )
 
     if requested.value is None:
@@ -282,16 +282,16 @@ def check_service_error(answer: str) -> Check:
         return Check("service_error", "not_applicable", "답변이 비어 있음")
 
     packed = _squeeze(answer)
-    for template in SERVICE_ERROR_TEMPLATES:
+    for template in settings.SERVICE_ERROR_TEMPLATES:
         if _squeeze(template) in packed:
             return Check("service_error", "violated",
                          f"서비스 자원 부족 확정 문구와 일치: {template[:30]}…")
 
-    if len(packed) > MAX_SERVICE_ERROR_LEN:
+    if len(packed) > settings.SERVICE_ERROR_MAX_CHARS:
         return Check("service_error", "ok",
                      f"확정 문구 없음 · 답변이 길어({len(packed)}자) 안내 문구가 아님")
 
-    hits = [m for m in _SERVICE_ERROR_MARKERS if _squeeze(m) in packed]
+    hits = [m for m in settings.SERVICE_ERROR_MARKERS if _squeeze(m) in packed]
     if len(hits) >= 2:
         return Check("service_error", "violated",
                      f"확정 문구는 아니나 표지 {len(hits)}개 일치: {', '.join(hits)}")
@@ -350,7 +350,7 @@ def extract_quotes(answer: str) -> list[str]:
     quotes = []
     for pattern in _QUOTE_PATTERNS:
         quotes += [q.strip() for q in pattern.findall(answer)]
-    return [q for q in quotes if len(normalize(q)) >= ANSWER_QUOTE_MIN_CHARS]
+    return [q for q in quotes if len(normalize(q)) >= settings.ANSWER_QUOTE_MIN_CHARS]
 
 
 def check_quoted_spans(answer: str, chunks: list[str], threshold: float = 0.9) -> Check:

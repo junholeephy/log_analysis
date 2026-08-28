@@ -13,36 +13,96 @@
 📊 **[파이프라인 흐름도](https://claude.ai/code/artifact/180f8cc5-d5fb-41e0-9084-8be60c271d5f)**
 — 3단계 판정과 각 단계가 일부러 감추는 입력을 그림으로. (비공개 링크)
 
-## 진입점 두 개
+## 두 장비로 나뉜다
+
+**기능 개발은 이 저장소에서, 검증은 사내 머신에서.** 실데이터가 밖으로 나올 수
+없고 사내에서는 코드를 고칠 수 없다. 그 분리가 구조에 박혀 있다 —
+`IMPLEMENTATION_SPEC.md` 규격을 따른다.
+
+```
+[이 저장소] 구현 ──이식──▶ [사내] 실험 ──인사이트──▶ [이 저장소] 개선 ──▶ …
+```
+
+| | 무엇 |
+|---|---|
+| `src/ragdiag/contracts.py` | **입력 계약.** 사내에서 회수한 포맷 정보가 도착하는 유일한 지점 |
+| `configs/example.yaml` | **모든 설정 키.** 사내 실값은 `AA/configs/local.yaml` |
+| `src/ragdiag/fixtures/synth.py` | **가짜 데이터는 파일이 아니라 코드.** `generate(n, seed)` 가 런타임에 만든다 |
+| `scripts/sync.sh` | 이식. `.git` 도 데이터도 넘기지 않는다 |
+| `docs/insights/` | 사내에서 본 것을 적어 오는 자리 |
+
+## 진입점
 
 | | 무엇 | 언제 |
 |---|---|---|
-| **`conv_parse.py`** | 본 파이프라인. conv_eval 로그를 30개 case 로 분류 | 실제 분석 |
-| `run.py` | 구 파이프라인. case20/case22 판별만, 라벨 6개 | **회귀 기준선** |
+| **`python -m ragdiag`** | 본 파이프라인. conv_eval 로그를 29개 case 로 분류 | 실제 분석 |
+| `scripts/legacy_run.py` | 구 파이프라인. case20/case22 판별만, 라벨 6개 | **회귀 기준선** |
 
-`run.py` 는 지우지 않는다. 이 프로젝트에서 **실제 LLM 으로 검증된 최초의 파이프라인**이고,
-그 23건 회귀셋이 새 파이프라인의 라우팅 결함을 잡아냈다(아래 검증 기록 참고).
+`legacy_run.py` 는 지우지 않는다. 이 프로젝트에서 **실제 LLM 으로 검증된 최초의
+파이프라인**이고, 그 23건 회귀셋이 새 파이프라인의 라우팅 결함을 잡아냈다.
 검증된 기준선을 지우면 같은 종류의 회귀를 다음에 못 잡는다.
 
 ```bash
-python conv_parse.py --conv-data conv-eval.json --filter filter.json   # 분류
-python conv_parse.py --golden                                          # 3단계 판정 품질
-python conv_parse.py --legacy-regression                               # 회귀 기준선
-python -m pytest tests/ -q                                             # LLM 없이 도는 전부
+python -m ragdiag --config configs/local.yaml --dry-run   # 합성 데이터 스모크
+python -m ragdiag --config configs/local.yaml             # 분류
+python -m ragdiag --golden                                # 3단계 판정 품질
+python -m ragdiag --legacy-regression                     # 회귀 기준선
+python -m pytest tests/ -q                                # LLM 없이 도는 전부
 ```
 
-## 실행에 필요한 것 세 가지
+## 사내 머신에서
 
 ```bash
-pip install pydantic
+# 최초 1회
+cd AA && git clone <이 저장소> .staging/BB
+
+# 매번 (멱등하다)
+bash .staging/BB/scripts/sync.sh v0.2
+
+source <기존 venv>/bin/activate
+pip install --dry-run -r BB/requirements.txt && pip check   # 충돌 먼저
+pip install -r BB/requirements.txt
+PYTHONPATH=BB/src python -m ragdiag --config configs/local.yaml --dry-run
+PYTHONPATH=BB/src python -m ragdiag --config configs/local.yaml
+```
+
+**패키지를 venv 에 설치하지 않는다** — `PYTHONPATH` 로만 붙인다. 공용 venv 를
+오염시키지 않고 `AA/BB` 통째 교체가 무연산이 된다. `--upgrade` 와
+`--force-reinstall` 은 쓰지 않는다. 남의 환경을 조용히 깨뜨리고 되돌릴 수 없다.
+
+**태그 없이 실행하지 않는다.** 결과 파일이 반출되지 않으므로 `AA/BB` 가
+"어떤 코드로 돌렸는지"를 사내에 남기는 유일한 형태다.
+
+실행이 끝나면 화면 마지막에 이 블록이 찍힌다. 파일도 플롯도 못 가져오므로
+**이게 유일한 출력**이다.
+
+```
+================ RUN SUMMARY =================================================
+version   : v0.2 (a1b2c3d)
+input     : 12,004 users / 48,221 conversations / 210,553 turns
+contract  : 21 ok / 2 MISMATCH
+  - turn.retrieved_data        : str|list 를 기대했으나 dict 가 왔다 (1,204건)
+  - turn.권한코드               : 계약에 없는 키 (210,553건). 새 필드인지 확인할 것
+metrics   : selected 3,912 turns
+            classified 3,908 ok / 4 failed
+runtime   : 412s, peak 6.2GB
+status    : PARTIAL
+==============================================================================
+```
+
+계약 위반 줄은 **그대로 옮겨 적어** `docs/insights/` 에 넣는다. 그게 포맷이
+이쪽으로 돌아오는 유일한 경로다.
+
+## 실행에 필요한 것
+
+```bash
+pip install pydantic PyYAML
 
 export LLM_API_URL=http://<서버>:8000   # /v1 이 붙어 있어도, 스킴이 없어도 된다
 export LLM_API_KEY=<키>
-
-python conv_parse.py --conv-data conv-eval.json --filter filter.json
 ```
 
-끝이다. 나머지는 자동으로 정해진다.
+설정 파일 없이도 돈다. 나머지는 자동으로 정해진다.
 
 | 자동으로 정해지는 것 | 어떻게 |
 |---|---|
@@ -55,7 +115,7 @@ python conv_parse.py --conv-data conv-eval.json --filter filter.json
 문제가 생기면 먼저 이걸 돌린다:
 
 ```bash
-python run.py --check-llm     # 서버·모델·강제방식·1회 소요시간·전체 예상시간
+python scripts/legacy_run.py --check-llm   # 서버·모델·강제방식·1회 소요시간
 ```
 
 ## 3단계 분류
@@ -360,10 +420,10 @@ pip install pydantic                      # 사내 미러
 export LLM_API_URL=http://<서버>:8000
 export LLM_API_KEY=<키>
 
-python run.py --check-llm                 # 1. 서버 규약 확정
+python scripts/legacy_run.py --check-llm                 # 1. 서버 규약 확정
 python -m pytest tests/ -q                # 2. LLM 없이 도는 부분 (108개)
-python run.py --synthetic                 # 3. 그 모델이 프롬프트를 따르는지
-python run.py --input data/logs.json --limit 20   # 4. 실데이터
+python scripts/legacy_run.py --synthetic                 # 3. 그 모델이 프롬프트를 따르는지
+python scripts/legacy_run.py --input data/logs.json --limit 20   # 4. 실데이터
 ```
 
 `--model`은 서버가 여러 모델을 서빙하고 첫 번째가 아닌 걸 쓰고 싶을 때만 필요하다.
@@ -420,8 +480,8 @@ vLLM `--reasoning-parser`를 켜서 `reasoning_content`로 분리되는 경우�
 과제에 따라 다르다. 23건짜리 합성 셋이 있으니 양쪽을 다 돌려 비교하는 게 추측보다 빠르다.
 
 ```bash
-python run.py --synthetic --thinking off --out off.jsonl
-python run.py --no-cache --synthetic --thinking on --out on.jsonl
+python scripts/legacy_run.py --synthetic --thinking off --out off.jsonl
+python scripts/legacy_run.py --no-cache --synthetic --thinking on --out on.jsonl
 ```
 
 특히 `partial`과 `insufficient`의 경계 판정에서 차이가 날 가능성이 크다. 그 4+3건이
@@ -446,7 +506,7 @@ CLI가 3배쯤 무거운 이유는 Claude Code 기본 시스템 프롬프트(약
 CLI 경로에는 서버측 스키마 강제가 없으므로 `prompts.output_contract()`가 Pydantic 모델에서
 계약 문구를 생성해 시스템 프롬프트에 붙인다. 손으로 두 번 쓰면 `schema.py`와 어긋난다.
 
-프롬프트 전문은 `python run.py --show-prompts`로 예시 입력과 함께 볼 수 있다.
+프롬프트 전문은 `python scripts/legacy_run.py --show-prompts`로 예시 입력과 함께 볼 수 있다.
 
 ## 사용법
 
@@ -454,11 +514,11 @@ CLI 경로에는 서버측 스키마 강제가 없으므로 `prompts.output_cont
 python3 -m venv venv && ./venv/bin/pip install -r requirements.txt
 
 ./venv/bin/python -m pytest tests/ -q          # API 없이 도는 부분 검증
-./venv/bin/python run.py --show-prompts        # 파이프라인 전체 프롬프트
-./venv/bin/python run.py --trace C-4002:3     # 케이스 하나의 실제 통과 경로
-./venv/bin/python run.py --synthetic           # 합성 데이터 회귀 검증 (23건)
-./venv/bin/python run.py --input data/logs.json --limit 20   # 실데이터, 비용 확인용
-./venv/bin/python run.py --input data/logs.json --workers 12
+./venv/bin/python scripts/legacy_run.py --show-prompts        # 파이프라인 전체 프롬프트
+./venv/bin/python scripts/legacy_run.py --trace C-4002:3     # 케이스 하나의 실제 통과 경로
+./venv/bin/python scripts/legacy_run.py --synthetic           # 합성 데이터 회귀 검증 (23건)
+./venv/bin/python scripts/legacy_run.py --input data/logs.json --limit 20   # 실데이터, 비용 확인용
+./venv/bin/python scripts/legacy_run.py --input data/logs.json --workers 12
 ```
 
 케이스당 LLM 호출은 평균 2회 내외다 (형식 불만이면 1회, sufficient일 때만 3회).
@@ -490,19 +550,19 @@ python3 -m venv venv && ./venv/bin/pip install -r requirements.txt
 
 <!-- copy-list -->
 ```
-ragdiag/settings.py    배포마다 바뀌는 값 — 여기부터 열 것
-ragdiag/schema.py      Case + Step 1/2 출력 (Pydantic, 필드 순서에 의미 있음)
-ragdiag/taxonomy.py    case 29개 메타데이터와 설명
-ragdiag/prompts.py     판정 프롬프트 (단계별로 뺄 정보가 여기에 명시됨)
-ragdiag/backends.py    로컬 LLM / Claude Code CLI / Anthropic API
-ragdiag/judge.py       LLM 호출, 디스크 캐시, 케이스 단위 병렬
-ragdiag/decide.py      구 진리표 (judge 가 참조)
-ragdiag/verify.py      인용 대조 (사전지식 오염 차단)
-ragdiag/checks.py      코드 검증기 — 언어·길이·포맷·잘림·PII·인용·문법·계산·인젝션·서비스오류
-ragdiag/route.py       Step 3 진리표 — 관측+검증 → case
-ragdiag/classify.py    3단계 오케스트레이션
-ragdiag/output.py      pre_data_format 형태 출력
-ragdiag/pipeline.py    단계별 함수
+src/ragdiag/settings.py    배포마다 바뀌는 값 — 여기부터 열 것
+src/ragdiag/schema.py      Case + Step 1/2 출력 (Pydantic, 필드 순서에 의미 있음)
+src/ragdiag/taxonomy.py    case 29개 메타데이터와 설명
+src/ragdiag/prompts.py     판정 프롬프트 (단계별로 뺄 정보가 여기에 명시됨)
+src/ragdiag/backends.py    로컬 LLM / Claude Code CLI / Anthropic API
+src/ragdiag/judge.py       LLM 호출, 디스크 캐시, 케이스 단위 병렬
+src/ragdiag/decide.py      구 진리표 (judge 가 참조)
+src/ragdiag/verify.py      인용 대조 (사전지식 오염 차단)
+src/ragdiag/checks.py      코드 검증기 — 언어·길이·포맷·잘림·PII·인용·문법·계산·인젝션·서비스오류
+src/ragdiag/route.py       Step 3 진리표 — 관측+검증 → case
+src/ragdiag/classify.py    3단계 오케스트레이션
+src/ragdiag/output.py      pre_data_format 형태 출력
+src/ragdiag/pipeline.py    단계별 함수
 ```
 <!-- /copy-list -->
 
@@ -530,10 +590,10 @@ build_outcome(owners, results).save("conv_parsed.json")
 ## 구조
 
 ```
-conv_parse.py    본 진입점 — 분류 · --golden · --legacy-regression
+src/ragdiag/__main__.py    본 진입점 — 분류 · --golden · --legacy-regression
 run.py           구 파이프라인 (회귀 기준선) · --inspect · --check-llm
 
-ragdiag/         (반입 목록은 위 참고)
+src/ragdiag/         (반입 목록은 위 참고)
   settings.py    배포마다 바뀌는 값을 한 곳에
   pipeline.py    단계별 함수 — 노트북·다른 스크립트에서 부를 수 있게
 

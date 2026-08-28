@@ -61,7 +61,7 @@ def test_synthetic_fixture_loads():
     from pathlib import Path
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from fixtures.synthetic import CASES, build
+    from ragdiag.fixtures.synthetic import CASES, build
 
     data, expected = build()
     cases = parse_cases(data)
@@ -113,7 +113,7 @@ def test_synthetic_fixture_defaults_to_production_string_format():
     from pathlib import Path
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from fixtures.synthetic import CASES, build
+    from ragdiag.fixtures.synthetic import CASES, build
 
     data, _ = build()
     turn = data["analysis_results"][0]["conversations"][0]["turns"][0]

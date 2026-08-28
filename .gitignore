@@ -1,26 +1,51 @@
-# 파이썬
-venv/
-__pycache__/
-*.pyc
-.pytest_cache/
-
-# 실행 산출물 (git은 줄 끝 주석을 지원하지 않으므로 주석은 따로 쓴다)
-# LLM 판정 캐시
-.cache/
-# 케이스별 진단 결과
-results.jsonl
-# fixtures/synthetic.py 에서 생성됨
-fixtures/synthetic.json
-
-# 데이터 - 올리지 않는다
+# 데이터 — 절대 올리지 않는다.
+# .gitignore 는 `git add -f` 한 번에 뚫린다. 진짜 방어선은 "가짜 데이터를
+# 파일로 두지 않는 것"이다 (src/ragdiag/fixtures/synth.py 가 런타임에 만든다).
+*.csv
+*.tsv
+*.parquet
+*.xlsx
+*.pkl
+*.npy
+*.npz
+*.h5
+*.feather
+*.sqlite*
+*.jsonl
 data/
-# 실행 결과와 유사 데이터
+outputs/
 output/
-# 입력·설정 예시 JSON, 원본 명세 — 올리지 않는다
-*_ex.json
+logs/
+
+# 입력·설정 예시 JSON, 원본 명세
 *.json
 !package.json
 taxonomy*.txt
+
+# 사내 실값
+configs/local.yaml
+configs/local.example.yaml
+.env
+
+# 이식 중계 clone (AA 쪽에서 쓰지만 여기서도 막아 둔다)
+.staging/
+
+# 노트북 로컬 탐색
+notebooks/local/
+
+# 실행 산출물
+.cache/
+results.jsonl
+
+# 파이썬
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+build/
+dist/
 
 # 도구
 .omc/

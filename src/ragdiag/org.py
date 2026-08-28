@@ -133,7 +133,7 @@ CANDIDATE_FIELDS = settings.ORG_CANDIDATE_FIELDS
 
 def detect_field(
     records: list[dict], table: Classification,
-    candidates: tuple[str, ...] = CANDIDATE_FIELDS,
+    candidates: Optional[tuple[str, ...]] = None,
 ) -> tuple[Optional[str], dict[str, Coverage]]:
     """어느 필드에 붙는 분류인지 값 대조로 판별한다.
 
@@ -141,6 +141,9 @@ def detect_field(
     (job_grade)일 수도 있다. 매칭률이 가장 높은 필드를 고르되, 전부 낮으면
     None 을 돌려준다. 억지로 붙이면 집계가 통째로 (미분류)가 된다.
     """
+    # 기본 인자는 def 시점에 굳어 설정 적용이 안 먹는다. 여기서 푼다.
+    if candidates is None:
+        candidates = settings.ORG_CANDIDATE_FIELDS
     scores = {
         name: coverage([str(r.get(name, "")) for r in records], table, name)
         for name in candidates

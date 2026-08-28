@@ -19,6 +19,7 @@
 
 import json
 import random
+from typing import Optional
 
 # ---------------------------------------------------------------------------
 # 문서 조각
@@ -201,7 +202,19 @@ FOLLOWUP = [("K", "명확화 요구", 25), ("L", "명시적 부정 피드백", 0
 EMOTION = [("I", "매우 부정", 0.0), ("H", "부정", 12.5), ("G", "약간 부정", 25.0)]
 
 
-def build(seed: int = 20260828) -> dict:
+def generate(n: Optional[int] = None, seed: int = 0) -> dict:
+    """계약(contracts.py)이 기술한 모양의 가짜 로그를 런타임에 만든다.
+
+    **파일로 두지 않는 이유**: 가짜 데이터가 파일로 있으면 이식을 통해 사내
+    저장소로 흘러간다. .gitignore 는 `git add -f` 한 번에 뚫리지만 **없는 파일은
+    올라갈 수 없다.**
+
+    같은 seed 는 같은 데이터를 만든다. n 은 사용자 수 상한이다 (None 이면 전부).
+
+    이 데이터가 보증하는 것은 "코드가 끝까지 돈다"까지다. 실제 분포에서의 판정
+    품질, 실규모에서의 시간·메모리, 계약이 실데이터를 맞게 기술하는지는
+    **사내에서만 알 수 있다.**
+    """
     rng = random.Random(seed)
     users, conv_no = [], 0
 
@@ -244,10 +257,17 @@ def build(seed: int = 20260828) -> dict:
                 "conversations": conversations,
             })
 
+    if n is not None:
+        users = users[:n]
     total = sum(len(c["turns"]) for u in users for c in u["conversations"])
     return {"metadata": {"generated_at": "2026-08-28T09:00:00",
                          "total_users": len(users), "total_turns": total},
             "users": users}
+
+
+# 옛 이름. 규격은 generate() 를 쓴다.
+def build(seed: int = 20260828) -> dict:
+    return generate(seed=seed)
 
 
 def _turn(no, question, answer, docs, rng, followup, mild):

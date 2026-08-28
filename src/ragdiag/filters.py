@@ -48,12 +48,13 @@ def _as_set(value: Any) -> set[str]:
     if value is None:
         return set()
     if isinstance(value, str):
-        return set() if value.strip() in ANY_VALUES else {value.strip()}
+        return set() if value.strip() in settings.FILTER_ANY_VALUES else {value.strip()}
     if isinstance(value, dict):
         # org_tree 는 {부서: {직무: ...}} 형태. 비어 있으면 제한 없음.
-        return {k for k in value if k not in ANY_VALUES}
+        return {k for k in value if k not in settings.FILTER_ANY_VALUES}
     if isinstance(value, (list, tuple, set)):
-        return {str(v).strip() for v in value if str(v).strip() not in ANY_VALUES}
+        return {str(v).strip() for v in value
+                if str(v).strip() not in settings.FILTER_ANY_VALUES}
     return {str(value)}
 
 
@@ -272,9 +273,9 @@ def _letter_of(result: str, table) -> str:
 
 
 def to_cases(selected: list[Selected], history_turns: int = 0) -> list[Case]:
-    from ragdiag.conv import MAX_HISTORY_TURNS, to_case
+    from ragdiag.conv import to_case
 
-    turns = history_turns or MAX_HISTORY_TURNS
+    turns = history_turns or settings.MAX_HISTORY_TURNS
     cases = [to_case(s.conversation, s.turn.turn, turns) for s in selected]
     return [c for c in cases if c is not None]
 

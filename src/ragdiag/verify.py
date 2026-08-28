@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 
 from ragdiag.schema import Evidence
 
+from ragdiag import settings
 from ragdiag.settings import EVIDENCE_MIN_QUOTE_CHARS, MATCH_THRESHOLD
 
 # 옛 이름. checks.py 에도 같은 이름의 다른 값(답변이 제시한 인용의 최소 길이)이
@@ -75,13 +76,13 @@ class CitationCheck:
 def verify_evidence(evidence: list[Evidence], chunks: list[str]) -> CitationCheck:
     check = CitationCheck(n_chunks=len(chunks))
     for ev in evidence:
-        if len(normalize(ev.quote)) < EVIDENCE_MIN_QUOTE_CHARS:
+        if len(normalize(ev.quote)) < settings.EVIDENCE_MIN_QUOTE_CHARS:
             check.dropped.append({"quote": ev.quote, "reason": "too_short"})
             continue
 
         if 0 <= ev.chunk_index < len(chunks):
             ratio = match_ratio(ev.quote, chunks[ev.chunk_index])
-            if ratio >= MATCH_THRESHOLD:
+            if ratio >= settings.MATCH_THRESHOLD:
                 check.kept.append(VerifiedEvidence(ev.chunk_index, ev.quote, ratio))
                 continue
 
@@ -92,7 +93,7 @@ def verify_evidence(evidence: list[Evidence], chunks: list[str]) -> CitationChec
             r = match_ratio(ev.quote, chunk)
             if r > best_ratio:
                 best_idx, best_ratio = i, r
-        if best_ratio >= MATCH_THRESHOLD:
+        if best_ratio >= settings.MATCH_THRESHOLD:
             check.kept.append(
                 VerifiedEvidence(best_idx, ev.quote, best_ratio, index_corrected=True)
             )

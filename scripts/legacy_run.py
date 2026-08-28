@@ -66,7 +66,7 @@ STAGES = [
 def show_prompts() -> int:
     """파이프라인 전체 프롬프트를 예시 입력과 함께 출력한다."""
     sys.path.insert(0, str(Path(__file__).parent))
-    from fixtures.synthetic import build
+    from ragdiag.fixtures.synthetic import build
 
     case = parse_cases(build()[0])[0]
     need = prompts.NeedAnalysis(
@@ -427,7 +427,7 @@ def main() -> int:
     expected = None
     if args.synthetic or args.trace:
         sys.path.insert(0, str(Path(__file__).parent))
-        from fixtures.synthetic import build
+        from ragdiag.fixtures.synthetic import build
 
         data, expected = build()
         Path("fixtures/synthetic.json").write_text(

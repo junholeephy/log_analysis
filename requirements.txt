@@ -1,13 +1,19 @@
-# 핵심 - 에어갭 장비에는 이것만 있으면 된다.
+# 사내 반입용. 공용 venv 를 쓰므로 --upgrade / --force-reinstall 금지.
+# 충돌이 나면 고치지 말고 메시지를 인사이트로 가지고 나와 본 머신에서 여기를 고친다.
+#
+#   pip install --dry-run -r BB/requirements.txt && pip check   # 먼저 확인
+#   pip install -r BB/requirements.txt
+#
 # 로컬 LLM(OpenAI 호환)에는 표준 라이브러리로 붙으므로 HTTP 클라이언트가 필요 없다.
 pydantic>=2.0
+PyYAML>=6.0
 
 # 개발/검증용
 pytest>=8.0
 
-# --backend api 를 쓸 때만 필요. 에어갭 장비에는 반입하지 않아도 된다.
-# anthropic>=1.1.0
-
-# 대시보드(dashboard.py)를 쓸 때만 필요. 분류 파이프라인에는 불필요.
+# 대시보드(src/ragdiag/dashboard.py)를 볼 때만. 분류 파이프라인에는 불필요하다.
 # streamlit>=1.30
 # pandas>=2.0
+
+# --backend api 를 쓸 때만.
+# anthropic>=0.40
