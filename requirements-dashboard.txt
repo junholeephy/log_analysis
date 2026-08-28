@@ -1,0 +1,11 @@
+# 대시보드(src/dashboard.py)를 볼 때만 필요하다.
+# 분류 파이프라인(src/run.py)에는 필요 없으므로 requirements.txt 와 나눠 둔다 —
+# 에어갭 장비에 반입할 것을 늘리지 않기 위해서다.
+#
+#   python -m pip install --dry-run -r requirements-dashboard.txt && python -m pip check
+#   python -m pip install -r requirements-dashboard.txt
+#
+# 차트는 streamlit 내장(st.bar_chart)으로 그리고 히트맵은 CSS 를 직접 만든다.
+# plotly · matplotlib 은 쓰지 않는다.
+streamlit>=1.30
+pandas>=2.0

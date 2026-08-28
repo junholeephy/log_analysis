@@ -11,9 +11,8 @@ PyYAML>=6.0
 # 개발/검증용
 pytest>=8.0
 
-# 대시보드(src/dashboard.py)를 볼 때만. 분류 파이프라인에는 불필요하다.
-# streamlit>=1.30
-# pandas>=2.0
+# 대시보드는 requirements-dashboard.txt 에 따로 있다.
+# 분류 파이프라인에는 필요 없어서 반입할 것을 늘리지 않으려고 나눠 뒀다.
 
 # --backend api 를 쓸 때만.
 # anthropic>=0.40

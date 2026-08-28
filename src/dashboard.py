@@ -41,9 +41,11 @@ try:
     import streamlit as st
 except ModuleNotFoundError as e:
     _bail(f"대시보드에 필요한 {e.name} 이 없습니다.\n\n"
-          "  pip install streamlit pandas\n\n"
-          "분류 파이프라인(src/run.py)에는 필요 없습니다. "
-          "대시보드를 볼 때만 설치하세요.")
+          f"  {sys.executable} -m pip install -r "
+          f"{Path(__file__).resolve().parents[1] / 'requirements-dashboard.txt'}\n\n"
+          "분류 파이프라인(src/run.py)에는 필요 없습니다. 그래서 "
+          "requirements.txt 와 나눠 뒀습니다 —\n"
+          "에어갭 장비에 반입할 것을 늘리지 않기 위해서입니다.")
 
 # streamlit 서버 없이 이 파일을 직접 실행하면 경고만 쏟고 아무 화면도 안 나온다.
 # 실패로 끝나지도 않아서 뭐가 잘못됐는지 알기 어렵다.

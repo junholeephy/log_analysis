@@ -166,6 +166,9 @@ def test_missing_dependency_names_the_install_command(tmp_path):
     proc = subprocess.run([sys.executable, str(stub)],
                           capture_output=True, text=True, cwd=ROOT)
     assert proc.returncode == 2, proc.stdout + proc.stderr
-    assert "pip install streamlit pandas" in proc.stderr, proc.stderr
+    assert "-m pip install -r" in proc.stderr, (
+        "PATH 를 타지 않는 형태로, 그리고 어떤 파일을 쓸지까지 알려야 한다\n"
+        + proc.stderr)
+    assert "requirements-dashboard.txt" in proc.stderr, proc.stderr
     assert "분류 파이프라인" in proc.stderr, (
         "파이프라인에는 필요 없다는 것도 알려야 반입 부담을 안 늘린다")

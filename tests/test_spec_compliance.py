@@ -305,3 +305,44 @@ def test_sync_hint_marks_the_entry_when_it_cannot_be_found(tmp_path):
     subprocess.run(["git", "-C", str(bb), "tag", "v1"], check=True)
     out = _sync(_fresh_aa(tmp_path, bb), bb, "v1")
     assert "toolkit/src/<entry>.py" in out.stdout, out.stdout
+
+
+def test_sync_hint_points_at_the_dashboard_when_the_repo_has_one(tmp_path):
+    """대시보드 의존은 따로 있다. 알려주지 않으면 알아낼 방법이 없다.
+
+    requirements.txt 에 없으므로 sync.sh 안내만 보고는 존재조차 모른다 -
+    써보고 ModuleNotFoundError 를 만나야 알게 된다. 사내에서는 그게 사이클을 먹는다.
+    """
+    import subprocess
+
+    bb = _fake_repo(tmp_path)
+    (bb / "src" / "dashboard.py").write_text("import streamlit\n", encoding="utf-8")
+    (bb / "requirements-dashboard.txt").write_text("streamlit>=1.30\n", encoding="utf-8")
+    for a in (["add", "-A"], ["commit", "-q", "-m", "dash"], ["tag", "v1"]):
+        subprocess.run(["git", "-C", str(bb), *a], check=True)
+
+    out = _sync(_fresh_aa(tmp_path, bb), bb, "v1")
+    assert "requirements-dashboard.txt" in out.stdout, out.stdout
+    assert "-m streamlit run" in out.stdout, (
+        "PATH 를 타지 않는 형태로 안내해야 한다\n" + out.stdout)
+
+
+def test_sync_hint_omits_the_dashboard_when_there_is_none(tmp_path):
+    """대시보드가 없는 프로젝트에 없는 안내를 찍지 않는다."""
+    import subprocess
+
+    bb = _fake_repo(tmp_path)
+    subprocess.run(["git", "-C", str(bb), "tag", "v1"], check=True)
+    out = _sync(_fresh_aa(tmp_path, bb), bb, "v1")
+    assert "대시보드" not in out.stdout, out.stdout
+
+
+def test_dashboard_deps_are_not_in_the_main_requirements():
+    """반입할 것을 늘리지 않는다. 분류 파이프라인은 pydantic·PyYAML 이면 된다."""
+    main = (ROOT / "requirements.txt").read_text(encoding="utf-8")
+    active = [l for l in main.splitlines() if l.strip() and not l.startswith("#")]
+    for banned in ("streamlit", "pandas"):
+        assert not any(banned in l for l in active), (
+            f"{banned} 이 requirements.txt 에 있다. "
+            "requirements-dashboard.txt 로 옮길 것.")
+    assert (ROOT / "requirements-dashboard.txt").exists()

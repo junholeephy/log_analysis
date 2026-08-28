@@ -141,6 +141,17 @@ main() {
   printf '  python %s --dry-run                        # ① 합성 스모크\n' "$entry"
   printf '  python %s --conv-data <실데이터> --limit 1000   # ② 계약 확인\n' "$entry"
   printf '  python %s --conv-data <실데이터> --output-dir outputs   # ③ 전체\n' "$entry"
+
+  # 대시보드가 있는 프로젝트면 알려준다. 결과를 본 뒤에 쓰는 것이라 지금 당장
+  # 할 일은 아니지만, 알려주지 않으면 알아낼 방법이 없다 - 써보고 실패해야만
+  # 의존이 따로 있다는 걸 알게 된다.
+  local dash="$DEST/src/dashboard.py"
+  if [[ -f "$dash" ]]; then
+    printf '\n  대시보드 (선택 · 결과를 본 뒤에)\n'
+    [[ -f "$DEST/requirements-dashboard.txt" ]] && \
+      printf '    python -m pip install -r %s/requirements-dashboard.txt\n' "$DEST"
+    printf '    python -m streamlit run %s -- --result outputs/conv_parsed.json\n' "$dash"
+  fi
 }
 
 main "$@"
