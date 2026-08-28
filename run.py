@@ -16,10 +16,14 @@ from pathlib import Path
 
 from ragdiag import prompts
 from ragdiag.backends import (
+    KEY_VARS,
+    MODEL_VAR,
+    URL_VARS,
     ApiBackend,
     ClaudeCodeBackend,
     JudgeError,
     OpenAICompatBackend,
+    env_first,
 )
 from ragdiag.decide import decide
 from ragdiag.judge import DEFAULT_MODEL, Judge, run_pipeline

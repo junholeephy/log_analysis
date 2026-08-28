@@ -521,3 +521,46 @@ class OpenAICompatBackend:
         # 스키마가 강제되면 한 번에 맞는다. 강제가 없을 때만 재시도가 의미를 갖는다.
         attempts = 1 if mode in ("json_schema", "guided_json") else self.max_attempts
         return parse_with_repair(call, user, out_model, contract_hint, attempts)
+
+
+# ---------------------------------------------------------------------------
+# 환경변수 → 백엔드
+#
+# 사용자가 줘야 할 것은 URL과 키 두 개뿐이다. 모델은 서버에 물어본다.
+# 진입점이 여러 개라 여기 한 곳에 둔다.
+# ---------------------------------------------------------------------------
+
+URL_VARS = ("LLM_API_URL", "API_URL", "RAGDIAG_BASE_URL",
+            "OPENAI_BASE_URL", "OPENAI_API_BASE")
+KEY_VARS = ("LLM_API_KEY", "API_KEY", "RAGDIAG_API_KEY", "OPENAI_API_KEY")
+MODEL_VAR = "RAGDIAG_MODEL"
+
+
+def env_first(names, default=None):
+    for name in names:
+        value = os.environ.get(name)
+        if value:
+            return value
+    return default
+
+
+def backend_from_env(
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+    model: Optional[str] = None,
+    **kwargs,
+) -> "OpenAICompatBackend":
+    url = base_url or env_first(URL_VARS)
+    if not url:
+        raise JudgeError(
+            "LLM 주소가 없습니다. 필요한 건 이 두 개뿐입니다:\n"
+            "  export LLM_API_URL=http://<서버>:8000\n"
+            "  export LLM_API_KEY=<키>\n"
+            f"  (인식하는 이름: {', '.join(URL_VARS)} / {', '.join(KEY_VARS)})"
+        )
+    return OpenAICompatBackend(
+        base_url=url,
+        model=model or os.environ.get(MODEL_VAR),
+        api_key=api_key or env_first(KEY_VARS, "EMPTY"),
+        **kwargs,
+    )

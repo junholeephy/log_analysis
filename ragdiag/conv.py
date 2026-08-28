@@ -136,11 +136,15 @@ def _normalize_alternatives(raw: Any) -> list[dict]:
 
 @dataclass(frozen=True)
 class UserMeta:
-    user_id: str          # 해시 마스킹된 값
+    user_id: str          # 해시 마스킹된 값. 집계 리포트는 이것만 쓴다.
     dept: str
     job_grade: str
     job_name: str
     position_name: str
+    # 출력 파일은 원본 로그 옆에 놓이므로 원본 식별자를 실어 조인할 수 있게 한다.
+    # 리포트·집계에는 쓰지 않는다.
+    raw_user_id: str = ""
+    db_login_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -224,6 +228,8 @@ def parse_conversations(raw: dict) -> list[Conversation]:
             job_grade=user_raw.get("job_grade") or "unknown",
             job_name=user_raw.get("db_job_name") or "unknown",
             position_name=user_raw.get("db_position_name") or "unknown",
+            raw_user_id=str(user_raw.get("user_id") or ""),
+            db_login_id=str(user_raw.get("db_login_id") or ""),
         )
         for index, conv_raw in enumerate(user_raw.get("conversations", [])):
             # conversation_id 가 빠져 있는 대화가 실제로 있다. 케이스 식별자가

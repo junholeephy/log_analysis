@@ -14,6 +14,7 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 from ragdiag.schema import (  # noqa: F401  (NeedAnalysis는 run.py에서 재사용)
+    Observation,
     Case,
     GroundingCheck,
     NeedAnalysis,
@@ -212,3 +213,88 @@ def grounding_user_message(case: Case) -> str:
 
 ## 답변 생성에 주어졌던 문서 ({len(case.rag_chunks)}개 청크)
 {_numbered_chunks(case.rag_chunks)}"""
+
+
+# ---------------------------------------------------------------------------
+# Step 1 · 관측 추출 (taxonomy 30개 분류용)
+#
+# NEED_SYSTEM 을 일반화한 것이다. 핵심은 **case 를 고르지 않는다**는 점이다.
+# 30지선다는 어떤 모델이든 정확도가 안 나오지만, 좁은 질문 8개는 안정적이다.
+# case 는 route.py 가 이 관측값과 코드 검증을 조합해 결정한다.
+# ---------------------------------------------------------------------------
+
+OBSERVE_SYSTEM = """\
+너는 사내 지식 챗봇의 대화 로그를 분석하는 감사자다.
+
+주어지는 것: 사용자의 이전 질문들, 마지막 질문에 대한 챗봇 답변, 그리고 그 답변에
+대한 사용자의 후속 발화.
+
+할 일: **관측 가능한 사실만 기록하는 것.** 무엇이 잘못됐는지 결론 내리지 마라.
+결론은 네가 기록한 사실들을 코드가 조합해서 정한다. 네가 원인을 먼저 정하고
+사실을 거기 맞추면 그 판단은 검증할 수 없게 된다.
+
+중요: 검색된 문서는 주어지지 않는다. 이건 의도된 것이다. 문서를 보면 "사용자가
+원한 것"이 문서에 있는 내용 쪽으로 끌려간다. 사용자 쪽 신호만 보고 판단해라.
+
+complaint_target — 후속 발화가 무엇을 문제 삼는가:
+- format          내용은 맞는데 구성·형식이 요구와 다르다
+- language        요구한 언어로 답하지 않았다
+- length          너무 길거나 짧다
+- content_missing 필요한 정보가 답변에 없다
+- content_wrong   담긴 정보가 사실과 다르다
+- no_answer       답이 오지 않았거나 중간에 끊겼다
+- refusal         답변이 거절했고 사용자가 그에 불만이다
+- inconsistency   이전 답변과 다르다고 지적한다
+- other           위 어디에도 맞지 않는다
+
+후속 발화가 불만이 아니라 단순한 추가 질문이면 complaint_target 은 content_missing
+쪽에 가깝다. 억지로 불만으로 읽지 마라.
+
+question_domain — 마지막 질문이 어떤 종류인가:
+- domain            사내 문서를 찾아야 답할 수 있다 (규정·절차·제도)
+- general_knowledge 일반 상식으로 답할 수 있다
+- calculation       수식·날짜·산수 계산
+- code              SQL·Python 등 코드 작성이나 오류
+- tool_usage        Excel·Spotfire 등 도구 사용법
+- unclear           판별할 수 없다
+
+question_self_contained — 마지막 질문 문장 하나만 놓고 판단해라.
+- false: 지시대명사가 있거나("그거", "아까 그 방법"), 질문의 **대상 명사가 통째로
+  빠져** 무엇에 관한 질문인지 그 문장만으로는 알 수 없다.
+- true: 대상 명사가 문장에 있고 배경·수식어만 생략됐다.
+확신이 없으면 true 다. 후속 질문은 거의 언제나 무언가를 생략하므로, 생략 자체를
+기준으로 삼으면 전부 false 가 되어 이 값이 아무것도 구분하지 못한다.
+
+question_multi_intent — 한 질문에 서로 다른 요구가 둘 이상 섞여 있는가.
+"A와 B를 각각 알려줘"는 true, "A의 B는?"은 하나의 요구이므로 false.
+
+answer_refused — 답변이 정책·권한을 이유로 답하기를 거절했는가.
+정보가 없어서 못 답한 것은 거절이 아니다.
+
+명시적 요구는 사용자가 **실제로 말한 것만** 적어라.
+- requested_language: "영어로 답해줘" 같은 요구가 있을 때만 ISO 코드(ko/en/ja/zh).
+  없으면 빈 문자열.
+- requested_length_kind / requested_length_value: "세 줄 이내"는 max_lines/3,
+  "500자 이내"는 max_chars/500, "짧게"는 vague_short/0, 없으면 none/0.
+- requested_format: "표로", "번호 매겨서" 같은 요구가 있을 때만. 없으면 none.
+
+unmet_need 는 구체적으로 쓰되 **사용자가 요구하지 않은 것을 덧붙이지 마라.**
+"정확한 금액이요"라는 불만에 "직급별 금액표"까지 적으면, 문서에 금액이 멀쩡히
+있어도 부족하다는 판정이 나온다. 요구를 넓히는 쪽이 좁히는 쪽보다 해롭다.
+
+"""
+OBSERVE_SYSTEM += output_contract(Observation)
+
+
+def observe_user_message(case: Case) -> str:
+    """Step 1 입력. rag_data 를 넣지 않는다."""
+    history = "\n".join(f"{i + 1}. {q}" for i, q in enumerate(case.pre_queries)) or "(없음)"
+    return f"""\
+## 이전 질문들 (시간순, 마지막이 이번 답변을 부른 질문)
+{history}
+
+## 마지막 질문에 대한 챗봇 답변
+{case.llm_ans_on_last_q}
+
+## 그 답변에 대한 사용자의 후속 발화
+{case.current_query}"""

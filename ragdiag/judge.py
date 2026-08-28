@@ -20,7 +20,13 @@ from pydantic import BaseModel
 from ragdiag import prompts
 from ragdiag.backends import JudgeError, Usage
 from ragdiag.decide import Diagnosis, decide
-from ragdiag.schema import Case, GroundingCheck, NeedAnalysis, SufficiencyJudgment
+from ragdiag.schema import (
+    Case,
+    GroundingCheck,
+    NeedAnalysis,
+    Observation,
+    SufficiencyJudgment,
+)
 from ragdiag.verify import verify_evidence
 
 T = TypeVar("T", bound=BaseModel)
@@ -93,6 +99,22 @@ class Judge:
         return self._call(
             "sufficiency", prompts.SUFFICIENCY_SYSTEM,
             prompts.sufficiency_user_message(case, need), SufficiencyJudgment,
+        )
+
+    def observe(self, case: Case) -> tuple[Observation, Usage]:
+        """Step 1 — case 를 고르지 않고 관측 사실만 낸다."""
+        return self._call(
+            "observe", prompts.OBSERVE_SYSTEM,
+            prompts.observe_user_message(case), Observation,
+        )
+
+    def judge_sufficiency_from(
+        self, case: Case, obs
+    ) -> tuple[SufficiencyJudgment, Usage]:
+        """Observation 으로 충족도를 판정한다. NeedAnalysis 와 필드가 같아 그대로 쓴다."""
+        return self._call(
+            "sufficiency", prompts.SUFFICIENCY_SYSTEM,
+            prompts.sufficiency_user_message(case, obs), SufficiencyJudgment,
         )
 
     def check_grounding(self, case: Case) -> tuple[GroundingCheck, Usage]:
