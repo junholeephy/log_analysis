@@ -87,3 +87,91 @@ class GroundingCheck(BaseModel):
 
     reasoning: str
     answer_used_rag: UsedRag
+
+
+# ---------------------------------------------------------------------------
+# Step 1 관측 스키마  (taxonomy 30개 확장용)
+#
+# 기존 NeedAnalysis 를 일반화한 것이다. 핵심 차이는 **case를 고르지 않는다**는 점이다.
+# 관측 가능한 사실만 내고, case는 checks.py 의 결정적 검증과 함께 코드가 도출한다.
+#
+# 이렇게 두면 taxonomy 를 고쳐도 이 값들은 그대로 재사용된다 — 관측은 taxonomy 와
+# 무관한 사실이기 때문이다. 라우팅만 다시 돌리면 된다.
+#
+# nullable 타입을 쓰지 않고 "none" 센티넬과 빈 문자열을 쓴 이유: 로컬 서빙의
+# 구조화 출력 강제가 anyOf(null 허용)를 제대로 처리하지 못하는 경우가 있다.
+# 평평한 스칼라만 쓰면 어느 백엔드에서도 안전하다.
+# ---------------------------------------------------------------------------
+
+ComplaintTarget = Literal[
+    "format",            # 형식·구성이 마음에 안 듦        -> case12
+    "language",          # 요구한 언어가 아님              -> case10
+    "length",            # 너무 길다/짧다                  -> case11
+    "content_missing",   # 필요한 정보가 없음              -> case3, 13, 17
+    "content_wrong",     # 담긴 정보가 틀림                -> case15, 18, 21~23
+    "no_answer",         # 답이 안 왔거나 끊김             -> case9
+    "refusal",           # 거절당함                        -> case24, 25
+    "inconsistency",     # 이전 답변과 다름                -> case16
+    "other",
+]
+
+QuestionDomain = Literal[
+    "domain",            # 사내 문서를 찾아야 답할 수 있는 질문
+    "general_knowledge", # 상식                            -> case21
+    "calculation",       # 수식·날짜·산수                  -> case22
+    "code",              # SQL/Python 등                   -> case23
+    "tool_usage",        # Excel/Spotfire 등 도구 사용법
+    "unclear",
+]
+
+LengthRequestKind = Literal[
+    "none", "max_chars", "max_sentences", "max_lines", "vague_short"
+]
+
+FormatRequest = Literal[
+    "none", "numbered_list", "bullet_list", "table", "code_block", "json", "prose"
+]
+
+
+class Observation(BaseModel):
+    """Step 1 출력 — 관측만 하고 판정하지 않는다.
+
+    필드 순서에 의미가 있다. reasoning 이 먼저 나와야 뒤의 값들이 근거의 결과가 된다.
+    """
+
+    reasoning: str = Field(description="불만과 질문을 어떻게 읽었는지 2~3문장")
+
+    # --- 사용자가 원한 것 (기존 NeedAnalysis 계승) ---
+    resolved_question: str = Field(
+        description="대화 맥락을 반영해 대명사와 생략을 모두 푼, 그 자체로 이해되는 질문"
+    )
+    unmet_need: str = Field(
+        description="사용자가 원했는데 받지 못한 것. 사용자가 요구하지 않은 항목을 덧붙이지 말 것"
+    )
+
+    # --- 불만의 성격 ---
+    complaint_target: ComplaintTarget
+    question_domain: QuestionDomain
+
+    # --- 질문 쪽 관측 ---
+    question_self_contained: bool = Field(
+        description="마지막 질문 문장만으로 검색 쿼리를 만들 수 있는가 (case4의 반대)"
+    )
+    question_multi_intent: bool = Field(
+        description="한 질문에 서로 다른 요구가 둘 이상 섞여 있는가 (case3)"
+    )
+
+    # --- 답변 쪽 관측 ---
+    answer_refused: bool = Field(
+        description="답변이 정책·권한을 이유로 거절했는가 (case24, case25)"
+    )
+
+    # --- 명시적 요구 (코드 검증기에 넘길 값) ---
+    requested_language: str = Field(
+        description='요구한 언어의 ISO 코드(ko/en/ja/zh). 요구가 없으면 빈 문자열'
+    )
+    requested_length_kind: LengthRequestKind
+    requested_length_value: int = Field(
+        description="수치 요구의 값. 수치가 없으면 0"
+    )
+    requested_format: FormatRequest
