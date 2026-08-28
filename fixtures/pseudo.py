@@ -143,13 +143,32 @@ TEMPLATES = {
          "해외 출장 식비는 미주 지역 기준 1일 80달러입니다.",
          "국내 기준이라고 말씀드렸는데요."),
     ],
+    # 모델 자원을 확보하지 못해 서비스가 안내 문구를 대신 내보낸 턴.
+    # 답변이 검색 결과와 무관하다는 점이 핵심이다 - 문서는 멀쩡히 붙어 있는데
+    # 모델이 그걸 볼 기회조차 없었다. 이 구분이 안 되면 case21(문서는 있는데
+    # 안 씀)로 잘못 세고, 프롬프트를 고치러 간다.
+    "service_error": [
+        ("연차 이월이 가능한 예외 조건이 무엇인가요?", LEAVE,
+         "서비스에 문제가 있거나, 사용자 분들이 많아서 서버에 부하가 걸리고 있어요. "
+         "잠시 후 다시 시도해 주세요.",
+         "답이 왜 안 나와요?"),
+        ("국내 출장 식비 상한이 얼마인가요?", DOMESTIC,
+         "서비스에 문제가 있거나, 사용자 분들이 많아서 서버에 부하가 걸리고 있어요.",
+         "또 이 화면이네요."),
+        ("건강검진 대상 연령 기준을 알려주세요.", HEALTH,
+         "서비스에 문제가 있거나, 사용자 분들이 많아서 서버에 부하가 걸리고 있어요. "
+         "잠시 후 다시 시도해 주세요.",
+         "몇 번째 이러는지 모르겠어요."),
+    ],
 }
 
 # 부서마다 실패 성향을 다르게 심는다. 이 편중이 대시보드가 읽어낼 신호다.
 DEPT_PROFILE = {
     "해외영업팀": {"retrieval_fail": 6, "generation_fail": 1, "format": 1, "tone": 1},
-    "IT인프라팀": {"format": 3, "code": 2, "length": 1, "generation_fail": 1, "tone": 1},
-    "재무팀": {"calc": 2, "generation_fail": 3, "retrieval_fail": 1, "multi_intent": 1},
+    "IT인프라팀": {"format": 3, "code": 2, "length": 1, "generation_fail": 1, "tone": 1,
+              "service_error": 2},
+    "재무팀": {"calc": 2, "generation_fail": 3, "retrieval_fail": 1, "multi_intent": 1,
+            "service_error": 3},
     "인사팀": {"generation_fail": 2, "retrieval_fail": 2, "length": 1,
              "not_actionable": 1, "format": 1},
     "생산기술팀": {"context_lost": 2, "multi_intent": 2, "retrieval_fail": 1,

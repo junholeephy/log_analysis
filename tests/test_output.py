@@ -58,7 +58,7 @@ def test_classification_is_kept_in_its_own_block():
     turn = build_output(_pairs())["analysis_results"][0]["conversations"][0]["turns"][0]
     assert set(turn) == {"turn", "pre_queries", "llm_ans_on_last_q",
                          "current_query", "chunk_data", "classification"}
-    assert turn["classification"]["case_id"] == "case19"
+    assert turn["classification"]["case_id"] == "case20"
 
 
 def test_chunk_data_comes_from_the_answered_turn():
@@ -94,4 +94,4 @@ def test_output_is_json_serializable():
 
 def test_summary_reports_case_and_confidence():
     text = summarize(_pairs())
-    assert "case19" in text and "medium" in text
+    assert "case20" in text and "medium" in text

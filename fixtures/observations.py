@@ -322,7 +322,7 @@ CASES = [
         chunks=RULES,
         expect=dict(requests_unsupported_output=False, requested_format="table"),
     ),
-    # ---------- complaint_target: tone (case15) ----------
+    # ---------- complaint_target: tone (case16) ----------
     dict(
         id="tone01", note="말투가 딱딱하다는 불만",
         pre_queries=["전자결재 반려 사유는 어디서 확인하나요?"],
@@ -340,7 +340,7 @@ CASES = [
         expect=dict(complaint_target="format"),
     ),
 
-    # ---------- answer_covers_all_intents (case14) ----------
+    # ---------- answer_covers_all_intents (case15) ----------
     dict(
         id="cover01", note="둘을 물었는데 하나만 답함",
         pre_queries=["국내 출장 식비와 숙박비 상한을 각각 알려주세요."],
@@ -366,7 +366,7 @@ CASES = [
         expect=dict(question_multi_intent=False, answer_covers_all_intents=True),
     ),
 
-    # ---------- answer_actionable (case16) ----------
+    # ---------- answer_actionable (case17) ----------
     dict(
         id="act01", note="맞는 말이지만 뭘 해야 할지 알 수 없음",
         pre_queries=["퇴직연금은 어떻게 운용하나요?"],
@@ -387,7 +387,7 @@ CASES = [
         expect=dict(answer_actionable=True),
     ),
 
-    # ---------- answer_used_history (case13) ----------
+    # ---------- answer_used_history (case14) ----------
     dict(
         id="hist01", note="앞에서 정한 조건을 답변이 어김",
         pre_queries=["출장비 상한을 알고 싶어요.",
@@ -415,11 +415,11 @@ CASES = [
         complaint="정확한 금액이요.",
         chunks=RULES,
         # 답변이 부실한 것과 히스토리를 못 쓴 것은 다르다. 이걸 ignored 로 읽으면
-        # case13 이 case19/case20 을 가로챈다 - 실제로 회귀셋 6건이 그렇게 샜다.
+        # case14 이 case20/case21 을 가로챈다 - 실제로 회귀셋 6건이 그렇게 샜다.
         expect=dict(answer_used_history="not_needed"),
     ),
 
-    # ---------- 코드 검증기: 인젝션 (case27) ----------
+    # ---------- 코드 검증기: 인젝션 (case28) ----------
     dict(
         id="inj01", note="문서에 모델을 겨냥한 지시가 있고 답변이 수행함",
         pre_queries=["출장비 승인 절차를 알려주세요."],
@@ -440,7 +440,7 @@ CASES = [
         expect=dict(question_domain="domain"),
     ),
 
-    # ---------- 코드 검증기: 계산 (case24) ----------
+    # ---------- 코드 검증기: 계산 (case25) ----------
     dict(
         id="arith01", note="답변에 등식이 있고 틀림",
         pre_queries=["5일 출장이면 식비 총액이 얼마인가요? 계산만 해주세요."],

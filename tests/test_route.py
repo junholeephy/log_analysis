@@ -7,7 +7,7 @@ import pytest
 
 from ragdiag import taxonomy
 from ragdiag.checks import Check
-from ragdiag.route import route, secondary_from
+from ragdiag.route import route, secondary_from, service_unavailable
 from ragdiag.schema import Evidence, GroundingCheck, Observation, SufficiencyJudgment
 from ragdiag.verify import CitationCheck, VerifiedEvidence
 
@@ -61,7 +61,7 @@ def ground(used) -> GroundingCheck:
 
 def test_refusal_wins_over_everything():
     result = route(obs(answer_refused=True, complaint_target="content_missing"), checks())
-    assert result.primary_case == "case26"
+    assert result.primary_case == "case27"
     # 권한 부족으로 인한 거절과 구분할 수 없다. 구분한 척하지 않는다.
     assert any("권한 조회 결과" in n for n in result.notes)
 
@@ -88,9 +88,9 @@ def test_no_answer_complaint_but_answer_is_intact():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("target,check_name,case_id", [
-    ("format", "format", "case11"),
-    ("language", "language", "case9"),
-    ("length", "length", "case10"),
+    ("format", "format", "case12"),
+    ("language", "language", "case10"),
+    ("length", "length", "case11"),
 ])
 def test_verified_violation_gives_high_confidence(target, check_name, case_id):
     result = route(
@@ -110,7 +110,7 @@ def test_requirement_met_but_still_complaining_is_intent_miss(target, check_name
         obs(complaint_target=target),
         checks(**{check_name: Check(check_name, "ok", "충족")}),
     )
-    assert result.primary_case == "case12"
+    assert result.primary_case == "case13"
 
 
 def test_complaint_without_a_found_requirement_lowers_confidence():
@@ -119,7 +119,7 @@ def test_complaint_without_a_found_requirement_lowers_confidence():
     case 는 유지하되 코드 근거가 없으므로 신뢰도를 낮추고 이유를 남긴다.
     """
     result = route(obs(complaint_target="format"), checks())
-    assert result.primary_case == "case11"
+    assert result.primary_case == "case12"
     assert result.confidence == "medium"
     assert any("요구를 찾지 못함" in n for n in result.notes)
 
@@ -127,7 +127,7 @@ def test_complaint_without_a_found_requirement_lowers_confidence():
 def test_inconsistency_is_parked_not_guessed():
     result = route(obs(complaint_target="inconsistency"), checks())
     assert result.primary_case == taxonomy.UNCLASSIFIED
-    assert any("case18" in n for n in result.notes)
+    assert any("case19" in n for n in result.notes)
 
 
 # ---------------------------------------------------------------------------
@@ -137,12 +137,12 @@ def test_inconsistency_is_parked_not_guessed():
 def test_general_knowledge_is_low_confidence():
     """판정자의 사전지식으로 판정한다 — 다른 라벨과 같은 무게로 집계하면 안 된다."""
     result = route(obs(question_domain="general_knowledge"), checks())
-    assert result.primary_case == "case23"
+    assert result.primary_case == "case24"
     assert result.confidence == "low"
 
 
 def test_calculation_question():
-    assert route(obs(question_domain="calculation"), checks()).primary_case == "case24"
+    assert route(obs(question_domain="calculation"), checks()).primary_case == "case25"
 
 
 def test_broken_code_is_verified():
@@ -150,14 +150,14 @@ def test_broken_code_is_verified():
         obs(question_domain="code"),
         checks(python_syntax=Check("python_syntax", "violated", "문법 오류")),
     )
-    assert result.primary_case == "case25"
+    assert result.primary_case == "case26"
     assert "문법 오류" in result.reason
 
 
 def test_code_passing_syntax_still_case23_with_a_caveat():
     result = route(obs(question_domain="code"),
                    checks(python_syntax=Check("python_syntax", "ok", "통과")))
-    assert result.primary_case == "case25"
+    assert result.primary_case == "case26"
     assert any("실행 검증" in n for n in result.notes)
 
 
@@ -173,38 +173,38 @@ def test_other_complaint_is_out_of_taxonomy():
 
 
 # ---------------------------------------------------------------------------
-# TYPE5 분기 — 검증된 case19/case20 판별
+# TYPE5 분기 — 검증된 case20/case21 판별
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("verdict", ["insufficient", "partial"])
 def test_documents_did_not_cover_the_need(verdict):
     result = route(obs(), checks(), judgment(verdict), citation())
-    assert result.primary_case == "case19"
+    assert result.primary_case == "case20"
     assert any("구분 불가" in n for n in result.notes)
 
 
 def test_sufficient_without_verified_citation_is_downgraded():
     """인용이 하나도 검증되지 않은 sufficient 주장은 사전지식에서 나온 것으로 본다."""
     result = route(obs(), checks(), judgment("sufficient"), citation(n_kept=0))
-    assert result.primary_case == "case19"
+    assert result.primary_case == "case20"
     assert any("강등" in n for n in result.notes)
 
 
 def test_documents_sufficient_but_answer_ignored_them():
     result = route(obs(), checks(), judgment("sufficient"), citation(), ground("ignored"))
-    assert result.primary_case == "case20"
+    assert result.primary_case == "case21"
 
 
 def test_answer_contradicting_documents_is_hallucination():
     result = route(obs(), checks(), judgment("sufficient"), citation(),
                    ground("contradicted"))
-    assert result.primary_case == "case17"
+    assert result.primary_case == "case18"
     assert any("문서 밖 허구" in n for n in result.notes)
 
 
 def test_documents_used_but_user_still_unhappy_is_intent_miss():
     result = route(obs(), checks(), judgment("sufficient"), citation(), ground("used"))
-    assert result.primary_case == "case12"
+    assert result.primary_case == "case13"
 
 
 def test_domain_without_sufficiency_judgment_is_unclassified():
@@ -218,7 +218,7 @@ def test_domain_without_sufficiency_judgment_is_unclassified():
 def test_context_dependent_question_adds_case4():
     result = route(obs(question_self_contained=False), checks(),
                    judgment("insufficient"), citation(0))
-    assert result.primary_case == "case19"
+    assert result.primary_case == "case20"
     assert "case4" in result.secondary_cases
 
 
@@ -234,7 +234,7 @@ def test_pii_and_citation_problems_are_secondary():
                       quoted_spans=Check("quoted_spans", "violated", "원문에 없음")),
         judgment("insufficient"), citation(0),
     )
-    assert {"case6", "case22"} <= set(result.secondary_cases)
+    assert {"case6", "case23"} <= set(result.secondary_cases)
 
 
 def test_secondary_never_duplicates_the_primary():
@@ -283,7 +283,7 @@ def test_routing_never_produces_an_undiagnosable_case():
 def test_every_produced_case_exists_in_the_taxonomy():
     result = route(obs(), checks(), judgment("insufficient"), citation(0))
     payload = result.as_dict()
-    assert payload["case_id"] == "case19"
+    assert payload["case_id"] == "case20"
     assert payload["type_id"] == "TYPE5"
     assert payload["category"] == "category_2"
 
@@ -350,6 +350,10 @@ def reachable_cases() -> set[str]:
         )
         produced.add(result.primary_case)
         produced.update(result.secondary_cases)
+    # case9 는 route() 가 아니라 service_unavailable() 이 만든다. 관측을 거치지
+    # 않는 유일한 경로라 여기서 빠지면 "도달 불가"로 잘못 집계된다.
+    produced.add(service_unavailable(
+        Check("service_error", "violated", "확정 문구 일치")).primary_case)
     return {c for c in produced if c.startswith("case")}
 
 

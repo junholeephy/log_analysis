@@ -202,7 +202,7 @@ def main() -> None:
         st.divider()
         hide_low = st.checkbox(
             "신뢰도 낮음 제외", value=False,
-            help="판정자의 사전지식에 의존하는 케이스(case23 상식 등)를 뺀다. "
+            help="판정자의 사전지식에 의존하는 케이스(case24 상식 등)를 뺀다. "
                  "다른 케이스와 같은 무게로 집계하면 안 되는 값이다.")
 
     view = df
@@ -224,7 +224,11 @@ def main() -> None:
     low = int((view["신뢰도"] == "low").sum())
     unclassified = int(view["case"].isin(["unclassified", "out_of_taxonomy"]).sum())
 
-    cols = st.columns(4)
+    # 서비스 자원 부족(case9)은 모델이 답을 만든 적이 없는 턴이다. 품질 분포에
+    # 섞어 두면 "챗봇이 나쁘다"로 읽히는데 실제로는 인프라가 모자랐던 것이다.
+    service = int((view["case"] == "case9").sum())
+
+    cols = st.columns(5)
     cols[0].metric("분류된 턴", len(view))
     cols[1].metric("지어낸 인용", dropped,
                    help="판정자가 제시한 인용이 원문과 대조되지 않은 건수. "
@@ -233,6 +237,13 @@ def main() -> None:
                    help="판정 근거가 판정자의 사전지식뿐인 케이스")
     cols[3].metric("미분류", unclassified,
                    help="분류 실패. '문제 없음'이 아니라 수동 검토 대상이다.")
+    cols[4].metric("서비스 오류", service,
+                   help="case9 — 모델 자원 부족으로 서비스가 안내 문구를 낸 턴. "
+                        "검색·생성 품질과 무관하므로 아래 분포를 읽을 때 빼고 봐야 한다.")
+    if service:
+        st.info(f"서비스 자원 부족 응답이 {service}건이다 "
+                f"(전체의 {service/len(view):.0%}). 모델이 답을 만든 적이 없는 턴이라 "
+                "검색·생성 품질 지표에서 빼고 읽어야 한다 — 고칠 곳은 인프라다.", icon="🔌")
     if dropped:
         st.warning(f"지어낸 인용이 {dropped}건 있다. 해당 케이스의 판정을 먼저 확인할 것.")
 
@@ -251,7 +262,7 @@ def main() -> None:
     # --- 교차표 -------------------------------------------------------------
     st.subheader("어느 팀이 무엇을 겪나")
     st.caption(
-        "**이 표가 이 도구의 핵심이다.** case19(Retrieve 실패)는 '검색기가 못 찾음'과 "
+        "**이 표가 이 도구의 핵심이다.** case20(Retrieve 실패)는 '검색기가 못 찾음'과 "
         "'코퍼스에 문서가 없음'을 합친 라벨이라 로그만으로는 가를 수 없다. "
         "특정 부서에 몰려 있으면 후자, 즉 그 도메인 문서가 비어 있다는 뜻이다.")
     picker = st.columns([2, 3])
@@ -283,7 +294,7 @@ def main() -> None:
     st.dataframe(share.style.format("{:.0%}").map(heat), use_container_width=True)
 
     # --- 코퍼스 보강 목록 ---------------------------------------------------
-    gaps = view[view["case"].isin(["case19"]) & (view["없던것"] != "")]
+    gaps = view[view["case"].isin(["case20"]) & (view["없던것"] != "")]
     st.subheader(f"코퍼스 보강 목록 ({len(gaps)}건)")
     st.caption("문서에 없어서 답할 수 없었던 것. 문서팀에 그대로 넘길 수 있는 목록이다.")
     if gaps.empty:
@@ -299,8 +310,8 @@ def main() -> None:
 
     # --- 케이스 사전 --------------------------------------------------------
     with st.expander(f"케이스 설명 — 이 데이터에 나온 {view['case'].nunique()}종"):
-        st.caption("무엇이 아닌가까지 적었다. 헷갈리는 쌍(case3/14, case4/13, "
-                   "case12/16, case19/20, case2/11)에서 라벨이 갈린다.")
+        st.caption("무엇이 아닌가까지 적었다. 헷갈리는 쌍(case3/case15, case4/case14, "
+                   "case13/case17, case20/case21, case2/case12)에서 라벨이 갈린다.")
         counts = view["case"].value_counts()
         st.dataframe(pd.DataFrame([
             {"case": cid,

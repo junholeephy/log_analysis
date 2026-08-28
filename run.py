@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""[회귀 기준선] RAG 충족도 진단 CLI — case19/case20 판별, 라벨 6개.
+"""[회귀 기준선] RAG 충족도 진단 CLI — case20/case21 판별, 라벨 6개.
 
 현행 분석 경로는 conv_parse.py 다. 이 진입점은 검증된 기준선을 보존하고
 데이터 실태 조사(--inspect)·서버 점검(--check-llm)을 제공한다.

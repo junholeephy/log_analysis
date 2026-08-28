@@ -228,7 +228,7 @@ def main() -> int:
     p.add_argument("--golden", action="store_true",
                    help="Step 1 관측 골든셋을 돌려 필드별 일치율을 잰다")
     p.add_argument("--legacy-regression", action="store_true",
-                   help="구 case19/case20 회귀셋 23건을 새 파이프라인으로 돌려 대조한다")
+                   help="구 case20/case21 회귀셋 23건을 새 파이프라인으로 돌려 대조한다")
     p.add_argument("--filter", help="필터 JSON. 없으면 진단 가능한 후속 턴 전부")
     p.add_argument("--out", default="conv_parsed.json", help="결과 저장 경로")
 

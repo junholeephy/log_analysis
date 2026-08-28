@@ -385,31 +385,31 @@ def build(rag_as_string: bool = True) -> tuple[dict, dict]:
 # ---------------------------------------------------------------------------
 # 구 라벨(6개) -> 신 taxonomy case 매핑
 #
-# 이 셋은 case19/case20 판별 전용으로 만들어졌고 실제 LLM 으로 23/23 검증된 유일한
+# 이 셋은 case20/case21 판별 전용으로 만들어졌고 실제 LLM 으로 23/23 검증된 유일한
 # 케이스 집합이다. 새 파이프라인이 같은 결과를 내는지 확인하는 데 쓴다.
 #
 # 1:1 이 아니다. out_of_scope 하나가 형식·길이·언어로 쪼개졌고, rag_partial 은
-# case19 에 흡수됐다. 쪼개진 쪽은 케이스마다 expect_case 로 직접 지정한다.
+# case20 에 흡수됐다. 쪼개진 쪽은 케이스마다 expect_case 로 직접 지정한다.
 # ---------------------------------------------------------------------------
 
 LEGACY_TO_CASE = {
-    "rag_insufficient": {"case19"},
-    "rag_partial": {"case19"},                       # 신 체계에서는 둘 다 case19
-    "rag_sufficient_generation_failed": {"case20"},
-    "rag_sufficient_other": {"case12"},              # 의도와 다른 답변
+    "rag_insufficient": {"case20"},
+    "rag_partial": {"case20"},                       # 신 체계에서는 둘 다 case20
+    "rag_sufficient_generation_failed": {"case21"},
+    "rag_sufficient_other": {"case13"},              # 의도와 다른 답변
     "unclassified": {"unclassified", "out_of_taxonomy"},
 }
 
 # out_of_scope 였던 3건과, 구 기준에서도 정답이 하나로 확정되지 않던 1건.
 EXPECT_CASE = {
     # 구 기준 expect 가 ["rag_sufficient_other", "rag_partial"] 이었다.
-    # rag_partial 은 신 체계에서 case19 이므로 그쪽도 정답이다.
-    "C-2004:4": {"case12", "case19"},
-    "C-2003:11": {"case10"},                 # "답변이 너무 짧아요" -> 길이
-    "C-3003:9": {"case11"},                  # "번호 매겨서" -> 포맷
+    # rag_partial 은 신 체계에서 case20 이므로 그쪽도 정답이다.
+    "C-2004:4": {"case13", "case20"},
+    "C-2003:11": {"case11"},                 # "답변이 너무 짧아요" -> 길이
+    "C-3003:9": {"case12"},                  # "번호 매겨서" -> 포맷
     # "말투가 딱딱하고 영어 용어가 많다". v1 에서는 갈 곳이 없어 미분류로 떨어졌고,
-    # 그것이 v2 에 case15(말투·어조)를 추가한 이유다. 이제 제 자리로 간다.
-    "C-4003:13": {"case15"},
+    # 그것이 v2 에 case16(말투·어조)를 추가한 이유다. 이제 제 자리로 간다.
+    "C-4003:13": {"case16"},
 }
 
 

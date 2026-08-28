@@ -28,10 +28,11 @@ from ragdiag.checks import (
     check_pii,
     check_python_syntax,
     check_quoted_spans,
+    check_service_error,
     check_truncated,
 )
 from ragdiag.judge import Judge
-from ragdiag.route import Classification, route
+from ragdiag.route import Classification, route, service_unavailable
 from ragdiag.schema import Case, GroundingCheck, Observation, SufficiencyJudgment
 from ragdiag.verify import CitationCheck, verify_evidence
 
@@ -62,6 +63,7 @@ def run_checks(case: Case, obs: Observation) -> dict[str, Check]:
     """
     checks: dict[str, Check] = {
         "pii": check_pii(case.last_query),
+        "service_error": check_service_error(case.llm_ans_on_last_q),
         "truncated": check_truncated(case.llm_ans_on_last_q),
         "quoted_spans": check_quoted_spans(case.llm_ans_on_last_q, case.rag_chunks),
         "python_syntax": check_python_syntax(case.llm_ans_on_last_q),
@@ -96,6 +98,19 @@ def classify_turn(case: Case, judge: Judge) -> TurnResult:
         return value
 
     try:
+        # 서비스가 자원을 확보하지 못했을 때 내보내는 확정 문구는 모델이 만든 답이
+        # 아니다. 판정할 답변이 없으므로 LLM 을 한 번도 부르지 않고 여기서 끝낸다.
+        #
+        # 관측을 돌리면 판정자가 이 문구를 거절로 읽어 case27(보안 정책)로 간다.
+        # 서버 자원 문제를 보안 정책 문제로 세면 고칠 곳을 정반대로 가리킨다.
+        service = check_service_error(case.llm_ans_on_last_q)
+        if service.violated:
+            return TurnResult(
+                case=case, checks={"service_error": service},
+                classification=service_unavailable(service),
+                usage=usage, n_calls=0,
+            )
+
         obs = track(judge.observe(case))
         checks = run_checks(case, obs)
 

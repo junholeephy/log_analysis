@@ -43,7 +43,7 @@ class Check:
 
 
 # ---------------------------------------------------------------------------
-# 언어  (case9)
+# 언어  (case10)
 # ---------------------------------------------------------------------------
 
 _SCRIPTS = {
@@ -88,7 +88,7 @@ def detect_language(text: str) -> str:
 
 
 def check_language(answer: str, requested: Optional[str]) -> Check:
-    """case9 — 특정 언어를 요구했는데 지키지 않음."""
+    """case10 — 특정 언어를 요구했는데 지키지 않음."""
     if not requested:
         return Check("language", "not_applicable", "언어 요구 없음")
     actual = detect_language(answer)
@@ -100,7 +100,7 @@ def check_language(answer: str, requested: Optional[str]) -> Check:
 
 
 # ---------------------------------------------------------------------------
-# 길이  (case10)
+# 길이  (case11)
 # ---------------------------------------------------------------------------
 
 # "짧게 답해줘"처럼 수치가 없는 요구를 판정하기 위한 기준값.
@@ -125,7 +125,7 @@ class LengthRequest:
 
 
 def check_length(answer: str, requested: Optional[LengthRequest]) -> Check:
-    """case10 — 짧게/N자 이내를 요구했는데 지키지 않음."""
+    """case11 — 짧게/N자 이내를 요구했는데 지키지 않음."""
     if requested is None:
         return Check("length", "not_applicable", "길이 요구 없음")
 
@@ -157,7 +157,7 @@ def check_length(answer: str, requested: Optional[LengthRequest]) -> Check:
 
 
 # ---------------------------------------------------------------------------
-# 포맷  (case11)
+# 포맷  (case12)
 # ---------------------------------------------------------------------------
 
 _NUMBERED = re.compile(r"^\s*(?:\d+[.)]|[①-⑳])\s+\S", re.M)
@@ -197,7 +197,7 @@ def _strip_fence(text: str) -> str:
 
 
 def check_format(answer: str, requested: Optional[RequestedFormat]) -> Check:
-    """case11 — 특정 포맷을 요구했는데 지키지 않음."""
+    """case12 — 특정 포맷을 요구했는데 지키지 않음."""
     if not requested:
         return Check("format", "not_applicable", "포맷 요구 없음")
     if has_format(answer, requested):
@@ -246,6 +246,63 @@ def check_truncated(answer: str) -> Check:
 
 
 # ---------------------------------------------------------------------------
+# 서비스 자원 부족 응답
+#
+# 모델 자원을 확보하지 못했을 때 서비스 계층이 내보내는 **확정 문구**다. LLM 이
+# 생성한 답이 아니라 정해진 문자열이므로 코드로 판정한다 - 신뢰도 high 다.
+#
+# 이걸 따로 잡지 않으면 판정자가 "답변이 거절했다"로 읽어 case27(보안 정책상
+# 답변 불가)으로 간다. 실제로 그 오분류가 많이 나왔다. 서버 자원 문제를 보안
+# 정책 문제로 세면 고칠 곳을 정반대로 가리킨다 - 한쪽은 인프라 증설이고
+# 다른 쪽은 권한 정책이다.
+#
+# 문구는 배포마다 다르므로 아래 목록에 줄을 추가해 쓴다. 공백 차이는 무시한다.
+# ---------------------------------------------------------------------------
+
+SERVICE_ERROR_TEMPLATES = (
+    "서비스에 문제가 있거나, 사용자 분들이 많아서 서버에 부하가 걸리고 있어요",
+)
+
+# 템플릿이 조금 바뀌어도 놓치지 않도록 두는 보조 표지. 단독으로는 쓰지 않고
+# 두 개 이상 겹칠 때만 인정한다 - "서버" 한 단어로 잡으면 서버 관련 질문에
+# 정상적으로 답한 것까지 오탐한다.
+_SERVICE_ERROR_MARKERS = (
+    "서버에 부하", "사용자 분들이 많아", "일시적인 오류", "잠시 후 다시",
+    "요청이 많아", "응답을 생성하지 못", "서비스에 문제가",
+)
+
+# 확정 문구는 짧고, 그 문구가 답변의 전부다. 길면 서버 장애를 '주제로' 답한
+# 정상 답변일 가능성이 높다. 길이로 한 번 더 거른다.
+MAX_SERVICE_ERROR_LEN = 400
+
+
+def _squeeze(text: str) -> str:
+    return re.sub(r"\s+", "", text)
+
+
+def check_service_error(answer: str) -> Check:
+    """답변이 서비스 자원 부족 안내 문구인가."""
+    if not answer.strip():
+        return Check("service_error", "not_applicable", "답변이 비어 있음")
+
+    packed = _squeeze(answer)
+    for template in SERVICE_ERROR_TEMPLATES:
+        if _squeeze(template) in packed:
+            return Check("service_error", "violated",
+                         f"서비스 자원 부족 확정 문구와 일치: {template[:30]}…")
+
+    if len(packed) > MAX_SERVICE_ERROR_LEN:
+        return Check("service_error", "ok",
+                     f"확정 문구 없음 · 답변이 길어({len(packed)}자) 안내 문구가 아님")
+
+    hits = [m for m in _SERVICE_ERROR_MARKERS if _squeeze(m) in packed]
+    if len(hits) >= 2:
+        return Check("service_error", "violated",
+                     f"확정 문구는 아니나 표지 {len(hits)}개 일치: {', '.join(hits)}")
+
+    return Check("service_error", "ok", "서비스 안내 문구 아님")
+
+# ---------------------------------------------------------------------------
 # 개인정보  (case6)
 # ---------------------------------------------------------------------------
 
@@ -278,7 +335,7 @@ def check_pii(text: str) -> Check:
 
 
 # ---------------------------------------------------------------------------
-# 답변 속 인용 대조  (case22)
+# 답변 속 인용 대조  (case23)
 # ---------------------------------------------------------------------------
 
 # verify.py 와 방향이 반대다. 거기서는 판정자의 인용을 검증하고, 여기서는
@@ -298,11 +355,11 @@ def extract_quotes(answer: str) -> list[str]:
 
 
 def check_quoted_spans(answer: str, chunks: list[str], threshold: float = 0.9) -> Check:
-    """case20의 검증 가능한 부분 — 답변이 인용부호로 제시한 문장이 실제 문서에 있는가.
+    """case21의 검증 가능한 부분 — 답변이 인용부호로 제시한 문장이 실제 문서에 있는가.
 
     한계: 문서명·조항번호 같은 출처 표기는 검증할 수 없다. 청크에 문서 메타데이터가
-    없기 때문이다(case19와 같은 이유로 파킹). 여기서 잡는 것은 '문서에서 가져온 척한
-    문장'뿐이고, 그게 case20에서 실제로 확인 가능한 유일한 부분이다.
+    없기 때문이다(case20와 같은 이유로 파킹). 여기서 잡는 것은 '문서에서 가져온 척한
+    문장'뿐이고, 그게 case21에서 실제로 확인 가능한 유일한 부분이다.
     """
     quotes = extract_quotes(answer)
     if not quotes:
@@ -322,7 +379,7 @@ def check_quoted_spans(answer: str, chunks: list[str], threshold: float = 0.9) -
 
 
 # ---------------------------------------------------------------------------
-# 코드 답변  (case25, 파이썬만)
+# 코드 답변  (case26, 파이썬만)
 # ---------------------------------------------------------------------------
 
 _CODE_BLOCK = re.compile(r"```(\w+)?\s*\n(.*?)```", re.S)
@@ -333,7 +390,7 @@ def extract_code_blocks(answer: str) -> list[tuple[str, str]]:
 
 
 def check_python_syntax(answer: str) -> Check:
-    """case23의 일부 — 파이썬 코드 블록이 문법적으로 파싱되는가.
+    """case24의 일부 — 파이썬 코드 블록이 문법적으로 파싱되는가.
 
     문법이 맞다고 정답인 건 아니다. 틀린 문법은 확실히 실행 불가라는 것만 말한다.
     실행 검증은 샌드박스가 있어야 하므로 여기서는 하지 않는다.
@@ -359,11 +416,11 @@ def check_python_syntax(answer: str) -> Check:
 
 
 # ---------------------------------------------------------------------------
-# 산술 검증  (case24)
+# 산술 검증  (case25)
 # ---------------------------------------------------------------------------
 
 # 답변 안의 "A + B = C" 꼴을 찾아 직접 계산해 본다. 자연어 계산까지는 못 잡지만,
-# 식을 써 놓고 답을 틀린 경우는 확실히 잡힌다. 그게 case24 에서 코드로 검증
+# 식을 써 놓고 답을 틀린 경우는 확실히 잡힌다. 그게 case25 에서 코드로 검증
 # 가능한 유일한 부분이다.
 _EQUATION = re.compile(
     r"(?<![\w.])(\d[\d,]*(?:\.\d+)?(?:\s*[-+*/×÷]\s*\d[\d,]*(?:\.\d+)?)+)"
@@ -405,7 +462,7 @@ def check_arithmetic(answer: str, tolerance: float = 0.01) -> Check:
 
 
 # ---------------------------------------------------------------------------
-# SQL 문법  (case25 보강)
+# SQL 문법  (case26 보강)
 # ---------------------------------------------------------------------------
 
 _SQL_KEYWORDS = ("select", "insert", "update", "delete", "with", "create")
@@ -443,7 +500,7 @@ def check_sql_shape(answer: str) -> Check:
 
 
 # ---------------------------------------------------------------------------
-# 간접 프롬프트 인젝션  (case27)
+# 간접 프롬프트 인젝션  (case28)
 # ---------------------------------------------------------------------------
 
 # 사내 규정문은 "~한다" 같은 규범형 서술이 많다. 명령형이라는 이유로 전부 의심하면
