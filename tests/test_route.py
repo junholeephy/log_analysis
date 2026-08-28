@@ -21,6 +21,7 @@ def obs(**kw) -> Observation:
         requested_length_kind="none", requested_length_value=0,
         requested_format="none",
         question_answerable_as_asked=True, requests_unsupported_output=False,
+        answer_covers_all_intents=True, answer_actionable=True,
         answer_used_history="not_needed",
     )
     base.update(kw)
@@ -60,9 +61,9 @@ def ground(used) -> GroundingCheck:
 
 def test_refusal_wins_over_everything():
     result = route(obs(answer_refused=True, complaint_target="content_missing"), checks())
-    assert result.primary_case == "case24"
-    # 권한 조회 결과가 없어 case25 와 구분할 수 없다. 구분한 척하지 않는다.
-    assert any("case25" in n for n in result.notes)
+    assert result.primary_case == "case26"
+    # 권한 부족으로 인한 거절과 구분할 수 없다. 구분한 척하지 않는다.
+    assert any("권한 조회 결과" in n for n in result.notes)
 
 
 def test_truncated_answer_is_case9():
@@ -70,16 +71,16 @@ def test_truncated_answer_is_case9():
         obs(complaint_target="no_answer"),
         checks(truncated=Check("truncated", "violated", "종결 부호 없이 끝남")),
     )
-    assert result.primary_case == "case9"
+    assert result.primary_case == "case8"
     assert result.confidence == "high"
 
 
 def test_no_answer_complaint_but_answer_is_intact():
-    """답이 없다는 불만인데 답변은 온전하다. case7(서비스 끊김)은 로그로 판정 불가."""
+    """답이 없다는 불만인데 답변은 온전하다. 서비스 끊김은 로그로 판정 불가."""
     result = route(obs(complaint_target="no_answer"),
                    checks(truncated=Check("truncated", "ok", "정상")))
     assert result.primary_case == taxonomy.UNCLASSIFIED
-    assert any("case7" in n for n in result.notes)
+    assert any("서비스 끊김" in n for n in result.notes)
 
 
 # ---------------------------------------------------------------------------
@@ -87,9 +88,9 @@ def test_no_answer_complaint_but_answer_is_intact():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("target,check_name,case_id", [
-    ("format", "format", "case12"),
-    ("language", "language", "case10"),
-    ("length", "length", "case11"),
+    ("format", "format", "case11"),
+    ("language", "language", "case9"),
+    ("length", "length", "case10"),
 ])
 def test_verified_violation_gives_high_confidence(target, check_name, case_id):
     result = route(
@@ -109,7 +110,7 @@ def test_requirement_met_but_still_complaining_is_intent_miss(target, check_name
         obs(complaint_target=target),
         checks(**{check_name: Check(check_name, "ok", "충족")}),
     )
-    assert result.primary_case == "case13"
+    assert result.primary_case == "case12"
 
 
 def test_complaint_without_a_found_requirement_lowers_confidence():
@@ -118,7 +119,7 @@ def test_complaint_without_a_found_requirement_lowers_confidence():
     case 는 유지하되 코드 근거가 없으므로 신뢰도를 낮추고 이유를 남긴다.
     """
     result = route(obs(complaint_target="format"), checks())
-    assert result.primary_case == "case12"
+    assert result.primary_case == "case11"
     assert result.confidence == "medium"
     assert any("요구를 찾지 못함" in n for n in result.notes)
 
@@ -126,7 +127,7 @@ def test_complaint_without_a_found_requirement_lowers_confidence():
 def test_inconsistency_is_parked_not_guessed():
     result = route(obs(complaint_target="inconsistency"), checks())
     assert result.primary_case == taxonomy.UNCLASSIFIED
-    assert any("case16" in n for n in result.notes)
+    assert any("case18" in n for n in result.notes)
 
 
 # ---------------------------------------------------------------------------
@@ -136,12 +137,12 @@ def test_inconsistency_is_parked_not_guessed():
 def test_general_knowledge_is_low_confidence():
     """판정자의 사전지식으로 판정한다 — 다른 라벨과 같은 무게로 집계하면 안 된다."""
     result = route(obs(question_domain="general_knowledge"), checks())
-    assert result.primary_case == "case21"
+    assert result.primary_case == "case23"
     assert result.confidence == "low"
 
 
 def test_calculation_question():
-    assert route(obs(question_domain="calculation"), checks()).primary_case == "case22"
+    assert route(obs(question_domain="calculation"), checks()).primary_case == "case24"
 
 
 def test_broken_code_is_verified():
@@ -149,14 +150,14 @@ def test_broken_code_is_verified():
         obs(question_domain="code"),
         checks(python_syntax=Check("python_syntax", "violated", "문법 오류")),
     )
-    assert result.primary_case == "case23"
+    assert result.primary_case == "case25"
     assert "문법 오류" in result.reason
 
 
 def test_code_passing_syntax_still_case23_with_a_caveat():
     result = route(obs(question_domain="code"),
                    checks(python_syntax=Check("python_syntax", "ok", "통과")))
-    assert result.primary_case == "case23"
+    assert result.primary_case == "case25"
     assert any("실행 검증" in n for n in result.notes)
 
 
@@ -172,38 +173,38 @@ def test_other_complaint_is_out_of_taxonomy():
 
 
 # ---------------------------------------------------------------------------
-# TYPE5 분기 — 검증된 case17/18 판별
+# TYPE5 분기 — 검증된 case19/case20 판별
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("verdict", ["insufficient", "partial"])
 def test_documents_did_not_cover_the_need(verdict):
     result = route(obs(), checks(), judgment(verdict), citation())
-    assert result.primary_case == "case17"
+    assert result.primary_case == "case19"
     assert any("구분 불가" in n for n in result.notes)
 
 
 def test_sufficient_without_verified_citation_is_downgraded():
     """인용이 하나도 검증되지 않은 sufficient 주장은 사전지식에서 나온 것으로 본다."""
     result = route(obs(), checks(), judgment("sufficient"), citation(n_kept=0))
-    assert result.primary_case == "case17"
+    assert result.primary_case == "case19"
     assert any("강등" in n for n in result.notes)
 
 
 def test_documents_sufficient_but_answer_ignored_them():
     result = route(obs(), checks(), judgment("sufficient"), citation(), ground("ignored"))
-    assert result.primary_case == "case18"
+    assert result.primary_case == "case20"
 
 
 def test_answer_contradicting_documents_is_hallucination():
     result = route(obs(), checks(), judgment("sufficient"), citation(),
                    ground("contradicted"))
-    assert result.primary_case == "case15"
+    assert result.primary_case == "case17"
     assert any("문서 밖 허구" in n for n in result.notes)
 
 
 def test_documents_used_but_user_still_unhappy_is_intent_miss():
     result = route(obs(), checks(), judgment("sufficient"), citation(), ground("used"))
-    assert result.primary_case == "case13"
+    assert result.primary_case == "case12"
 
 
 def test_domain_without_sufficiency_judgment_is_unclassified():
@@ -217,7 +218,7 @@ def test_domain_without_sufficiency_judgment_is_unclassified():
 def test_context_dependent_question_adds_case4():
     result = route(obs(question_self_contained=False), checks(),
                    judgment("insufficient"), citation(0))
-    assert result.primary_case == "case17"
+    assert result.primary_case == "case19"
     assert "case4" in result.secondary_cases
 
 
@@ -233,7 +234,7 @@ def test_pii_and_citation_problems_are_secondary():
                       quoted_spans=Check("quoted_spans", "violated", "원문에 없음")),
         judgment("insufficient"), citation(0),
     )
-    assert {"case6", "case20"} <= set(result.secondary_cases)
+    assert {"case6", "case22"} <= set(result.secondary_cases)
 
 
 def test_secondary_never_duplicates_the_primary():
@@ -258,8 +259,8 @@ def test_routing_never_produces_an_undiagnosable_case():
     절대 그쪽으로 가지 않는다.
     """
     produced = set()
-    targets = ["format", "language", "length", "content_missing", "content_wrong",
-               "no_answer", "refusal", "inconsistency", "other"]
+    targets = ["tone", "format", "language", "length", "content_missing",
+               "content_wrong", "no_answer", "refusal", "inconsistency", "other"]
     domains = ["domain", "general_knowledge", "calculation", "code", "tool_usage", "unclear"]
     for target in targets:
         for domain in domains:
@@ -282,7 +283,7 @@ def test_routing_never_produces_an_undiagnosable_case():
 def test_every_produced_case_exists_in_the_taxonomy():
     result = route(obs(), checks(), judgment("insufficient"), citation(0))
     payload = result.as_dict()
-    assert payload["case_id"] == "case17"
+    assert payload["case_id"] == "case19"
     assert payload["type_id"] == "TYPE5"
     assert payload["category"] == "category_2"
 
@@ -302,8 +303,8 @@ def reachable_cases() -> set[str]:
     import itertools
 
     produced = set()
-    targets = ["format", "language", "length", "content_missing", "content_wrong",
-               "no_answer", "refusal", "inconsistency", "other"]
+    targets = ["tone", "format", "language", "length", "content_missing",
+               "content_wrong", "no_answer", "refusal", "inconsistency", "other"]
     domains = ["domain", "general_knowledge", "calculation", "code", "tool_usage", "unclear"]
     outcomes = [
         (None, None, None),
@@ -330,17 +331,20 @@ def reachable_cases() -> set[str]:
     # 관측 필드를 늘릴 때마다 여기도 늘려야 한다. 안 그러면 도달 범위를 실제보다
     # 적게 세고, 드리프트 테스트가 통과하면서 문서가 뒤처진다.
     flags = list(itertools.product((True, False), (True, False),
-                                   ("not_needed", "used", "ignored")))
+                                   ("not_needed", "used", "ignored"),
+                                   (True, False), (True, False)))
     variants = variants + [checks(injection=Check("injection", "violated", "x")),
                            checks(arithmetic=Check("arithmetic", "violated", "x"))]
 
-    for target, domain, refused, (j, c, g), ck, (answerable, unsupported, history) in \
+    for target, domain, refused, (j, c, g), ck, \
+            (answerable, unsupported, history, covers, actionable) in \
             itertools.product(targets, domains, (True, False), outcomes, variants, flags):
         result = route(
             obs(complaint_target=target, question_domain=domain, answer_refused=refused,
                 question_self_contained=False, question_multi_intent=True,
                 question_answerable_as_asked=answerable,
                 requests_unsupported_output=unsupported,
+                answer_covers_all_intents=covers, answer_actionable=actionable,
                 answer_used_history=history),
             ck, j, c, g,
         )

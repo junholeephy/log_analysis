@@ -39,7 +39,10 @@ def score_observation(
         entry = scores.setdefault(name, FieldScore(name))
         entry.total += 1
         got = getattr(obs, name, None) if obs else None
-        if got == want:
+        # 정답이 하나로 확정되지 않는 케이스는 허용 집합으로 둔다. 억지로 하나를
+        # 고르게 만들면 설계자의 추측이 정답이 된다.
+        ok = got in want if isinstance(want, (set, frozenset)) else got == want
+        if ok:
             entry.hits += 1
         else:
             entry.misses.append((case_id, want, got))

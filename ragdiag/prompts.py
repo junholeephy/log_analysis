@@ -237,6 +237,7 @@ OBSERVE_SYSTEM = """\
 원한 것"이 문서에 있는 내용 쪽으로 끌려간다. 사용자 쪽 신호만 보고 판단해라.
 
 complaint_target — 후속 발화가 무엇을 문제 삼는가:
+- tone            내용은 맞는데 말투·어조·용어 사용이 마음에 안 든다
 - format          내용은 맞는데 구성·형식이 요구와 다르다
 - language        요구한 언어로 답하지 않았다
 - length          너무 길거나 짧다
@@ -289,6 +290,15 @@ question_answerable_as_asked — 마지막 질문이 그 자체로 답을 특정
 question_self_contained 와 다르다. 저건 **앞 대화가 있으면 풀리는가**를 보고,
 이건 **앞 대화를 다 알아도 여전히 모호한가**를 본다. 대명사만 있는 질문은
 self_contained=false 지만 앞 대화로 풀리면 answerable=true 다.
+
+answer_covers_all_intents — 질문이 복합이었다면 답변이 모든 요구를 다뤘는가.
+단일 요구였으면 true 다. question_multi_intent 와 짝이다 — 저건 질문이 복합인지,
+이건 답변이 그걸 다 다뤘는지를 본다.
+
+answer_actionable — 답변만 보고 사용자가 다음에 무엇을 할지 알 수 있는가.
+- false: "규정에 따라 지급됩니다" (그래서 어떻게 하라는 건지 알 수 없음)
+- true: 금액·절차·경로처럼 행동으로 옮길 수 있는 것이 있다
+내용이 틀린 것과 다르다. **맞는데 행동으로 이어지지 않는 경우**만 false 다.
 
 answer_used_history — 답변이 이전 턴의 내용을 제대로 이어받았는가.
 - not_needed: 히스토리 없이도 답할 수 있는 질문이었다 (첫 질문이거나 독립적)

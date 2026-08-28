@@ -180,8 +180,10 @@ CASES = [
         answer="3월 15일까지 정산하시면 됩니다.",
         complaint="5영업일이면 3월 13일 아닌가요?",
         chunks=RULES,
-        # 규정이 필요하므로 domain 이다. 계산 오류는 부가 케이스(case22)로 따로 잡힌다.
-        expect=dict(question_domain="domain"),
+        # 규정(5영업일)이 필요하니 domain 이지만 계산도 해야 한다. 본질적으로 양쪽이라
+        # 하나로 정할 수 없다. 어느 쪽이든 계산 오류는 잡힌다 - domain 이면 부가
+        # 케이스로, calculation 이면 주 라벨로. 그래서 둘 다 인정한다.
+        expect=dict(question_domain={"domain", "calculation"}),
     ),
     dict(
         id="code01", note="SQL 작성 요청",

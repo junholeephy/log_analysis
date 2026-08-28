@@ -104,22 +104,23 @@ class GroundingCheck(BaseModel):
 # ---------------------------------------------------------------------------
 
 ComplaintTarget = Literal[
-    "format",            # 형식·구성이 마음에 안 듦        -> case12
-    "language",          # 요구한 언어가 아님              -> case10
-    "length",            # 너무 길다/짧다                  -> case11
+    "tone",              # 말투·어조·용어가 마음에 안 듦    -> case15
+    "format",            # 형식·구성이 마음에 안 듦        -> case11
+    "language",          # 요구한 언어가 아님              -> case9
+    "length",            # 너무 길다/짧다                  -> case10
     "content_missing",   # 필요한 정보가 없음              -> case3, 13, 17
-    "content_wrong",     # 담긴 정보가 틀림                -> case15, 18, 21~23
-    "no_answer",         # 답이 안 왔거나 끊김             -> case9
-    "refusal",           # 거절당함                        -> case24, 25
-    "inconsistency",     # 이전 답변과 다름                -> case16
+    "content_wrong",     # 담긴 정보가 틀림                -> case17, 18, 21~23
+    "no_answer",         # 답이 안 왔거나 끊김             -> case8
+    "refusal",           # 거절당함                        -> case26, 25
+    "inconsistency",     # 이전 답변과 다름                -> case18
     "other",
 ]
 
 QuestionDomain = Literal[
     "domain",            # 사내 문서를 찾아야 답할 수 있는 질문
-    "general_knowledge", # 상식                            -> case21
-    "calculation",       # 수식·날짜·산수                  -> case22
-    "code",              # SQL/Python 등                   -> case23
+    "general_knowledge", # 상식                            -> case23
+    "calculation",       # 수식·날짜·산수                  -> case24
+    "code",              # SQL/Python 등                   -> case25
     "tool_usage",        # Excel/Spotfire 등 도구 사용법
     "unclear",
 ]
@@ -127,7 +128,7 @@ QuestionDomain = Literal[
 HistoryUse = Literal[
     "not_needed",   # 히스토리 없이도 답할 수 있는 질문
     "used",         # 답변이 이전 턴 내용을 반영함
-    "ignored",      # 이전 턴에 나온 내용을 잊었거나 잘못 연결함  -> case14
+    "ignored",      # 이전 턴에 나온 내용을 잊었거나 잘못 연결함  -> case13
 ]
 
 LengthRequestKind = Literal[
@@ -169,14 +170,21 @@ class Observation(BaseModel):
 
     # --- 답변 쪽 관측 ---
     answer_refused: bool = Field(
-        description="답변이 정책·권한을 이유로 거절했는가 (case24, case25)"
+        description="답변이 정책·권한을 이유로 거절했는가 (case26)"
     )
     question_answerable_as_asked: bool = Field(
         description="질문이 그 자체로 답을 특정할 수 있을 만큼 분명한가. "
                     "무엇을 묻는지 알 수 없으면 false (case1)"
     )
+    answer_covers_all_intents: bool = Field(
+        description="복합 질문이었다면 답변이 모든 요구를 다뤘는가. "
+                    "단일 요구였으면 true (case14)"
+    )
+    answer_actionable: bool = Field(
+        description="답변만 보고 사용자가 다음에 무엇을 할지 알 수 있는가 (case16)"
+    )
     answer_used_history: HistoryUse = Field(
-        description="답변이 이전 턴의 내용을 제대로 이어받았는가 (case14)"
+        description="답변이 이전 턴의 내용을 제대로 이어받았는가 (case13)"
     )
     requests_unsupported_output: bool = Field(
         description="챗봇이 낼 수 없는 형태를 요구했는가 — 외부 링크, 이미지·그림 생성, "
