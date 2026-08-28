@@ -94,3 +94,84 @@ def render(scores: dict[str, FieldScore], per_case: dict[str, list[str]],
         "다를 수 있고, 프롬프트를 이 셋에 맞춰 고치면 과대평가된다.",
     ]
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Step 2·3 채점
+#
+# 관측 채점과 층이 다르다. 저건 관측 하나하나를 재고, 이건 그 관측을 받아
+# 문서와 대조하는 판정의 정확도를 잰다. 회귀셋(경로)으로도 대체되지 않는다.
+# ---------------------------------------------------------------------------
+
+@dataclass
+class JudgeScore:
+    verdict_hits: int = 0
+    verdict_total: int = 0
+    citation_hits: int = 0          # 인용을 올바른 청크에서 뽑았는가
+    citation_total: int = 0
+    fabricated: list[str] = field(default_factory=list)   # 원문 대조 실패
+    misses: list[tuple] = field(default_factory=list)     # (id, 기대, 실제, note)
+
+
+def score_sufficiency(case: dict, judgment, citation, score: JudgeScore) -> None:
+    """verdict 와 인용 위치를 함께 본다.
+
+    verdict 만 맞히고 엉뚱한 청크를 인용했다면 우연히 맞은 것이다. 그래서
+    expect_cited 가 있는 케이스는 인용 위치도 채점한다.
+    """
+    score.verdict_total += 1
+    got = judgment.verdict
+    if got == case["expect_verdict"]:
+        score.verdict_hits += 1
+    else:
+        score.misses.append((case["id"], case["expect_verdict"], got, case["note"]))
+
+    # 지어낸 인용은 원문 대조에서 걸린다. 하나라도 폐기됐으면 기록한다.
+    if citation and citation.dropped:
+        score.fabricated.append(f"{case['id']} ({len(citation.dropped)}건)")
+
+    wanted = case.get("expect_cited")
+    if wanted is not None:
+        score.citation_total += 1
+        cited = {e.chunk_index for e in (citation.kept if citation else [])}
+        if cited & wanted:
+            score.citation_hits += 1
+        else:
+            score.misses.append(
+                (case["id"], f"청크{sorted(wanted)} 인용", f"청크{sorted(cited) or '없음'}",
+                 case["note"]))
+
+
+def render_judge(suf: JudgeScore, gnd: JudgeScore) -> str:
+    lines = ["", "=" * 78, "Step 2·3 판정 채점", "=" * 78, ""]
+
+    def block(title: str, s: JudgeScore, extra: str = "") -> None:
+        if not s.verdict_total:
+            lines.append(f"  {title}: 채점할 항목 없음")
+            return
+        rate = s.verdict_hits / s.verdict_total
+        bar = "█" * round(20 * rate) + "·" * (20 - round(20 * rate))
+        lines.append(f"  {_pad(title, 22)}{s.verdict_hits:>3}/{s.verdict_total:<3} "
+                     f"{rate:>5.0%}  {bar}{extra}")
+
+    block("충족도 verdict", suf)
+    if suf.citation_total:
+        rate = suf.citation_hits / suf.citation_total
+        bar = "█" * round(20 * rate) + "·" * (20 - round(20 * rate))
+        lines.append(f"  {_pad('인용 위치', 22)}{suf.citation_hits:>3}/"
+                     f"{suf.citation_total:<3} {rate:>5.0%}  {bar}")
+    block("근거 활용", gnd)
+
+    lines.append("")
+    lines.append(f"  지어낸 인용(원문 대조 실패): "
+                 f"{', '.join(suf.fabricated) if suf.fabricated else '없음'}")
+    if suf.fabricated:
+        lines.append("    └ 이 값이 크면 라벨 분포보다 먼저 봐야 한다. 사전지식 오염 신호다.")
+
+    misses = suf.misses + gnd.misses
+    if misses:
+        lines.append("")
+        lines.append("  어긋난 판정")
+        for case_id, want, got, note in misses:
+            lines.append(f"    {_pad(case_id, 10)}기대 {want!r} · 실제 {got!r}   ({note})")
+    return "\n".join(lines)

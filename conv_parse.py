@@ -167,6 +167,54 @@ def run_golden(args) -> int:
         per_case[meta["id"]] = score_observation(meta["id"], meta["expect"], obs, scores)
 
     print(render(scores, per_case, errors))
+    return run_judge_golden(args, judge)
+
+
+def run_judge_golden(args, judge) -> int:
+    """Step 2·3 판정을 채점한다. 관측 채점과 층이 다르다."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from fixtures.judgments import GROUNDING, SUFFICIENCY
+
+    from ragdiag.golden import JudgeScore, render_judge, score_sufficiency
+    from ragdiag.schema import Case
+    from ragdiag.verify import verify_evidence
+
+    def make_case(chunks, question="", answer=""):
+        return Case(case_id="golden", user_id="-", dept="-", job_grade="-",
+                    job_name="-", position_name="-", conversation_id="-", turn=0,
+                    pre_queries=[question] if question else ["-"],
+                    llm_ans_on_last_q=answer, current_query="-", rag_chunks=chunks)
+
+    class _Need:
+        def __init__(self, q, n):
+            self.resolved_question, self.unmet_need = q, n
+
+    suf, gnd = JudgeScore(), JudgeScore()
+
+    def judge_suf(entry):
+        case = make_case(entry["chunks"])
+        judgment, _ = judge.judge_sufficiency_from(
+            case, _Need(entry["question"], entry["unmet_need"]))
+        return entry, judgment, verify_evidence(judgment.evidence, entry["chunks"])
+
+    def judge_gnd(entry):
+        case = make_case(entry["chunks"], answer=entry["answer"])
+        check, _ = judge.check_grounding(case)
+        return entry, check
+
+    with ThreadPoolExecutor(max_workers=args.workers) as pool:
+        for entry, judgment, citation in pool.map(judge_suf, SUFFICIENCY):
+            score_sufficiency(entry, judgment, citation, suf)
+        for entry, check in pool.map(judge_gnd, GROUNDING):
+            gnd.verdict_total += 1
+            if check.answer_used_rag == entry["expect"]:
+                gnd.verdict_hits += 1
+            else:
+                gnd.misses.append((entry["id"], entry["expect"],
+                                   check.answer_used_rag, entry["note"]))
+
+    print(render_judge(suf, gnd))
     return 0
 
 
