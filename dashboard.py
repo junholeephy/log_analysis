@@ -115,6 +115,28 @@ LOG_FIELD_TO_COLUMN = {"db_dept_name": "부서", "job_grade": "직급",
                        "db_job_name": "직무", "db_position_name": "직위"}
 
 
+
+def heat(value: float) -> str:
+    """0~1 을 배경색으로. matplotlib 을 쓰지 않는다.
+
+    Styler.background_gradient 는 matplotlib 을 요구하는데, 대시보드 하나 때문에
+    에어갭 장비에 반입할 패키지를 늘릴 이유가 없다. 값에 따라 CSS 를 직접 만든다.
+    비율이 높을수록 진해지고, 글자는 배경이 어두워지면 흰색으로 바꾼다.
+    """
+    if not isinstance(value, (int, float)) or pd.isna(value):
+        return ""
+    ratio = max(0.0, min(1.0, float(value)))
+    if ratio < 0.02:
+        return "color: #b0b0b0"
+    # 흰색 -> 청록 계열. 낮은 값도 옅게 보이도록 감마를 준다.
+    weight = ratio ** 0.7
+    r = int(255 - 200 * weight)
+    g = int(255 - 90 * weight)
+    b = int(255 - 105 * weight)
+    text = "#ffffff" if weight > 0.55 else "#1a1a1a"
+    return f"background-color: rgb({r},{g},{b}); color: {text}"
+
+
 def crosstab(df: pd.DataFrame, axis: str) -> pd.DataFrame:
     table = pd.crosstab(df[axis], df["case"])
     order = sorted(table.columns,
@@ -250,8 +272,7 @@ def main() -> None:
 
     share = table.drop(columns="계").div(table["계"], axis=0)
     st.caption("행 내 비율 — 절대 건수가 아니라 성향을 본다")
-    st.dataframe(share.style.format("{:.0%}").background_gradient(axis=None),
-                 use_container_width=True)
+    st.dataframe(share.style.format("{:.0%}").map(heat), use_container_width=True)
 
     # --- 코퍼스 보강 목록 ---------------------------------------------------
     gaps = view[view["case"].isin(["case19"]) & (view["없던것"] != "")]
