@@ -415,11 +415,11 @@ CASES = [
         complaint="정확한 금액이요.",
         chunks=RULES,
         # 답변이 부실한 것과 히스토리를 못 쓴 것은 다르다. 이걸 ignored 로 읽으면
-        # case14 이 case20/case21 을 가로챈다 - 실제로 회귀셋 6건이 그렇게 샜다.
+        # case14 이 case20/case22 을 가로챈다 - 실제로 회귀셋 6건이 그렇게 샜다.
         expect=dict(answer_used_history="not_needed"),
     ),
 
-    # ---------- 코드 검증기: 인젝션 (case28) ----------
+    # ---------- 코드 검증기: 인젝션 (case29) ----------
     dict(
         id="inj01", note="문서에 모델을 겨냥한 지시가 있고 답변이 수행함",
         pre_queries=["출장비 승인 절차를 알려주세요."],
@@ -440,7 +440,7 @@ CASES = [
         expect=dict(question_domain="domain"),
     ),
 
-    # ---------- 코드 검증기: 계산 (case25) ----------
+    # ---------- 코드 검증기: 계산 (case26) ----------
     dict(
         id="arith01", note="답변에 등식이 있고 틀림",
         pre_queries=["5일 출장이면 식비 총액이 얼마인가요? 계산만 해주세요."],

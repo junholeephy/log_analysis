@@ -27,7 +27,7 @@ class TaxonomyCase:
     # 이 로그로는 판정할 수 없는 케이스. 라우팅이 절대 여기로 보내지 않는다.
     diagnosable: bool = True
     # 한 줄 설명. 이름만으로는 옆 케이스와 구분되지 않는 것들이 있어
-    # (case3/case15, case4/case14, case13/case17, case20/case21) 가르는 기준을 함께 적는다.
+    # (case3/case15, case4/case14, case13/case17, case20/case22) 가르는 기준을 함께 적는다.
     desc: str = ""
 
 
@@ -61,18 +61,19 @@ _ROWS = [
 
     # category_2 · TYPE5 Retrieve Context
     ("case20", "Retrieve 실패", "TYPE5", "도메인 관련 Retrieve Context 문제", "category_2", "medium", True),
-    ("case21", "Retrieve 성공, 생성 실패", "TYPE5", "도메인 관련 Retrieve Context 문제", "category_2", "medium", True),
-    ("case22", "구 문서 retrieve", "TYPE5", "도메인 관련 Retrieve Context 문제", "category_2", "medium", False),
-    ("case23", "출처/인용 표기 오류", "TYPE5", "도메인 관련 Retrieve Context 문제", "category_2", "high", True),
+    ("case21", "검색 미수행", "TYPE5", "도메인 관련 Retrieve Context 문제", "category_2", "high", True),
+    ("case22", "Retrieve 성공, 생성 실패", "TYPE5", "도메인 관련 Retrieve Context 문제", "category_2", "medium", True),
+    ("case23", "구 문서 retrieve", "TYPE5", "도메인 관련 Retrieve Context 문제", "category_2", "medium", False),
+    ("case24", "출처/인용 표기 오류", "TYPE5", "도메인 관련 Retrieve Context 문제", "category_2", "high", True),
 
     # category_2 · TYPE6 일반 질문
-    ("case24", "상식 질문 오답", "TYPE6", "일반 질문", "category_2", "low", True),
-    ("case25", "계산 오답", "TYPE6", "일반 질문", "category_2", "high", True),
-    ("case26", "코드/도구 사용법 오답", "TYPE6", "일반 질문", "category_2", "medium", True),
+    ("case25", "상식 질문 오답", "TYPE6", "일반 질문", "category_2", "low", True),
+    ("case26", "계산 오답", "TYPE6", "일반 질문", "category_2", "high", True),
+    ("case27", "코드/도구 사용법 오답", "TYPE6", "일반 질문", "category_2", "medium", True),
 
     # category_2 · TYPE7 보안/정책
-    ("case27", "보안 정책상 답변 불가", "TYPE7", "보안/정책 제한", "category_2", "medium", True),
-    ("case28", "간접 프롬프트 인젝션", "TYPE7", "보안/정책 제한", "category_2", "medium", True),
+    ("case28", "보안 정책상 답변 불가", "TYPE7", "보안/정책 제한", "category_2", "medium", True),
+    ("case29", "간접 프롬프트 인젝션", "TYPE7", "보안/정책 제한", "category_2", "medium", True),
 ]
 
 
@@ -108,7 +109,7 @@ _DESC = {
     "case13": "물은 것과 다른 것을 답했다. 의도 파악 실패. "
               "맞게 답했으나 실행으로 이어지지 않는 것은 case17.",
     "case14": "답변이 앞 턴의 맥락을 잊거나 잘못 이었다. "
-              "검색이 실패해도 이렇게 보이므로, 문서 증거가 있는 case20·case21 을 먼저 가른다.",
+              "검색이 실패해도 이렇게 보이므로, 문서 증거가 있는 case20·case22 을 먼저 가른다.",
     "case15": "여러 의도 중 일부만 답했다 — 고칠 곳은 모델이다. "
               "사용자가 복합 질문을 한 것 자체는 case3.",
     "case16": "말투·어조·용어 사용에 대한 요구를 지키지 않았다.",
@@ -118,23 +119,26 @@ _DESC = {
               "문서 밖의 허구는 대조할 것이 없어 판정 대상이 아니다.",
     "case19": "같은 질문에 매번 다르게 답하거나 이전 답변과 상충한다. "
               "턴 하나가 아니라 로그 전체를 훑어야 해 이 파이프라인에서는 판정하지 않는다.",
+    "case21": "rag_data 가 빈 리스트다 — 검색 결과가 0건이라 대조할 문서 자체가 없었다. "
+              "서비스가 '검색 없이 답할 수 있다'고 판단했을 수 있고, 그 판단이 틀린 것이라면 "
+              "고칠 곳은 검색 트리거다. 가져왔는데 빗나간 case20 과 고칠 곳이 다르다.",
     "case20": "가져온 청크에 답이 없다. 검색기가 못 찾은 것인지 문서가 애초에 없는 것인지는 "
-              "코퍼스 전체를 봐야 갈린다 — 특정 부서에 몰리면 문서 부재 쪽이다.",
-    "case21": "청크에 답이 있는데 답변이 쓰지 않았다. "
+              "코퍼스 전체를 봐야 갈린다 — 특정 부서에 몰리면 문서 부재 쪽이다. 검색 결과가 0건인 것은 case21 이다.",
+    "case22": "청크에 답이 있는데 답변이 쓰지 않았다. "
               "'인사팀에 문의하세요' 같은 회피성 안내도 거절이 아니라 여기다.",
-    "case22": "최신 문서 대신 구 문서를 가져왔다. "
+    "case23": "최신 문서 대신 구 문서를 가져왔다. "
               "청크에 문서 ID·개정일이 없어 판정하지 않는다.",
-    "case23": "답변이 인용부호로 제시한 문장이 문서와 대조되지 않는다. "
+    "case24": "답변이 인용부호로 제시한 문장이 문서와 대조되지 않는다. "
               "문서명·조항번호는 청크에 메타데이터가 없어 검증 범위 밖이다.",
-    "case24": "상식 질문에 틀리게 답했다. 판정 근거가 판정자의 사전지식뿐이라 "
+    "case25": "상식 질문에 틀리게 답했다. 판정 근거가 판정자의 사전지식뿐이라 "
               "다른 케이스와 같은 무게로 집계하면 안 된다.",
-    "case25": "답변 안의 등식을 다시 계산해 보니 틀렸다. "
+    "case26": "답변 안의 등식을 다시 계산해 보니 틀렸다. "
               "'5영업일 뒤면 3월 13일' 같은 자연어 계산은 판정 범위 밖이다.",
-    "case26": "SQL·Python·Excel 등의 사용법이나 코드가 부정확하다. "
+    "case27": "SQL·Python·Excel 등의 사용법이나 코드가 부정확하다. "
               "문법까지만 검증되고 실행 결과는 보지 않는다.",
-    "case27": "보안 정책상 답할 수 없는 정보를 요청해 거절했다. "
+    "case28": "보안 정책상 답할 수 없는 정보를 요청해 거절했다. "
               "권한 부족으로 거절한 경우와 로그상 구분되지 않는다.",
-    "case28": "문서 안에 숨은 지시를 모델이 그대로 수행했다. "
+    "case29": "문서 안에 숨은 지시를 모델이 그대로 수행했다. "
               "지시문이 있기만 한 것은 해당하지 않는다 — 사규의 '~한다'가 대량 오탐된다.",
 }
 
@@ -207,6 +211,7 @@ def describe(case_id: str) -> dict:
 #   v1 (원본 taxonomy.txt) -> v2 타입 순서대로 재번호
 #                          -> v3 판정 불가 케이스 제거
 #                          -> v4 case9(서비스 자원 부족 응답) 삽입, 이후 한 칸씩 밀림
+#                          -> v5 case21(검색 미수행) 삽입, 이후 한 칸씩 밀림
 #
 # v4 를 왜 넣었나: v2 는 "서비스 끊김은 답변이 없어 로그에 턴 자체가 안 남는다"고
 # 보고 TYPE2 를 사실상 비워 뒀다. 실제 배포에서는 자원을 확보하지 못하면 서비스가
@@ -230,14 +235,14 @@ V1_TO_CURRENT = {
     "case15": "case18",   # 사실 오류 -> 문서와 어긋나는 주장 (범위 축소)
     "case16": "case19",   # 응답 일관성
     "case17": "case20",   # Retrieve 실패
-    "case18": "case21",   # Retrieve 성공, 생성 실패
-    "case19": "case22",   # 구 문서
-    "case20": "case23",   # 출처/인용
-    "case21": "case24",   # 상식
-    "case22": "case25",   # 계산
-    "case23": "case26",   # 코드/도구
-    "case24": "case27",   # 보안 정책
-    "case26": "case28",   # 인젝션
+    "case18": "case22",   # Retrieve 성공, 생성 실패
+    "case19": "case23",   # 구 문서
+    "case20": "case24",   # 출처/인용
+    "case21": "case25",   # 상식
+    "case22": "case26",   # 계산
+    "case23": "case27",   # 코드/도구
+    "case24": "case28",   # 보안 정책
+    "case26": "case29",   # 인젝션
 }
 
 # 이름을 지우지 않고 남긴다. 구 이름으로 참조하는 코드가 있을 수 있다.
@@ -254,8 +259,8 @@ V1_DROPPED = {
 }
 
 # v1 에 대응이 없는 것. 현재 번호로 적는다.
-# case15~17 은 v3 에서, case9 는 v4 에서 생겼다.
-NEW_SINCE_V1 = {"case9", "case15", "case16", "case17"}
+# case15~17 은 v3, case9 는 v4, case21 은 v5 에서 생겼다.
+NEW_SINCE_V1 = {"case9", "case15", "case16", "case17", "case21"}
 V3_NEW = NEW_SINCE_V1
 
 

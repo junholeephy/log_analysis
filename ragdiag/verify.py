@@ -13,6 +13,7 @@ from __future__ import annotations
 import difflib
 import re
 import unicodedata
+from typing import Optional
 from dataclasses import dataclass, field
 
 from ragdiag.schema import Evidence
@@ -56,6 +57,10 @@ class VerifiedEvidence:
 class CitationCheck:
     kept: list[VerifiedEvidence] = field(default_factory=list)
     dropped: list[dict] = field(default_factory=list)
+    # 무엇을 상대로 대조했는지. 0 이면 검색 결과가 아예 없었다는 뜻이고,
+    # 이건 판정이 아니라 로그에 적힌 사실이라 라우팅이 다르게 읽어야 한다.
+    # None 은 '모름'이다 - 옛 호출부가 넘기지 않은 경우.
+    n_chunks: Optional[int] = None
 
     @property
     def n_kept(self) -> int:
@@ -67,7 +72,7 @@ class CitationCheck:
 
 
 def verify_evidence(evidence: list[Evidence], chunks: list[str]) -> CitationCheck:
-    check = CitationCheck()
+    check = CitationCheck(n_chunks=len(chunks))
     for ev in evidence:
         if len(normalize(ev.quote)) < MIN_QUOTE_CHARS:
             check.dropped.append({"quote": ev.quote, "reason": "too_short"})

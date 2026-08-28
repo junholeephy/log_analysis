@@ -109,18 +109,18 @@ ComplaintTarget = Literal[
     "language",          # 요구한 언어가 아님              -> case10
     "length",            # 너무 길다/짧다                  -> case11
     "content_missing",   # 필요한 정보가 없음              -> case3·case14·case18
-    "content_wrong",     # 담긴 정보가 틀림                -> case18·case19·case22~case24
+    "content_wrong",     # 담긴 정보가 틀림                -> case18·case19·case23~case25
     "no_answer",         # 답이 안 왔거나 끊김             -> case8
-    "refusal",           # 거절당함                        -> case27 (권한 부족 거절이 섞여 들어옴)
+    "refusal",           # 거절당함                        -> case28 (권한 부족 거절이 섞여 들어옴)
     "inconsistency",     # 이전 답변과 다름                -> case19
     "other",
 ]
 
 QuestionDomain = Literal[
     "domain",            # 사내 문서를 찾아야 답할 수 있는 질문
-    "general_knowledge", # 상식                            -> case24
-    "calculation",       # 수식·날짜·산수                  -> case25
-    "code",              # SQL/Python 등                   -> case26
+    "general_knowledge", # 상식                            -> case25
+    "calculation",       # 수식·날짜·산수                  -> case26
+    "code",              # SQL/Python 등                   -> case27
     "tool_usage",        # Excel/Spotfire 등 도구 사용법
     "unclear",
 ]
@@ -170,7 +170,7 @@ class Observation(BaseModel):
 
     # --- 답변 쪽 관측 ---
     answer_refused: bool = Field(
-        description="답변이 정책·권한을 이유로 거절했는가 (case27)"
+        description="답변이 정책·권한을 이유로 거절했는가 (case28)"
     )
     question_answerable_as_asked: bool = Field(
         description="질문이 그 자체로 답을 특정할 수 있을 만큼 분명한가. "

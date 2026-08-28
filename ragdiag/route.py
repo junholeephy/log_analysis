@@ -72,12 +72,12 @@ def secondary_from(obs: Observation, checks: dict[str, Check]) -> list[str]:
         extra.append("case6")          # 질문에 개인정보
     quoted = _check(checks, "quoted_spans")
     if quoted is not None and quoted.violated:
-        extra.append("case23")         # 인용 표기 오류
+        extra.append("case24")         # 인용 표기 오류
     # 실제 질문은 도메인과 계산이 겹치는 경우가 흔하다("5영업일 뒤가 언제냐").
     # question_domain 은 하나만 고를 수 있으므로, 등식 오류는 부가로 따로 잡는다.
     arithmetic = _check(checks, "arithmetic")
     if arithmetic is not None and arithmetic.violated:
-        extra.append("case25")         # 계산 오류
+        extra.append("case26")         # 계산 오류
     if obs.answer_used_history == "ignored":
         extra.append("case14")         # 이전 턴 맥락 상실
     # 복합 질문인데 일부만 답한 것은 다른 원인과 함께 성립한다.
@@ -132,7 +132,7 @@ def route(
     if obs.answer_refused:
         # 권한이 없어 거절한 경우와 구분할 수 없다. 권한 조회 결과가 없기 때문이다.
         # 그 케이스는 taxonomy 에서 제외됐지만 실제로는 여기 섞여 들어온다.
-        return done("case27", "답변이 정책·권한을 이유로 거절함",
+        return done("case28", "답변이 정책·권한을 이유로 거절함",
                     ["권한 부족으로 인한 거절이 섞여 있을 수 있음 — 권한 조회 결과 필요"])
 
     # --- 1a. 문서가 모델을 조종했는지 ------------------------------------------
@@ -140,7 +140,7 @@ def route(
     # 그 답변의 나머지 판정은 의미가 없다.
     injection = _check(checks, "injection")
     if injection is not None and injection.violated:
-        return done("case28", f"검색 문서의 지시를 답변이 수행함 — {injection.detail}")
+        return done("case29", f"검색 문서의 지시를 답변이 수행함 — {injection.detail}")
 
     # --- 1b. 질문 쪽 문제가 먼저다 --------------------------------------------
     # 챗봇이 낼 수 없는 형태를 요구했으면 답변을 탓할 수 없다.
@@ -195,14 +195,14 @@ def route(
 
     # --- 5. 내용 불만: 질문의 성격으로 갈린다 -----------------------------------
     if obs.question_domain == "general_knowledge":
-        return done("case24", "상식 질문에 대한 불만",
+        return done("case25", "상식 질문에 대한 불만",
                     ["판정자의 사전지식에 의존 — 표본 검토 필요"])
 
     if obs.question_domain == "calculation":
         arithmetic = _check(checks, "arithmetic")
         if arithmetic is not None and arithmetic.violated:
-            return done("case25", f"등식 오류 확인 — {arithmetic.detail}")
-        result = done("case25", "계산 질문에 대한 불만")
+            return done("case26", f"등식 오류 확인 — {arithmetic.detail}")
+        result = done("case26", "계산 질문에 대한 불만")
         # 식을 명시하지 않은 계산은 코드로 검증할 수 없다. high 로 두면 안 된다.
         result.confidence = "medium"
         result.notes.append("답변에 검증 가능한 등식이 없음 — 자연어 계산은 판정 불가")
@@ -212,15 +212,15 @@ def route(
         for name in ("python_syntax", "sql_shape"):
             broken = _check(checks, name)
             if broken is not None and broken.violated:
-                return done("case26", f"코드 결함 확인 — {broken.detail}")
-        return done("case26", "코드·도구 질문에 대한 불만",
+                return done("case27", f"코드 결함 확인 — {broken.detail}")
+        return done("case27", "코드·도구 질문에 대한 불만",
                     ["문법은 통과 — 실행 검증 없이는 정확성을 확인할 수 없음"])
 
     if obs.question_domain == "domain":
         return _route_domain(obs, judgment, citation, grounding, done)
 
     # --- 6. 남은 것 -----------------------------------------------------------
-    # case14 는 여기서만 주 라벨이 된다. 앞에 두면 case20/case21 을 가로챈다 —
+    # case14 는 여기서만 주 라벨이 된다. 앞에 두면 case20/case22 을 가로챈다 —
     # 검색이 실패해 답변이 부실하면 모델은 그걸 "히스토리를 못 이어받았다"로도
     # 읽기 때문이다. 인용으로 검증된 문서 증거가 LLM 의 인상보다 강하다.
     if obs.answer_used_history == "ignored":
@@ -238,25 +238,36 @@ def route(
 
 
 def _route_domain(obs, judgment, citation, grounding, done) -> Classification:
-    """TYPE5 분기 — 검증된 case20/case21 판별 로직을 그대로 쓴다."""
+    """TYPE5 분기 — 검증된 case20/case22 판별 로직을 그대로 쓴다.
+
+    n_chunks 가 0 이면 검색 결과가 아예 없었다는 뜻이다. 이건 판정이 아니라
+    로그에 적힌 사실이라 "가져온 문서가 요구를 충족하지 못했다"와 구분해 적는다.
+    고칠 곳이 다르다 - 0건은 검색을 탈지 말지 정하는 쪽이나 검색기 자체이고,
+    가져왔는데 빗나간 것은 임베딩·청킹이나 문서 쪽이다.
+    """
     if judgment is None:
         return done(taxonomy.UNCLASSIFIED, "도메인 질문인데 충족도 판정이 없음")
 
     kept = citation.n_kept if citation else 0
+    n_chunks = citation.n_chunks if citation else None
     # 인용이 하나도 검증되지 않은 sufficient/partial 주장은 사전지식에서 나온 것으로 본다.
     downgraded = judgment.verdict in ("sufficient", "partial") and kept == 0
     verdict = "insufficient" if downgraded else judgment.verdict
 
     if verdict in ("insufficient", "partial"):
         note = ["인용 검증 실패로 강등됨"] if downgraded else []
+        if n_chunks == 0:
+            note.append("서비스가 '검색 없이 답할 수 있다'고 판단했을 수 있다. "
+                        "그 판단이 틀린 것이라면 고칠 곳은 검색 트리거다.")
+            return done("case21", "검색 결과가 0건 — 대조할 문서가 아예 없음", note)
         note.append("검색 실패와 코퍼스 부재는 구분 불가 — 부서 편중으로만 추정")
-        return done("case20", f"문서가 요구를 충족하지 못함 (verdict={verdict})", note)
+        return done("case20", f"가져온 문서가 요구를 충족하지 못함 (verdict={verdict})", note)
 
     if grounding is None:
         return done("case20", "문서는 충분하나 활용 여부를 확인하지 못함")
 
     if grounding.answer_used_rag == "ignored":
-        return done("case21", "문서에 답이 있는데 답변이 쓰지 않음")
+        return done("case22", "문서에 답이 있는데 답변이 쓰지 않음")
     if grounding.answer_used_rag == "contradicted":
         return done("case18", "답변이 문서와 어긋나는 주장을 함",
                     ["문서와 대조 가능한 할루시네이션만 해당 — 문서 밖 허구는 판정 불가"])

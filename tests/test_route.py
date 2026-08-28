@@ -47,8 +47,11 @@ def judgment(verdict, n_evidence=1) -> SufficiencyJudgment:
     )
 
 
-def citation(n_kept=1) -> CitationCheck:
-    return CitationCheck(kept=[VerifiedEvidence(0, "q" * 12, 1.0)] * n_kept)
+def citation(n_kept=1, n_chunks=3) -> CitationCheck:
+    # n_chunks 기본값을 0 이 아닌 값으로 둔다. 0 은 "검색 결과가 아예 없었다"는
+    # 별개의 사실이고 case21 로 갈리므로, 기본값으로 두면 모든 테스트가 그리로 샌다.
+    return CitationCheck(kept=[VerifiedEvidence(0, "q" * 12, 1.0)] * n_kept,
+                         n_chunks=n_chunks)
 
 
 def ground(used) -> GroundingCheck:
@@ -61,7 +64,7 @@ def ground(used) -> GroundingCheck:
 
 def test_refusal_wins_over_everything():
     result = route(obs(answer_refused=True, complaint_target="content_missing"), checks())
-    assert result.primary_case == "case27"
+    assert result.primary_case == "case28"
     # 권한 부족으로 인한 거절과 구분할 수 없다. 구분한 척하지 않는다.
     assert any("권한 조회 결과" in n for n in result.notes)
 
@@ -137,12 +140,12 @@ def test_inconsistency_is_parked_not_guessed():
 def test_general_knowledge_is_low_confidence():
     """판정자의 사전지식으로 판정한다 — 다른 라벨과 같은 무게로 집계하면 안 된다."""
     result = route(obs(question_domain="general_knowledge"), checks())
-    assert result.primary_case == "case24"
+    assert result.primary_case == "case25"
     assert result.confidence == "low"
 
 
 def test_calculation_question():
-    assert route(obs(question_domain="calculation"), checks()).primary_case == "case25"
+    assert route(obs(question_domain="calculation"), checks()).primary_case == "case26"
 
 
 def test_broken_code_is_verified():
@@ -150,14 +153,14 @@ def test_broken_code_is_verified():
         obs(question_domain="code"),
         checks(python_syntax=Check("python_syntax", "violated", "문법 오류")),
     )
-    assert result.primary_case == "case26"
+    assert result.primary_case == "case27"
     assert "문법 오류" in result.reason
 
 
 def test_code_passing_syntax_still_case23_with_a_caveat():
     result = route(obs(question_domain="code"),
                    checks(python_syntax=Check("python_syntax", "ok", "통과")))
-    assert result.primary_case == "case26"
+    assert result.primary_case == "case27"
     assert any("실행 검증" in n for n in result.notes)
 
 
@@ -173,7 +176,7 @@ def test_other_complaint_is_out_of_taxonomy():
 
 
 # ---------------------------------------------------------------------------
-# TYPE5 분기 — 검증된 case20/case21 판별
+# TYPE5 분기 — 검증된 case20/case22 판별
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("verdict", ["insufficient", "partial"])
@@ -192,7 +195,7 @@ def test_sufficient_without_verified_citation_is_downgraded():
 
 def test_documents_sufficient_but_answer_ignored_them():
     result = route(obs(), checks(), judgment("sufficient"), citation(), ground("ignored"))
-    assert result.primary_case == "case21"
+    assert result.primary_case == "case22"
 
 
 def test_answer_contradicting_documents_is_hallucination():
@@ -234,7 +237,7 @@ def test_pii_and_citation_problems_are_secondary():
                       quoted_spans=Check("quoted_spans", "violated", "원문에 없음")),
         judgment("insufficient"), citation(0),
     )
-    assert {"case6", "case23"} <= set(result.secondary_cases)
+    assert {"case6", "case24"} <= set(result.secondary_cases)
 
 
 def test_secondary_never_duplicates_the_primary():
@@ -309,6 +312,8 @@ def reachable_cases() -> set[str]:
     outcomes = [
         (None, None, None),
         (judgment("insufficient"), citation(0), None),
+        # 검색 결과가 0건인 경우. n_chunks=0 이 아니면 case21 이 영영 안 나온다.
+        (judgment("insufficient"), citation(0, n_chunks=0), None),
         (judgment("partial"), citation(1), None),
         (judgment("sufficient"), citation(0), None),
         (judgment("sufficient"), citation(1), ground("used")),

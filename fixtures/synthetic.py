@@ -385,7 +385,7 @@ def build(rag_as_string: bool = True) -> tuple[dict, dict]:
 # ---------------------------------------------------------------------------
 # 구 라벨(6개) -> 신 taxonomy case 매핑
 #
-# 이 셋은 case20/case21 판별 전용으로 만들어졌고 실제 LLM 으로 23/23 검증된 유일한
+# 이 셋은 case20/case22 판별 전용으로 만들어졌고 실제 LLM 으로 23/23 검증된 유일한
 # 케이스 집합이다. 새 파이프라인이 같은 결과를 내는지 확인하는 데 쓴다.
 #
 # 1:1 이 아니다. out_of_scope 하나가 형식·길이·언어로 쪼개졌고, rag_partial 은
@@ -395,7 +395,7 @@ def build(rag_as_string: bool = True) -> tuple[dict, dict]:
 LEGACY_TO_CASE = {
     "rag_insufficient": {"case20"},
     "rag_partial": {"case20"},                       # 신 체계에서는 둘 다 case20
-    "rag_sufficient_generation_failed": {"case21"},
+    "rag_sufficient_generation_failed": {"case22"},
     "rag_sufficient_other": {"case13"},              # 의도와 다른 답변
     "unclassified": {"unclassified", "out_of_taxonomy"},
 }

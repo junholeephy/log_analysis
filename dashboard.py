@@ -202,7 +202,7 @@ def main() -> None:
         st.divider()
         hide_low = st.checkbox(
             "신뢰도 낮음 제외", value=False,
-            help="판정자의 사전지식에 의존하는 케이스(case24 상식 등)를 뺀다. "
+            help="판정자의 사전지식에 의존하는 케이스(case25 상식 등)를 뺀다. "
                  "다른 케이스와 같은 무게로 집계하면 안 되는 값이다.")
 
     view = df
@@ -311,7 +311,7 @@ def main() -> None:
     # --- 케이스 사전 --------------------------------------------------------
     with st.expander(f"케이스 설명 — 이 데이터에 나온 {view['case'].nunique()}종"):
         st.caption("무엇이 아닌가까지 적었다. 헷갈리는 쌍(case3/case15, case4/case14, "
-                   "case13/case17, case20/case21, case2/case12)에서 라벨이 갈린다.")
+                   "case13/case17, case20/case22, case2/case12)에서 라벨이 갈린다.")
         counts = view["case"].value_counts()
         st.dataframe(pd.DataFrame([
             {"case": cid,

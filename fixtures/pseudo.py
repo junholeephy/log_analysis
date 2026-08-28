@@ -143,9 +143,23 @@ TEMPLATES = {
          "해외 출장 식비는 미주 지역 기준 1일 80달러입니다.",
          "국내 기준이라고 말씀드렸는데요."),
     ],
+    # rag_data 가 빈 리스트인 턴. 서비스가 "검색 없이 답할 수 있다"고 판단했는데
+    # 실제로는 사내 문서가 있어야 답할 수 있는 질문이었다. 검색을 해서 빗나간
+    # case20 과 고칠 곳이 다르다 - 이쪽은 검색을 탈지 말지 정하는 로직이다.
+    "no_retrieval": [
+        ("우리 회사 육아휴직 분할 사용 횟수 제한이 어떻게 되나요?", [],
+         "육아휴직은 법정 기준에 따라 분할 사용이 가능하며, 자세한 사항은 사규를 확인해 주세요.",
+         "법 말고 우리 회사 규정을 물었는데요."),
+        ("퇴직금 중간정산 신청 요건이 무엇인가요?", [],
+         "퇴직금 중간정산은 법령에서 정한 사유에 해당할 때 가능합니다.",
+         "사내 절차와 필요 서류를 알려달라고 했는데 원론적인 얘기뿐이네요."),
+        ("사내 동호회 지원금 한도가 얼마인가요?", [],
+         "동호회 운영 지원은 회사 정책에 따라 이루어집니다.",
+         "금액을 물었는데 답이 없네요."),
+    ],
     # 모델 자원을 확보하지 못해 서비스가 안내 문구를 대신 내보낸 턴.
     # 답변이 검색 결과와 무관하다는 점이 핵심이다 - 문서는 멀쩡히 붙어 있는데
-    # 모델이 그걸 볼 기회조차 없었다. 이 구분이 안 되면 case21(문서는 있는데
+    # 모델이 그걸 볼 기회조차 없었다. 이 구분이 안 되면 case22(문서는 있는데
     # 안 씀)로 잘못 세고, 프롬프트를 고치러 간다.
     "service_error": [
         ("연차 이월이 가능한 예외 조건이 무엇인가요?", LEAVE,
@@ -164,13 +178,14 @@ TEMPLATES = {
 
 # 부서마다 실패 성향을 다르게 심는다. 이 편중이 대시보드가 읽어낼 신호다.
 DEPT_PROFILE = {
-    "해외영업팀": {"retrieval_fail": 6, "generation_fail": 1, "format": 1, "tone": 1},
+    "해외영업팀": {"retrieval_fail": 6, "generation_fail": 1, "format": 1, "tone": 1,
+              "no_retrieval": 1},
     "IT인프라팀": {"format": 3, "code": 2, "length": 1, "generation_fail": 1, "tone": 1,
               "service_error": 2},
     "재무팀": {"calc": 2, "generation_fail": 3, "retrieval_fail": 1, "multi_intent": 1,
             "service_error": 3},
     "인사팀": {"generation_fail": 2, "retrieval_fail": 2, "length": 1,
-             "not_actionable": 1, "format": 1},
+             "not_actionable": 1, "format": 1, "no_retrieval": 3},
     "생산기술팀": {"context_lost": 2, "multi_intent": 2, "retrieval_fail": 1,
                "not_actionable": 1},
 }

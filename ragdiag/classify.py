@@ -101,7 +101,7 @@ def classify_turn(case: Case, judge: Judge) -> TurnResult:
         # 서비스가 자원을 확보하지 못했을 때 내보내는 확정 문구는 모델이 만든 답이
         # 아니다. 판정할 답변이 없으므로 LLM 을 한 번도 부르지 않고 여기서 끝낸다.
         #
-        # 관측을 돌리면 판정자가 이 문구를 거절로 읽어 case27(보안 정책)로 간다.
+        # 관측을 돌리면 판정자가 이 문구를 거절로 읽어 case28(보안 정책)로 간다.
         # 서버 자원 문제를 보안 정책 문제로 세면 고칠 곳을 정반대로 가리킨다.
         service = check_service_error(case.llm_ans_on_last_q)
         if service.violated:
@@ -117,7 +117,15 @@ def classify_turn(case: Case, judge: Judge) -> TurnResult:
         judgment = citation = grounding = None
         # 도메인 질문 + 내용 불만일 때만 LLM 검증을 더 쓴다.
         if obs.question_domain == "domain" and obs.complaint_target in CONTENT_COMPLAINTS:
-            judgment = track(judge.judge_sufficiency_from(case, obs))
+            if not case.rag_chunks:
+                # 판정할 문서가 하나도 없다. verdict 는 물어볼 것 없이 insufficient 이고
+                # 인용할 대상도 없다. LLM 을 부르면 호출만 쓰는 게 아니라 없는 문서에서
+                # 인용을 지어낼 표면이 생긴다 - verify 가 잡아내지만 잡을 일을 안 만든다.
+                judgment = SufficiencyJudgment(
+                    reasoning="rag_data 가 비어 있어 대조할 문서가 없다.",
+                    evidence=[], verdict="insufficient", missing=obs.unmet_need)
+            else:
+                judgment = track(judge.judge_sufficiency_from(case, obs))
             citation = verify_evidence(judgment.evidence, case.rag_chunks)
             if judgment.verdict == "sufficient" and citation.n_kept > 0:
                 grounding = track(judge.check_grounding(case))
