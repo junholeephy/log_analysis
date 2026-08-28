@@ -25,7 +25,9 @@ from ragdiag.decide import decide
 from ragdiag.judge import DEFAULT_MODEL, Judge, run_pipeline
 from ragdiag.schema import GroundingCheck, NeedAnalysis, SufficiencyJudgment
 from ragdiag.verify import verify_evidence
+from ragdiag.conv import load_conversations
 from ragdiag.load import load_cases, parse_cases
+from ragdiag.survey import preview_filter, survey
 from ragdiag.report import render, write_jsonl
 
 # 사용자가 줘야 할 것은 URL과 키 둘뿐이다. 이름은 흔히 쓰는 것들을 모두 받는다.
@@ -322,6 +324,9 @@ def main() -> int:
                      help="합성 데이터로 회귀 검증 (기대 라벨과 대조)")
     src.add_argument("--show-prompts", action="store_true",
                      help="파이프라인 전체 프롬프트를 출력하고 종료")
+    src.add_argument("--inspect", metavar="FILE",
+                     help="conv_eval JSON의 라벨·점수 분포를 조사한다 (LLM 호출 없음). "
+                          "필터 조건을 정하기 전에 먼저 돌린다")
     src.add_argument("--check-llm", action="store_true",
                      help="로컬 LLM 서버 연결과 구조화 출력 강제 방식을 점검 (에어갭 장비용)")
     src.add_argument("--trace", metavar="CASE_ID",
@@ -354,10 +359,36 @@ def main() -> int:
     p.add_argument("--no-fallbacks", action="store_true",
                    help="api 백엔드의 refusal 서버측 폴백 beta를 쓰지 않음")
     p.add_argument("--out", default="results.jsonl", help="케이스별 결과 저장 경로")
+
+    # --inspect 와 함께 쓰는 필터 미리보기 조건
+    p.add_argument("--eval-label", action="append",
+                   help="llm_eval_result 가 이 값인 턴만 (여러 번 지정 가능)")
+    p.add_argument("--emotion-label", action="append",
+                   help="llm_emotion_result 가 이 값인 턴만 (여러 번 지정 가능)")
+    p.add_argument("--max-eval-score", type=float, help="llm_eval_score 상한")
+    p.add_argument("--max-emotion-score", type=float, help="llm_emotion_score 상한")
     args = p.parse_args()
 
     if args.show_prompts:
         return show_prompts()
+
+    if args.inspect:
+        import json as _json
+
+        raw = _json.loads(Path(args.inspect).read_text(encoding="utf-8"))
+        conversations = load_conversations(args.inspect)
+        print(survey(conversations, raw.get("metadata")))
+        if args.eval_label or args.emotion_label or args.max_eval_score is not None \
+                or args.max_emotion_score is not None:
+            print()
+            print(preview_filter(
+                conversations,
+                eval_labels=set(args.eval_label) if args.eval_label else None,
+                emotion_labels=set(args.emotion_label) if args.emotion_label else None,
+                max_eval_score=args.max_eval_score,
+                max_emotion_score=args.max_emotion_score,
+            ))
+        return 0
 
     if args.check_llm:
         try:
