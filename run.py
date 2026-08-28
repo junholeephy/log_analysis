@@ -26,6 +26,7 @@ from ragdiag.judge import DEFAULT_MODEL, Judge, run_pipeline
 from ragdiag.schema import GroundingCheck, NeedAnalysis, SufficiencyJudgment
 from ragdiag.verify import verify_evidence
 from ragdiag.conv import load_conversations
+from ragdiag.filters import FilterSpec, apply_filter, load_filter, render_steps, to_cases
 from ragdiag.load import load_cases, parse_cases
 from ragdiag.survey import preview_filter, survey
 from ragdiag.report import render, write_jsonl
@@ -324,6 +325,8 @@ def main() -> int:
                      help="합성 데이터로 회귀 검증 (기대 라벨과 대조)")
     src.add_argument("--show-prompts", action="store_true",
                      help="파이프라인 전체 프롬프트를 출력하고 종료")
+    src.add_argument("--conv", metavar="FILE",
+                     help="conv_eval JSON. --filter 와 함께 쓴다")
     src.add_argument("--inspect", metavar="FILE",
                      help="conv_eval JSON의 라벨·점수 분포를 조사한다 (LLM 호출 없음). "
                           "필터 조건을 정하기 전에 먼저 돌린다")
@@ -358,6 +361,8 @@ def main() -> int:
     p.add_argument("--no-cache", action="store_true", help="디스크 캐시 사용 안 함")
     p.add_argument("--no-fallbacks", action="store_true",
                    help="api 백엔드의 refusal 서버측 폴백 beta를 쓰지 않음")
+    p.add_argument("--filter", metavar="FILE",
+                   help="필터 JSON. 주지 않으면 진단 가능한 후속 턴을 전부 대상으로 한다")
     p.add_argument("--out", default="results.jsonl", help="케이스별 결과 저장 경로")
 
     # --inspect 와 함께 쓰는 필터 미리보기 조건
@@ -378,6 +383,20 @@ def main() -> int:
         raw = _json.loads(Path(args.inspect).read_text(encoding="utf-8"))
         conversations = load_conversations(args.inspect)
         print(survey(conversations, raw.get("metadata")))
+        if args.filter:
+            spec = load_filter(args.filter)
+            selected, steps = apply_filter(conversations, spec)
+            print()
+            print(render_steps(spec, steps))
+            if selected:
+                print("\n  남은 케이스 미리보기 (최대 5건)")
+                for s_ in selected[:5]:
+                    print(f"    {s_.conversation.conversation_id[:18]:<20} "
+                          f"turn {s_.turn.turn:<3} "
+                          f"eval {s_.eval_score or 0:>5.1f} · "
+                          f"emo {s_.emotion_score or 0:>5.1f}  "
+                          f"{s_.turn.eval_result} / {s_.turn.emotion_result}")
+            return 0
         if args.eval_label or args.emotion_label or args.max_eval_score is not None \
                 or args.max_emotion_score is not None:
             print()
@@ -407,6 +426,12 @@ def main() -> int:
             json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         cases = parse_cases(data)
+    elif args.conv:
+        conversations = load_conversations(args.conv)
+        spec = load_filter(args.filter) if args.filter else FilterSpec()
+        selected, steps = apply_filter(conversations, spec)
+        print(render_steps(spec, steps), file=sys.stderr)
+        cases = to_cases(selected)
     elif args.input:
         cases = load_cases(args.input)
     else:
