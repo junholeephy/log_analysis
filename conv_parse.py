@@ -20,7 +20,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
@@ -31,11 +30,13 @@ from ragdiag.backends import (
     backend_from_env,
     env_first,
 )
-from ragdiag.classify import classify_all
-from ragdiag.conv import load_conversations
-from ragdiag.filters import FilterSpec, apply_filter, load_filter, render_steps, to_cases
 from ragdiag.judge import Judge
-from ragdiag.output import build_output, summarize
+from ragdiag.pipeline import (
+    build_outcome,
+    judge_cases,
+    load_and_select,
+    make_judge,
+)
 
 
 def make_backend(args):
@@ -264,25 +265,17 @@ def main() -> int:
         print("--conv-data 또는 --golden 중 하나가 필요합니다.", file=sys.stderr)
         return 2
 
-    conversations = load_conversations(args.conv_data)
-    spec = load_filter(args.filter) if args.filter else FilterSpec()
-    selected, steps = apply_filter(conversations, spec)
-    print(render_steps(spec, steps), file=sys.stderr)
+    selection = load_and_select(args.conv_data, args.filter,
+                                history_turns=args.history_turns, limit=args.limit)
+    print(selection.report, file=sys.stderr)
 
-    if args.limit:
-        selected = selected[: args.limit]
-    if not selected:
+    if not selection.cases:
         print("\n필터를 통과한 턴이 없습니다. 조건을 완화하세요.", file=sys.stderr)
         return 1
 
-    cases = to_cases(selected, history_turns=args.history_turns)
-    # to_cases 는 케이스를 만들 수 없는 턴을 걸러내므로 길이가 줄 수 있다.
-    # 짝을 유지해야 결과를 원래 대화에 되돌릴 수 있다.
-    pairs_in = [(s, c) for s, c in zip(selected, cases) if c is not None]
-
     if args.dry_run:
-        print(f"\n분류 대상 {len(pairs_in)}턴 (LLM 호출 없음)", file=sys.stderr)
-        for sel, case in pairs_in[:10]:
+        print(f"\n분류 대상 {len(selection)}턴 (LLM 호출 없음)", file=sys.stderr)
+        for sel, case in zip(selection.selected[:10], selection.cases[:10]):
             print(f"  {case.case_id}  turn {case.turn}  "
                   f"{sel.turn.eval_result} / {sel.turn.emotion_result}", file=sys.stderr)
         return 0
@@ -294,20 +287,17 @@ def main() -> int:
         return 2
 
     detected = " (자동 탐지)" if getattr(backend, "discovered", False) else ""
-    print(f"\n분류 대상 {len(pairs_in)}턴 · {backend.model}{detected} "
+    print(f"\n분류 대상 {len(selection)}턴 · {backend.model}{detected} "
           f"· 동시 {args.workers}", file=sys.stderr)
 
-    judge = Judge(backend, cache_dir=None if args.no_cache else ".cache")
-    results = classify_all([c for _, c in pairs_in], judge, max_workers=args.workers)
-    pairs = [(sel.conversation, result)
-             for (sel, _), result in zip(pairs_in, results)]
+    judge = make_judge(backend, use_cache=not args.no_cache)
+    results = judge_cases(selection.cases, judge, workers=args.workers)
+    outcome = build_outcome(selection.owners, results, selection.report)
 
-    Path(args.out).write_text(
-        json.dumps(build_output(pairs), ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    print(summarize(pairs))
+    outcome.save(args.out)
+    print(outcome.summary())
     print(f"\n결과: {args.out}", file=sys.stderr)
-    return 1 if any(r.error for _, r in pairs) else 0
+    return 1 if outcome.n_failed else 0
 
 
 if __name__ == "__main__":

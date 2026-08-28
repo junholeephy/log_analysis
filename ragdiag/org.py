@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+from ragdiag import settings
 from ragdiag.labels import normalize_name
 
 UNMAPPED = "(미분류)"
@@ -127,7 +128,7 @@ def coverage(values: list[str], table: Classification, field_name: str = "") -> 
 
 
 # conv_eval 에서 조직 분류가 붙을 수 있는 필드들
-CANDIDATE_FIELDS = ("db_dept_name", "db_job_name", "job_grade", "db_position_name")
+CANDIDATE_FIELDS = settings.ORG_CANDIDATE_FIELDS
 
 
 def detect_field(

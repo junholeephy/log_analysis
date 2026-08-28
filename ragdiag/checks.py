@@ -21,6 +21,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Literal, Optional
 
+from ragdiag import settings
 from ragdiag.verify import match_ratio, normalize
 
 Verdict = Literal["ok", "violated", "not_applicable", "undetermined"]
@@ -106,7 +107,7 @@ def check_language(answer: str, requested: Optional[str]) -> Check:
 # "짧게 답해줘"처럼 수치가 없는 요구를 판정하기 위한 기준값.
 # 임의로 정한 값이므로 실데이터로 보정해야 한다. 그때 LLM을 다시 돌리지 않아도 되도록
 # 판정 결과에 실제 측정값을 함께 남긴다.
-VAGUE_SHORT_MAX_CHARS = 400
+VAGUE_SHORT_MAX_CHARS = settings.VAGUE_SHORT_MAX_CHARS
 
 _SENTENCE_END = re.compile(r"[.!?。]|다\.|요\.")
 
@@ -259,21 +260,16 @@ def check_truncated(answer: str) -> Check:
 # 문구는 배포마다 다르므로 아래 목록에 줄을 추가해 쓴다. 공백 차이는 무시한다.
 # ---------------------------------------------------------------------------
 
-SERVICE_ERROR_TEMPLATES = (
-    "서비스에 문제가 있거나, 사용자 분들이 많아서 서버에 부하가 걸리고 있어요",
-)
+SERVICE_ERROR_TEMPLATES = settings.SERVICE_ERROR_TEMPLATES
 
 # 템플릿이 조금 바뀌어도 놓치지 않도록 두는 보조 표지. 단독으로는 쓰지 않고
 # 두 개 이상 겹칠 때만 인정한다 - "서버" 한 단어로 잡으면 서버 관련 질문에
 # 정상적으로 답한 것까지 오탐한다.
-_SERVICE_ERROR_MARKERS = (
-    "서버에 부하", "사용자 분들이 많아", "일시적인 오류", "잠시 후 다시",
-    "요청이 많아", "응답을 생성하지 못", "서비스에 문제가",
-)
+_SERVICE_ERROR_MARKERS = settings.SERVICE_ERROR_MARKERS
 
 # 확정 문구는 짧고, 그 문구가 답변의 전부다. 길면 서버 장애를 '주제로' 답한
 # 정상 답변일 가능성이 높다. 길이로 한 번 더 거른다.
-MAX_SERVICE_ERROR_LEN = 400
+MAX_SERVICE_ERROR_LEN = settings.SERVICE_ERROR_MAX_CHARS
 
 
 def _squeeze(text: str) -> str:
@@ -344,14 +340,17 @@ _QUOTE_PATTERNS = [
     re.compile(r"[“\"]([^”\"]{10,200})[”\"]"),
     re.compile(r"[「『]([^」』]{10,200})[」』]"),
 ]
-MIN_QUOTE_CHARS = 10
+ANSWER_QUOTE_MIN_CHARS = settings.ANSWER_QUOTE_MIN_CHARS
+# 옛 이름. verify.py 의 동명 상수와 재는 대상이 다르다 - 이쪽은 답변이 인용부호로
+# 제시한 문장, 저쪽은 판정자가 근거로 제출한 인용이다.
+MIN_QUOTE_CHARS = ANSWER_QUOTE_MIN_CHARS
 
 
 def extract_quotes(answer: str) -> list[str]:
     quotes = []
     for pattern in _QUOTE_PATTERNS:
         quotes += [q.strip() for q in pattern.findall(answer)]
-    return [q for q in quotes if len(normalize(q)) >= MIN_QUOTE_CHARS]
+    return [q for q in quotes if len(normalize(q)) >= ANSWER_QUOTE_MIN_CHARS]
 
 
 def check_quoted_spans(answer: str, chunks: list[str], threshold: float = 0.9) -> Check:

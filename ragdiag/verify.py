@@ -18,11 +18,12 @@ from dataclasses import dataclass, field
 
 from ragdiag.schema import Evidence
 
-# 짧은 인용은 아무 문서에나 우연히 들어맞아 검증을 무력화한다.
-MIN_QUOTE_CHARS = 8
-# 완전 일치가 아니어도 통과시키는 최소 연속 일치 비율. 모델이 조사나 끝맺음을
-# 살짝 다듬는 경우를 흡수하되, 문장을 새로 지어내면 통과하지 못하는 수준.
-MATCH_THRESHOLD = 0.9
+from ragdiag.settings import EVIDENCE_MIN_QUOTE_CHARS, MATCH_THRESHOLD
+
+# 옛 이름. checks.py 에도 같은 이름의 다른 값(답변이 제시한 인용의 최소 길이)이
+# 있어서 한쪽만 고치고 양쪽을 고쳤다고 착각하기 쉬웠다. settings 에서 이름을
+# 갈랐고, 여기 별칭은 기존 호출부를 위해 남긴다.
+MIN_QUOTE_CHARS = EVIDENCE_MIN_QUOTE_CHARS
 
 _WS = re.compile(r"\s+")
 
@@ -74,7 +75,7 @@ class CitationCheck:
 def verify_evidence(evidence: list[Evidence], chunks: list[str]) -> CitationCheck:
     check = CitationCheck(n_chunks=len(chunks))
     for ev in evidence:
-        if len(normalize(ev.quote)) < MIN_QUOTE_CHARS:
+        if len(normalize(ev.quote)) < EVIDENCE_MIN_QUOTE_CHARS:
             check.dropped.append({"quote": ev.quote, "reason": "too_short"})
             continue
 

@@ -530,10 +530,7 @@ class OpenAICompatBackend:
 # 진입점이 여러 개라 여기 한 곳에 둔다.
 # ---------------------------------------------------------------------------
 
-URL_VARS = ("LLM_API_URL", "API_URL", "RAGDIAG_BASE_URL",
-            "OPENAI_BASE_URL", "OPENAI_API_BASE")
-KEY_VARS = ("LLM_API_KEY", "API_KEY", "RAGDIAG_API_KEY", "OPENAI_API_KEY")
-MODEL_VAR = "RAGDIAG_MODEL"
+from ragdiag.settings import KEY_VARS, MODEL_VAR, URL_VARS  # noqa: F401  (재수출)
 
 
 def env_first(names, default=None):

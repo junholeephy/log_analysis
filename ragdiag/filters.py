@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from ragdiag import settings
 from ragdiag.conv import Conversation, Turn
 from ragdiag.labels import (
     DEFAULT_QUERY_SCORES,
@@ -39,7 +40,7 @@ from ragdiag.labels import (
 from ragdiag.schema import Case
 
 # 필터에서 "제한 없음"을 뜻하는 값들
-ANY_VALUES = {"전체", "all", "ALL", "", "*"}
+ANY_VALUES = settings.FILTER_ANY_VALUES
 
 
 def _as_set(value: Any) -> set[str]:

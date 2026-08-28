@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+from ragdiag import settings
 from ragdiag.load import mask
 from ragdiag.schema import Case
 
@@ -41,7 +42,7 @@ from ragdiag.schema import Case
 # 대명사 해소에 필요한 것은 보통 직전 2~3턴이다. 그보다 오래된 질문은 노이즈에
 # 가깝고, resolved_question 을 엉뚱한 주제로 끌고 갈 수 있다. 긴 대화(필터에
 # "51턴 이상" 구간이 있다)에서는 입력 토큰도 턴 수에 비례해 늘어난다.
-MAX_HISTORY_TURNS = 3
+MAX_HISTORY_TURNS = settings.MAX_HISTORY_TURNS
 
 
 # ---------------------------------------------------------------------------

@@ -10,10 +10,15 @@ turn N(비판받은 답변)을 짝지은 결과다. 원본 conv_eval 의 한 턴
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from typing import Optional
 
 from ragdiag.classify import TurnResult
-from ragdiag.conv import Conversation
+if TYPE_CHECKING:                      # 런타임 의존을 만들지 않는다.
+    # 쓰는 것은 .user 와 .conversation_id 두 개뿐이다. 사내 머신에서는 그쪽
+    # 파서가 만든 객체가 들어올 수 있으므로 런타임에 conv 를 붙들지 않는다.
+    from ragdiag.conv import Conversation
 
 
 def _check_payload(result: TurnResult) -> list[dict]:
@@ -81,7 +86,7 @@ def build_turn(result: TurnResult, source_turn_no: int) -> dict:
     return turn
 
 
-def build_output(pairs: list[tuple[Conversation, TurnResult]]) -> dict:
+def build_output(pairs: list[tuple["Conversation", TurnResult]]) -> dict:
     """(대화, 결과) 쌍들을 사용자 → 대화 → 턴 으로 다시 묶는다."""
     users: dict[str, dict] = {}
     for conv, result in pairs:
@@ -113,7 +118,7 @@ def build_output(pairs: list[tuple[Conversation, TurnResult]]) -> dict:
     return {"analysis_results": results}
 
 
-def summarize(pairs: list[tuple[Conversation, TurnResult]]) -> str:
+def summarize(pairs: list[tuple["Conversation", TurnResult]]) -> str:
     """분류 분포. 어디를 고쳐야 하는지 보이게 하는 게 목적이다."""
     from collections import Counter
 
