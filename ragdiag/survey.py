@@ -10,10 +10,58 @@ LLM을 쓰지 않는다. 순수 집계다.
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import dataclass
 from typing import Optional, Sequence
 
 from ragdiag.conv import Conversation, Turn
 from ragdiag.report import _pad, _w
+
+
+
+@dataclass
+class Issue:
+    kind: str
+    conversation_id: str
+    detail: str
+
+
+def check_integrity(conversations: list[Conversation]) -> list[Issue]:
+    """진단 전에 데이터가 앞뒤가 맞는지 본다.
+
+    전부 파생 관계에서 나오는 검사다. trace_matched 는 턴 수에서, eval 라벨의 유무는
+    직전 턴의 존재에서 계산할 수 있다. 계산값과 선언값이 어긋나면 파일이 잘렸거나
+    턴이 누락된 것이고, 그 상태로 진단하면 결과를 믿을 수 없다.
+    """
+    issues: list[Issue] = []
+    for conv in conversations:
+        declared = conv.declared_multi_turn
+        if declared is None and conv.turns:
+            issues.append(Issue(
+                "trace_inconsistent", conv.conversation_id,
+                "한 대화 안에서 trace_matched 값이 엇갈림"))
+        elif declared is not None and declared != conv.actual_multi_turn:
+            issues.append(Issue(
+                "trace_mismatch", conv.conversation_id,
+                f"trace_matched={declared} 인데 턴은 {len(conv.turns)}개 "
+                f"— 턴이 누락됐을 수 있음"))
+
+        numbers = [t.turn for t in conv.turns]
+        if numbers and numbers != list(range(1, len(numbers) + 1)):
+            issues.append(Issue(
+                "turn_numbering", conv.conversation_id,
+                f"턴 번호가 1..n 이 아님: {numbers}"))
+
+        for turn in conv.turns:
+            # eval 은 직전 턴을 참고해 계산되므로 turn 1에는 있을 수 없다.
+            if turn.turn == 1 and turn.is_followup:
+                issues.append(Issue(
+                    "eval_on_first_turn", conv.conversation_id,
+                    f"turn 1에 eval 라벨({turn.eval_result})이 있음"))
+            if turn.turn >= 2 and not turn.is_followup:
+                issues.append(Issue(
+                    "eval_missing", conv.conversation_id,
+                    f"turn {turn.turn}에 eval 라벨이 없음 — 평가 실패 또는 턴 누락"))
+    return issues
 
 
 def _bar(count: int, total: int, width: int = 28) -> str:
@@ -141,8 +189,19 @@ def survey(conversations: list[Conversation], metadata: Optional[dict] = None) -
     if chunk_counts:
         out += _numeric("  청크 수", chunk_counts)
 
-    out += ["", "[7] trace_matched"]
-    out += _dist("값 분포", Counter(str(t.trace_matched) for t in turns), len(turns))
+    # trace_matched 는 턴 수에서 계산되는 파생값이라 분포를 세는 건 의미가 없다.
+    # 선언값과 실제가 어긋나는지만 본다.
+    issues = check_integrity(conversations)
+    out += ["", "[7] 무결성"]
+    if not issues:
+        out.append("  이상 없음")
+    else:
+        by_kind = Counter(i.kind for i in issues)
+        for kind, count in by_kind.most_common():
+            out.append(f"  {_pad(kind, 24)}{count:>6}건")
+            for issue in [i for i in issues if i.kind == kind][:3]:
+                out.append(f"      {issue.conversation_id[:24]:<26} {issue.detail}")
+        out.append("  └ 턴이 누락된 대화가 있으면 진단 결과를 믿을 수 없다.")
 
     out += ["", "[8] 부서 · 직급"]
     out += _dist("부서", Counter(c.user.dept for c in conversations), len(conversations), 8)

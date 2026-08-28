@@ -18,9 +18,13 @@ Stage 1의 대명사 해소가 정확해진다.
 `retrieved_data`를 turn N에서 가져오는 게 중요하다. 우리가 묻는 건 "비판받은 답변을
 만든 문서가 충분했나"이지 "다음 질문으로 검색된 문서"가 아니다.
 
-`llm_eval_result`는 **그 턴이 직전 턴과 어떤 관계인지**를 분류한 값이다(조건 변경,
-맥락 추가, 명확화 요구 등). turn 1에서 null인 이유가 그것이다 — 직전 턴이 없다.
-즉 이 값이 붙은 턴이 곧 후속 질문이고, 필터는 여기에 거는 것이 자연스럽다.
+`llm_eval_result` / `llm_emotion_result`는 **직전 턴의 질문과 답변을 참고해 계산한**
+값이다. 그래서 turn 1에는 없고 turn 2부터 존재한다. 이 값이 붙은 턴이 곧 후속 질문이고,
+필터는 여기에 거는 것이 자연스럽다.
+
+`trace_matched`는 **그 대화에 턴이 2개 이상 있는지**를 나타낸다. 즉 turns 배열에서
+계산할 수 있는 파생값이다. 독립 정보가 아니므로 분포를 세는 건 의미가 없고, 대신
+**무결성 검사**로 쓴다 — 선언값과 실제 턴 수가 어긋나면 파일에서 턴이 누락된 것이다.
 """
 
 from __future__ import annotations
@@ -169,6 +173,16 @@ class Conversation:
     conversation_id: str
     user: UserMeta
     turns: list[Turn]
+
+    @property
+    def declared_multi_turn(self) -> Optional[bool]:
+        """turns 가 선언한 trace_matched. 턴들이 서로 다른 값을 가지면 None."""
+        flags = {t.trace_matched for t in self.turns if t.trace_matched is not None}
+        return flags.pop() if len(flags) == 1 else None
+
+    @property
+    def actual_multi_turn(self) -> bool:
+        return len(self.turns) >= 2
 
     def turn_at(self, number: int) -> Optional[Turn]:
         for t in self.turns:

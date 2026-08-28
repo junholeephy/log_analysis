@@ -1,0 +1,99 @@
+{
+    "metadata":{
+        "generated_at": "2026-07-14T18:08:10",
+        "total_users": 10,
+        "total_turns": 80
+    },
+    "users":[
+        {
+        "user_id": "66b452...",
+        "db_login_id": "",
+        "job_grade": "Staff Engineer",
+        "db_dept_name": "xxx",
+        "db_job_name": "yyy",
+        "db_position_name": "zzz",
+        "conversations": [
+            {
+                "conversation_id": "asbdsa",
+                "turns":[
+                    {
+                        "turn":1,
+                        "timestamp": "2026-03-06 10:49:08.298",
+                        "prev_question": null,
+                        "retrieved_data": "[]",
+                        "llm_response": "answer on aaaa",
+                        "user_question": "aaaa",
+                        "trace_matched": "False",
+                        "llm_eval_result": null,
+                        "llm_eval_score": null,
+                        "llm_eval_score_top1": null,
+                        "llm_alternatives":[
+                        ],
+                        "llm_emotion_result": null,
+                        "llm_emotion_score": null,
+                        "llm_emotion_score_top1": null,
+                        "llm_emotion_alternatives":[
+                        ]
+                    }
+                ]
+            },
+            {
+                "turns":[
+                    {
+                        "turn":1,
+                        "timestamp": "2026-03-07 11:29:04.218",
+                        "prev_question": null,
+                        "retrieved_data": "["aaaaa", "bbbbb"]",
+                        "llm_response": "answer on bbbb",
+                        "user_question": "bbbb",
+                        "trace_matched": "True",
+                        "llm_eval_result": null,
+                        "llm_eval_score": null,
+                        "llm_eval_score_top1": null,
+                        "llm_alternatives":[
+                        ],
+                        "llm_emotion_result": null,
+                        "llm_emotion_score": null,
+                        "llm_emotion_score_top1": null,
+                        "llm_emotion_alternatives":[
+                        ]
+                    },
+                    {
+                        "turn":2,
+                        "timestamp": "2026-03-07 11:31:04.218",
+                        "prev_question": "bbbb",
+                        "retrieved_data": "["ccccc", "ddddd"]",
+                        "llm_response": "answer on ccc",
+                        "user_question": "ccc",
+                        "trace_matched": "True",
+                        "llm_eval_result": "조건 변경",
+                        "llm_eval_score": 45.57,
+                        "llm_eval_score_top1": 45,
+                        "llm_alternatives":[
+                            {"label":"F", "name":"조건 변경", " probability":0.9},
+                            {"label":"B", "name":"맥락 추가", "probability":0.095},
+                            {"label":"I", "name":"범위 좁히기", "probability":0.003},
+                            {"label":"A", "name":"심화 확장", "probability":0.002},
+                            {"label":"K", "name":"명확화 요구", "probability":0.001}
+                        ],
+                        "llm_emotion_result": "긍정적 중립",
+                        "llm_emotion_score": 61.69,
+                        "llm_emotion_score_top1": 62.5,
+                        "llm_emotion_alternatives":[
+                            {"lable":"D", "name":"긍정적 중립", "probability":0.931},
+                            {"label":"E", "name":"중립", "probability":0.067},
+                            {"label":"B", "name":"긍정", "probability":0.001},
+                            {"label":"C", "name":"약간 긍정", "probability":0.0},
+                            {"label":"A", "name":"매우 긍정", "probability":0.0}
+                        ]
+                    }
+                ]                
+            }
+        ]
+    },
+    {
+        "user_id": "qqqq", 
+        ...
+    }
+    ]
+}

@@ -83,3 +83,75 @@ def test_no_conditions_means_everything_survives():
 
 def test_survey_runs_on_empty_input():
     assert "턴 0개" in survey([])
+
+
+# ---------------------------------------------------------------------------
+# 무결성 — trace_matched 는 파생값이므로 검증에 쓴다
+# ---------------------------------------------------------------------------
+
+from ragdiag.survey import check_integrity
+
+
+def _t(n, trace=None, eval_result=None):
+    turn = _turn(n, eval_result)
+    if trace is not None:
+        turn["trace_matched"] = trace
+    return turn
+
+
+def test_clean_data_has_no_issues():
+    convs = parse_conversations(_raw([{"conversation_id": "c", "turns": [
+        _t(1, "True"), _t(2, "True", "조건 변경")]}]))
+    assert check_integrity(convs) == []
+
+
+def test_single_turn_conversation_declares_false():
+    convs = parse_conversations(_raw([
+        {"conversation_id": "c", "turns": [_t(1, "False")]}]))
+    assert check_integrity(convs) == []
+
+
+def test_trace_true_but_only_one_turn_is_flagged():
+    """turn이 2개 이상이라고 선언했는데 하나뿐이면 파일에서 턴이 빠진 것이다.
+
+    그 상태로 진단하면 '직전 답변'을 못 찾아 케이스가 조용히 사라진다.
+    """
+    convs = parse_conversations(_raw([
+        {"conversation_id": "c", "turns": [_t(1, "True")]}]))
+    issues = check_integrity(convs)
+    assert [i.kind for i in issues] == ["trace_mismatch"]
+    assert "누락" in issues[0].detail
+
+
+def test_disagreeing_trace_flags_are_caught():
+    convs = parse_conversations(_raw([{"conversation_id": "c", "turns": [
+        _t(1, "True"), _t(2, "False", "조건 변경")]}]))
+    assert "trace_inconsistent" in {i.kind for i in check_integrity(convs)}
+
+
+def test_eval_label_on_first_turn_is_impossible():
+    # eval은 직전 턴을 참고해 계산되므로 turn 1에는 있을 수 없다.
+    convs = parse_conversations(_raw([{"conversation_id": "c", "turns": [
+        _t(1, "True", "조건 변경"), _t(2, "True", "맥락 추가")]}]))
+    assert "eval_on_first_turn" in {i.kind for i in check_integrity(convs)}
+
+
+def test_followup_without_eval_label_is_flagged():
+    convs = parse_conversations(_raw([{"conversation_id": "c", "turns": [
+        _t(1, "True"), _t(2, "True")]}]))
+    issues = [i for i in check_integrity(convs) if i.kind == "eval_missing"]
+    assert issues and "turn 2" in issues[0].detail
+
+
+def test_turn_numbering_gap_is_flagged():
+    convs = parse_conversations(_raw([{"conversation_id": "c", "turns": [
+        _t(1, "True"), _t(5, "True", "조건 변경")]}]))
+    assert "turn_numbering" in {i.kind for i in check_integrity(convs)}
+
+
+def test_survey_reports_integrity_instead_of_trace_distribution():
+    convs = parse_conversations(_raw([
+        {"conversation_id": "c", "turns": [_t(1, "True")]}]))
+    text = survey(convs)
+    assert "[7] 무결성" in text
+    assert "trace_mismatch" in text

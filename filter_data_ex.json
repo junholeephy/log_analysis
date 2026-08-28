@@ -1,0 +1,49 @@
+{
+  "name": "trial_filter",
+  "state":{
+    "role": "전체",
+    "org": {
+      "db_position_name": "전체"
+    },
+    "org_tree":{
+      "db_dept_name": {},
+      "db_job_name": {}
+    },
+    "turn": [],
+    "use_date": false,
+    "start_date": "2026-03-01",
+    "end_date": "2026-08-01",
+    "eval_range": [
+      0, 
+      60
+    ],
+    "emotion_range":[
+      0, 
+      20
+    ],
+    "eval_labels": [],
+    "emotion_labels": [
+      "I. 매우부정"
+    ],
+    "query_scores":{
+      "A": 80,
+      "B": 50,
+      "C": 45,
+      "D": 60,
+      "E": 60,
+      "F": 45,
+      "G": 45,
+      "H": 40,
+      "I": 65,
+      "J": 40,
+      "K": 25,
+      "L": 0,
+      "M": 100,
+      "N": 75,
+      "O": 70,
+      "P": 50,
+      "Q": 40,
+      "R": 50
+    }
+  }
+}
