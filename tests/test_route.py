@@ -20,6 +20,8 @@ def obs(**kw) -> Observation:
         answer_refused=False, requested_language="",
         requested_length_kind="none", requested_length_value=0,
         requested_format="none",
+        question_answerable_as_asked=True, requests_unsupported_output=False,
+        answer_used_history="not_needed",
     )
     base.update(kw)
     return Observation(**base)
@@ -29,6 +31,7 @@ def checks(**kw) -> dict[str, Check]:
     table = {
         name: Check(name, "not_applicable")
         for name in ("pii", "truncated", "quoted_spans", "python_syntax",
+                     "sql_shape", "arithmetic", "injection",
                      "language", "format", "length")
     }
     table.update({k: v for k, v in kw.items()})
@@ -288,3 +291,86 @@ def test_category_is_derived_not_classified():
     """case 가 정해지면 category 는 계산이다. 따로 분류하지 않는 이유."""
     for case_id, case in taxonomy.CASES.items():
         assert taxonomy.describe(case_id)["category"] == case.category
+
+
+# ---------------------------------------------------------------------------
+# 문서 드리프트 — TAXONOMY.md 의 주장과 코드의 실제가 어긋나지 않는지
+# ---------------------------------------------------------------------------
+
+def reachable_cases() -> set[str]:
+    """route.py 가 실제로 만들어낼 수 있는 case 를 전수 열거한다."""
+    import itertools
+
+    produced = set()
+    targets = ["format", "language", "length", "content_missing", "content_wrong",
+               "no_answer", "refusal", "inconsistency", "other"]
+    domains = ["domain", "general_knowledge", "calculation", "code", "tool_usage", "unclear"]
+    outcomes = [
+        (None, None, None),
+        (judgment("insufficient"), citation(0), None),
+        (judgment("partial"), citation(1), None),
+        (judgment("sufficient"), citation(0), None),
+        (judgment("sufficient"), citation(1), ground("used")),
+        (judgment("sufficient"), citation(1), ground("ignored")),
+        (judgment("sufficient"), citation(1), ground("contradicted")),
+    ]
+    variants = [
+        checks(),
+        checks(truncated=Check("truncated", "violated", "x")),
+        checks(format=Check("format", "violated", "x"),
+               language=Check("language", "violated", "x"),
+               length=Check("length", "violated", "x")),
+        checks(format=Check("format", "ok", "x"),
+               language=Check("language", "ok", "x"),
+               length=Check("length", "ok", "x")),
+        checks(python_syntax=Check("python_syntax", "violated", "x")),
+        checks(pii=Check("pii", "violated", "x"),
+               quoted_spans=Check("quoted_spans", "violated", "x")),
+    ]
+    # 관측 필드를 늘릴 때마다 여기도 늘려야 한다. 안 그러면 도달 범위를 실제보다
+    # 적게 세고, 드리프트 테스트가 통과하면서 문서가 뒤처진다.
+    flags = list(itertools.product((True, False), (True, False),
+                                   ("not_needed", "used", "ignored")))
+    variants = variants + [checks(injection=Check("injection", "violated", "x")),
+                           checks(arithmetic=Check("arithmetic", "violated", "x"))]
+
+    for target, domain, refused, (j, c, g), ck, (answerable, unsupported, history) in \
+            itertools.product(targets, domains, (True, False), outcomes, variants, flags):
+        result = route(
+            obs(complaint_target=target, question_domain=domain, answer_refused=refused,
+                question_self_contained=False, question_multi_intent=True,
+                question_answerable_as_asked=answerable,
+                requests_unsupported_output=unsupported,
+                answer_used_history=history),
+            ck, j, c, g,
+        )
+        produced.add(result.primary_case)
+        produced.update(result.secondary_cases)
+    return {c for c in produced if c.startswith("case")}
+
+
+def test_taxonomy_doc_matches_the_reachable_cases():
+    """TAXONOMY.md 가 코드보다 앞서 나가지 않도록.
+
+    한 번 어긋난 적이 있다. 문서에 '판정 가능'이라 써두고 라우팅은 그 case 를
+    만들지 못하는 상태였는데, 문서만 읽으면 알 수 없었다.
+    """
+    import re
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "TAXONOMY.md"
+    if not path.exists():
+        pytest.skip("TAXONOMY.md 없음")
+    text = path.read_text(encoding="utf-8")
+    line = next(l for l in text.splitlines() if "라우팅 도달 가능" in l)
+    claimed = {f"case{n}" for n in re.findall(r"\b(\d{1,2})\b", line.split("|")[2])}
+
+    actual = reachable_cases()
+    assert claimed == actual, (
+        f"문서만 있음: {sorted(claimed - actual)} / "
+        f"코드만 있음: {sorted(actual - claimed)}"
+    )
+
+
+def test_undiagnosable_cases_are_never_reachable():
+    assert not (reachable_cases() & taxonomy.UNDIAGNOSABLE)

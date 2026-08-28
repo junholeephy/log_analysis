@@ -73,6 +73,11 @@ def secondary_from(obs: Observation, checks: dict[str, Check]) -> list[str]:
     quoted = _check(checks, "quoted_spans")
     if quoted is not None and quoted.violated:
         extra.append("case20")         # 인용 표기 오류
+    # 실제 질문은 도메인과 계산이 겹치는 경우가 흔하다("5영업일 뒤가 언제냐").
+    # question_domain 은 하나만 고를 수 있으므로, 등식 오류는 부가로 따로 잡는다.
+    arithmetic = _check(checks, "arithmetic")
+    if arithmetic is not None and arithmetic.violated:
+        extra.append("case22")         # 계산 오류
     return extra
 
 
@@ -102,6 +107,21 @@ def route(
         # 없기 때문이다. 구분한 척하지 않고 case24 로 두되 note 로 남긴다.
         return done("case24", "답변이 정책·권한을 이유로 거절함",
                     ["case25(권한 없는 접근)와 구분 불가 — 권한 조회 결과 필요"])
+
+    # --- 1a. 문서가 모델을 조종했는지 ------------------------------------------
+    # 답변 내용을 따지기 전에 볼 문제다. 문서에 심긴 지시를 수행했다면
+    # 그 답변의 나머지 판정은 의미가 없다.
+    injection = _check(checks, "injection")
+    if injection is not None and injection.violated:
+        return done("case26", f"검색 문서의 지시를 답변이 수행함 — {injection.detail}")
+
+    # --- 1b. 질문 쪽 문제가 먼저다 --------------------------------------------
+    # 챗봇이 낼 수 없는 형태를 요구했으면 답변을 탓할 수 없다.
+    if obs.requests_unsupported_output:
+        return done("case2", "챗봇이 낼 수 없는 형태를 요구함 (링크·이미지 등)")
+    # 질문 자체가 답을 특정할 수 없으면 그 뒤 판정이 전부 의미를 잃는다.
+    if not obs.question_answerable_as_asked:
+        return done("case1", "질문만으로 답을 특정할 수 없음")
 
     # --- 2. 답이 없거나 끊김 --------------------------------------------------
     if obs.complaint_target == "no_answer":
@@ -141,18 +161,31 @@ def route(
         return done(taxonomy.UNCLASSIFIED, "이전 답변과 다르다는 불만",
                     ["case16 — 교차 세션 비교가 필요해 턴 단위로는 판정 불가"])
 
+    # --- 4b. 이전 턴 맥락 상실 -------------------------------------------------
+    # 답변이 히스토리를 잘못 이어받았으면 문서 충족도를 따지기 전에 그것부터다.
+    if obs.answer_used_history == "ignored":
+        return done("case14", "답변이 이전 턴의 내용을 잊거나 잘못 연결함")
+
     # --- 5. 내용 불만: 질문의 성격으로 갈린다 -----------------------------------
     if obs.question_domain == "general_knowledge":
         return done("case21", "상식 질문에 대한 불만",
                     ["판정자의 사전지식에 의존 — 표본 검토 필요"])
 
     if obs.question_domain == "calculation":
-        return done("case22", "계산 질문에 대한 불만")
+        arithmetic = _check(checks, "arithmetic")
+        if arithmetic is not None and arithmetic.violated:
+            return done("case22", f"등식 오류 확인 — {arithmetic.detail}")
+        result = done("case22", "계산 질문에 대한 불만")
+        # 식을 명시하지 않은 계산은 코드로 검증할 수 없다. high 로 두면 안 된다.
+        result.confidence = "medium"
+        result.notes.append("답변에 검증 가능한 등식이 없음 — 자연어 계산은 판정 불가")
+        return result
 
     if obs.question_domain in ("code", "tool_usage"):
-        syntax = _check(checks, "python_syntax")
-        if syntax is not None and syntax.violated:
-            return done("case23", f"코드 문법 오류 확인 — {syntax.detail}")
+        for name in ("python_syntax", "sql_shape"):
+            broken = _check(checks, name)
+            if broken is not None and broken.violated:
+                return done("case23", f"코드 결함 확인 — {broken.detail}")
         return done("case23", "코드·도구 질문에 대한 불만",
                     ["문법은 통과 — 실행 검증 없이는 정확성을 확인할 수 없음"])
 

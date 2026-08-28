@@ -124,6 +124,12 @@ QuestionDomain = Literal[
     "unclear",
 ]
 
+HistoryUse = Literal[
+    "not_needed",   # 히스토리 없이도 답할 수 있는 질문
+    "used",         # 답변이 이전 턴 내용을 반영함
+    "ignored",      # 이전 턴에 나온 내용을 잊었거나 잘못 연결함  -> case14
+]
+
 LengthRequestKind = Literal[
     "none", "max_chars", "max_sentences", "max_lines", "vague_short"
 ]
@@ -164,6 +170,17 @@ class Observation(BaseModel):
     # --- 답변 쪽 관측 ---
     answer_refused: bool = Field(
         description="답변이 정책·권한을 이유로 거절했는가 (case24, case25)"
+    )
+    question_answerable_as_asked: bool = Field(
+        description="질문이 그 자체로 답을 특정할 수 있을 만큼 분명한가. "
+                    "무엇을 묻는지 알 수 없으면 false (case1)"
+    )
+    answer_used_history: HistoryUse = Field(
+        description="답변이 이전 턴의 내용을 제대로 이어받았는가 (case14)"
+    )
+    requests_unsupported_output: bool = Field(
+        description="챗봇이 낼 수 없는 형태를 요구했는가 — 외부 링크, 이미지·그림 생성, "
+                    "파일 첨부 등 (case2)"
     )
 
     # --- 명시적 요구 (코드 검증기에 넘길 값) ---

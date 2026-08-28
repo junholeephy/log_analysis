@@ -252,11 +252,18 @@ complaint_target — 후속 발화가 무엇을 문제 삼는가:
 
 question_domain — 마지막 질문이 어떤 종류인가:
 - domain            사내 문서를 찾아야 답할 수 있다 (규정·절차·제도)
-- general_knowledge 일반 상식으로 답할 수 있다
+- general_knowledge 공개된 지식만으로 답할 수 있다 (상식, 법령 조문, 표준)
 - calculation       수식·날짜·산수 계산
 - code              SQL·Python 등 코드 작성이나 오류
 - tool_usage        Excel·Spotfire 등 도구 사용법
 - unclear           판별할 수 없다
+
+domain 과 general_knowledge 의 경계: **회사마다 답이 달라지는가**로 가른다.
+법령·표준을 언급했더라도 "우리 회사는 어떻게 운영하나"를 묻는 것이면 domain 이다.
+- "근로기준법 조문상 연차 발생 요건이 뭔가요" -> general_knowledge (법이 하나뿐)
+- "우리 회사 연차는 법정 기준대로 주나요"    -> domain (회사마다 다름)
+사내 챗봇에서는 후자가 훨씬 흔하다. 애매하면 domain 이다 — 공개 지식으로 답할 수
+있는지가 분명할 때만 general_knowledge 로 둔다.
 
 question_self_contained — 마지막 질문 문장 하나만 놓고 판단해라.
 - false: 지시대명사가 있거나("그거", "아까 그 방법"), 질문의 **대상 명사가 통째로
@@ -270,6 +277,25 @@ question_multi_intent — 한 질문에 서로 다른 요구가 둘 이상 섞�
 
 answer_refused — 답변이 정책·권한을 이유로 답하기를 거절했는가.
 정보가 없어서 못 답한 것은 거절이 아니다.
+
+question_answerable_as_asked — 마지막 질문이 그 자체로 답을 특정할 수 있을 만큼
+분명한가. 무엇을 묻는지 알 수 없거나 답이 무한히 갈리면 false 다.
+- false: "그거 어떻게 해요?" (무엇을 어떻게 하는지 알 수 없음), "다 알려주세요"
+- true: 범위가 넓더라도 무엇을 묻는지는 분명한 경우
+question_self_contained 와 다르다. 저건 **앞 대화가 있으면 풀리는가**를 보고,
+이건 **앞 대화를 다 알아도 여전히 모호한가**를 본다. 대명사만 있는 질문은
+self_contained=false 지만 앞 대화로 풀리면 answerable=true 다.
+
+answer_used_history — 답변이 이전 턴의 내용을 제대로 이어받았는가.
+- not_needed: 히스토리 없이도 답할 수 있는 질문이었다 (첫 질문이거나 독립적)
+- used: 이전 턴에서 정해진 조건·범위를 반영해 답했다
+- ignored: 이전 턴에 이미 나온 내용을 잊었거나 다른 것과 잘못 연결했다
+"앞에서 국내 기준이라고 했는데 해외 기준으로 답한" 경우가 ignored 다.
+답변 품질이 아니라 **히스토리를 썼는지**만 본다.
+
+requests_unsupported_output — 챗봇이 낼 수 없는 형태를 요구했는가.
+외부 링크, 이미지·그림 생성, 파일 첨부, 실시간 조회 같은 것. 표·목록·코드처럼
+텍스트로 낼 수 있는 것은 여기 해당하지 않는다.
 
 명시적 요구는 사용자가 **실제로 말한 것만** 적어라.
 - requested_language: "영어로 답해줘" 같은 요구가 있을 때만 ISO 코드(ko/en/ja/zh).

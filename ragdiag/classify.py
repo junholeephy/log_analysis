@@ -19,6 +19,9 @@ from ragdiag.backends import Usage
 from ragdiag.checks import (
     Check,
     LengthRequest,
+    check_arithmetic,
+    check_injection,
+    check_sql_shape,
     check_format,
     check_language,
     check_length,
@@ -62,6 +65,9 @@ def run_checks(case: Case, obs: Observation) -> dict[str, Check]:
         "truncated": check_truncated(case.llm_ans_on_last_q),
         "quoted_spans": check_quoted_spans(case.llm_ans_on_last_q, case.rag_chunks),
         "python_syntax": check_python_syntax(case.llm_ans_on_last_q),
+        "sql_shape": check_sql_shape(case.llm_ans_on_last_q),
+        "arithmetic": check_arithmetic(case.llm_ans_on_last_q),
+        "injection": check_injection(case.rag_chunks, case.llm_ans_on_last_q),
         "language": check_language(case.llm_ans_on_last_q, obs.requested_language or None),
         "format": check_format(
             case.llm_ans_on_last_q,
