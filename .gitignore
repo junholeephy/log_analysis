@@ -14,6 +14,8 @@ fixtures/synthetic.json
 
 # 데이터 - 올리지 않는다
 data/
+# 실행 결과와 유사 데이터
+output/
 # 입력·설정 예시 JSON, 원본 명세 — 올리지 않는다
 *_ex.json
 *.json

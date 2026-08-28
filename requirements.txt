@@ -7,3 +7,7 @@ pytest>=8.0
 
 # --backend api 를 쓸 때만 필요. 에어갭 장비에는 반입하지 않아도 된다.
 # anthropic>=1.1.0
+
+# 대시보드(dashboard.py)를 쓸 때만 필요. 분류 파이프라인에는 불필요.
+# streamlit>=1.30
+# pandas>=2.0
