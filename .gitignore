@@ -14,8 +14,11 @@ fixtures/synthetic.json
 
 # 데이터 - 올리지 않는다
 data/
-# 입력 형식 예시(사내 스키마). 올리려면 이 줄을 지우세요
-data_format_ex.json
+# 입력·설정 예시 JSON, 원본 명세 — 올리지 않는다
+*_ex.json
+*.json
+!package.json
+taxonomy.txt
 
 # 도구
 .omc/
