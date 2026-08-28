@@ -168,6 +168,28 @@ def test_sync_script_is_committed_and_executable():
     assert (ROOT / "scripts/sync.sh").stat().st_mode & 0o111
 
 
+def test_sync_derives_names_instead_of_hardcoding_them():
+    """규격: {BB} 는 스크립트 위치에서, <pkg> 는 src/ 아래에서 유도한다.
+
+    이름을 박아 두면 저장소나 패키지 이름이 바뀔 때 사내에서 조용히 엉뚱한
+    경로를 만든다. 거기서는 고칠 수 없다.
+    """
+    text = (ROOT / "scripts/sync.sh").read_text(encoding="utf-8")
+    assert 'STAGING=".staging/BB"' not in text, "저장소 이름이 박혀 있다"
+    assert 'DEST="BB"' not in text, "사본 경로가 박혀 있다"
+    assert "BASH_SOURCE" in text, "스크립트 위치에서 이름을 유도해야 한다"
+    assert 'python -m <pkg>' not in text, "패키지 이름이 <pkg> 로 남아 있다"
+    assert '"$DEST"/src/*/' in text, "src/ 아래에서 패키지 이름을 읽어야 한다"
+
+
+def test_sync_refuses_outside_the_work_root():
+    """AA 루트가 아닌 곳에서 돌면 엉뚱한 자리에 사본을 만든다."""
+    proc = subprocess.run(["bash", str(ROOT / "scripts/sync.sh"), "v0.0"],
+                          capture_output=True, text=True, cwd="/tmp")
+    assert proc.returncode != 0
+    assert "AA 루트" in proc.stderr
+
+
 def test_sync_refuses_without_a_tag():
     """태그 없이 실행하지 않는다 (규격 '하지 말 것' 4)."""
     proc = subprocess.run(["bash", str(ROOT / "scripts/sync.sh")],

@@ -2,7 +2,10 @@
 #
 # BB → AA 이식 스크립트. **AA 루트에서** 실행한다.
 #
-#   bash .staging/BB/scripts/sync.sh <tag>
+#   bash .staging/{BB}/scripts/sync.sh <tag>
+#
+# {AA}·{BB} 의 실제 이름은 프로젝트마다 다르다. {BB} 는 이 스크립트의 위치에서 유도하고
+# ({AA}/.staging/{BB}/scripts/sync.sh), {AA} 는 실행 위치(cwd)라 이름이 필요 없다.
 #
 # 최초 1회든 갱신이든 같은 명령이며, 몇 번을 돌려도 같은 상태가 된다.
 # 이 스크립트는 실행 도중 checkout 으로 자기 자신을 바꾸므로, 본문 전체를
@@ -10,8 +13,11 @@
 
 set -euo pipefail
 
-STAGING=".staging/BB"
-DEST="BB"
+SELF_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)   # {AA}/.staging/{BB}/scripts
+REPO_DIR=$(dirname "$SELF_DIR")                             # {AA}/.staging/{BB}
+NAME=$(basename "$REPO_DIR")                                # {BB}
+STAGING=".staging/$NAME"
+DEST="$NAME"
 DATA_EXT='csv|tsv|parquet|xlsx|xls|pkl|pickle|npy|npz|h5|feather|sqlite'
 
 log()  { printf '[sync] %s\n' "$*"; }
@@ -43,7 +49,9 @@ yaml_keys() {
 main() {
   local tag="${1:-}"
   [[ -n "$tag" ]] || die "태그를 지정하세요:  bash $STAGING/scripts/sync.sh <tag>"
-  [[ -d "$STAGING/.git" ]] || die "AA 루트에서 실행하세요 ($STAGING 이 없습니다)"
+  [[ "$REPO_DIR" == "$(pwd -P)/.staging/$NAME" ]] || die \
+    "AA 루트에서 실행하세요. 기대 위치: <AA>/.staging/$NAME/scripts/sync.sh, 현재 cwd: $(pwd -P)"
+  [[ -d "$STAGING/.git" ]] || die "$STAGING 이 clone 이 아닙니다 (.git 없음)"
 
   # 1. 안전장치 — 커밋보다 먼저 깔아둔다
   [[ -f .staging/.gitignore ]] || printf '*\n' > .staging/.gitignore
@@ -100,12 +108,16 @@ main() {
   fi
   log "leak check: OK"
 
+  # 안내 문구용 패키지 이름 — src/ 아래 디렉터리가 하나면 그것으로 본다
+  local pkg="<pkg>" cands=("$DEST"/src/*/)
+  [[ ${#cands[@]} -eq 1 && -d "${cands[0]}" ]] && pkg=$(basename "${cands[0]}")
+
   cat <<EOF
 
 next:
   source <venv>/bin/activate
   pip install --dry-run -r $DEST/requirements.txt && pip check
-  PYTHONPATH=$DEST/src python -m ragdiag --config configs/local.yaml --dry-run
+  PYTHONPATH=$DEST/src python -m $pkg --config configs/local.yaml --dry-run
 EOF
 }
 

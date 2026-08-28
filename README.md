@@ -28,7 +28,7 @@
 | `src/ragdiag/contracts.py` | **입력 계약.** 사내에서 회수한 포맷 정보가 도착하는 유일한 지점 |
 | `configs/example.yaml` | **모든 설정 키.** 사내 실값은 `AA/configs/local.yaml` |
 | `src/ragdiag/fixtures/synth.py` | **가짜 데이터는 파일이 아니라 코드.** `generate(n, seed)` 가 런타임에 만든다 |
-| `scripts/sync.sh` | 이식. `.git` 도 데이터도 넘기지 않는다 |
+| `scripts/sync.sh` | 이식. `.git` 도 데이터도 넘기지 않는다 (규격 부록 A 전문) |
 | `docs/insights/` | 사내에서 본 것을 적어 오는 자리 |
 
 ## 진입점
@@ -53,25 +53,35 @@ python -m pytest tests/ -q                                # LLM 없이 도는 �
 ## 사내 머신에서
 
 ```bash
-# 최초 1회
-cd AA && git clone <이 저장소> .staging/BB
+# 최초 1회. clone 위치는 .staging/<저장소이름> 이어야 한다.
+cd <사내작업폴더> && git clone <이 저장소> .staging/log_analysis
 
-# 매번 (멱등하다)
-bash .staging/BB/scripts/sync.sh v0.2
+# 매번. 멱등하다 — 최초든 갱신이든 같은 명령이다.
+bash .staging/log_analysis/scripts/sync.sh v0.2
+```
 
+`sync.sh` 는 이름을 스스로 유도한다. 저장소 이름은 자기 위치에서,
+패키지 이름은 `src/` 아래에서 읽으므로 **손볼 것이 없다.** 위 명령이
+다음에 실행할 것까지 찍어 준다:
+
+```bash
 source <기존 venv>/bin/activate
-pip install --dry-run -r BB/requirements.txt && pip check   # 충돌 먼저
-pip install -r BB/requirements.txt
-PYTHONPATH=BB/src python -m ragdiag --config configs/local.yaml --dry-run
-PYTHONPATH=BB/src python -m ragdiag --config configs/local.yaml
+pip install --dry-run -r log_analysis/requirements.txt && pip check   # 충돌 먼저
+pip install -r log_analysis/requirements.txt
+PYTHONPATH=log_analysis/src python -m ragdiag --config configs/local.yaml --dry-run
+PYTHONPATH=log_analysis/src python -m ragdiag --config configs/local.yaml
 ```
 
 **패키지를 venv 에 설치하지 않는다** — `PYTHONPATH` 로만 붙인다. 공용 venv 를
-오염시키지 않고 `AA/BB` 통째 교체가 무연산이 된다. `--upgrade` 와
+오염시키지 않고 사본 통째 교체가 무연산이 된다. `--upgrade` 와
 `--force-reinstall` 은 쓰지 않는다. 남의 환경을 조용히 깨뜨리고 되돌릴 수 없다.
 
-**태그 없이 실행하지 않는다.** 결과 파일이 반출되지 않으므로 `AA/BB` 가
-"어떤 코드로 돌렸는지"를 사내에 남기는 유일한 형태다.
+**태그 없이 실행하지 않는다.** 결과 파일이 반출되지 않으므로 사내에 남은 사본이
+"어떤 코드로 돌렸는지"를 알려주는 유일한 형태다.
+
+`sync.sh` 가 지키는 것 — `configs/local.yaml` 은 있으면 **절대 건드리지 않고**
+example 에만 있는 키를 경고한다(모르고 지나가면 조용히 기본값으로 돈다).
+데이터 파일이 사본에 섞이면 **사본을 지우고** 실패로 끝낸다.
 
 실행이 끝나면 화면 마지막에 이 블록이 찍힌다. 파일도 플롯도 못 가져오므로
 **이게 유일한 출력**이다.
