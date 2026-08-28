@@ -72,6 +72,9 @@ main() {
 
   # 3. 실행 사본 통째 교체
   [[ ! -e "$DEST/.git" ]] || die "$DEST 에 .git 이 있습니다. clone 인지 확인하고 직접 정리하세요 (자동 삭제하지 않습니다)"
+  # 교체 전에 의존 목록을 기억해 둔다. 지운 뒤에는 비교할 대상이 없다.
+  local req_before=""
+  [[ -f "$DEST/requirements.txt" ]] && req_before=$(cksum < "$DEST/requirements.txt")
   rm -rf "$DEST"; mkdir -p "$DEST"
   git -C "$STAGING" archive "$tag" | tar -x -C "$DEST"
   printf '%s %s\n' "$tag" "$sha" > "$DEST/VERSION"
@@ -108,17 +111,38 @@ main() {
   fi
   log "leak check: OK"
 
-  # 안내 문구용 패키지 이름 — src/ 아래 디렉터리가 하나면 그것으로 본다
+  # ---------------------------------------------------------------------
+  # 안내 문구
+  #
+  # **규격 부록에서 이 블록만 갈라져 있다.** 부록은 매번 pip 와 PYTHONPATH 를
+  # 찍는데 둘 다 늘 필요한 것이 아니다. 사람은 여기 찍힌 줄을 그대로 따라가므로,
+  # 필요 없는 줄이 섞이면 매번 안 해도 될 일을 하거나 반대로 이 안내를 통째로
+  # 안 믿게 된다. **지금 실제로 필요한 줄만 찍는다.**
+  # ---------------------------------------------------------------------
+
+  # 패키지 이름 — src/ 아래 디렉터리가 하나면 그것으로 본다
   local pkg="<pkg>" cands=("$DEST"/src/*/)
   [[ ${#cands[@]} -eq 1 && -d "${cands[0]}" ]] && pkg=$(basename "${cands[0]}")
 
-  cat <<EOF
+  # 실행 형태 — 저장소가 진입 스크립트를 주면 그것을 쓴다 (PYTHONPATH 불필요)
+  local run="PYTHONPATH=$DEST/src python -m $pkg"
+  [[ -f "$DEST/conv_parse.py" ]] && run="python $DEST/conv_parse.py"
 
-next:
-  source <venv>/bin/activate
-  pip install --dry-run -r $DEST/requirements.txt && pip check
-  PYTHONPATH=$DEST/src python -m $pkg --config configs/local.yaml --dry-run
-EOF
+  printf '\nnext:\n'
+  # 의존이 바뀌었을 때만 안내한다. 안 바뀌었으면 돌릴 이유가 없다.
+  local req_after=""
+  [[ -f "$DEST/requirements.txt" ]] && req_after=$(cksum < "$DEST/requirements.txt")
+  if [[ -n "$req_after" && "$req_before" != "$req_after" ]]; then
+    if [[ -z "$req_before" ]]; then
+      printf '  의존 설치 (최초 1회)\n'
+    else
+      printf '  ⚠ requirements.txt 가 바뀌었습니다\n'
+    fi
+    printf '    pip install --dry-run -r %s/requirements.txt && pip check\n' "$DEST"
+    printf '    pip install -r %s/requirements.txt      # --upgrade 는 쓰지 않는다\n' "$DEST"
+  fi
+  printf '  %s --config configs/local.yaml --dry-run    # 스모크\n' "$run"
+  printf '  %s --config configs/local.yaml\n' "$run"
 }
 
 main "$@"

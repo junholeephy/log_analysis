@@ -204,3 +204,105 @@ def test_pyproject_declares_runtime_deps():
     assert "PyYAML" in text, "--config 를 쓰려면 필요하다"
     # 대시보드는 선택이어야 한다. 사내 반입 부담을 늘리지 않는다.
     assert "streamlit" in text.split("optional-dependencies")[1]
+
+
+def _fake_repo(tmp_path, with_launcher=True, extra_req=""):
+    """sync.sh 만 시험하기 위한 최소 저장소. 이 저장소의 git 상태에 기대지 않는다."""
+    import subprocess
+
+    bb = tmp_path / "toolkit"
+    (bb / "scripts").mkdir(parents=True)
+    (bb / "src" / "somepkg").mkdir(parents=True)
+    (bb / "src" / "somepkg" / "__init__.py").write_text("", encoding="utf-8")
+    (bb / "configs").mkdir()
+    (bb / "configs" / "example.yaml").write_text("a: 1\n", encoding="utf-8")
+    (bb / "requirements.txt").write_text("pydantic>=2.0\n" + extra_req, encoding="utf-8")
+    (bb / "scripts" / "sync.sh").write_text(
+        (ROOT / "scripts/sync.sh").read_text(encoding="utf-8"), encoding="utf-8")
+    if with_launcher:
+        (bb / "conv_parse.py").write_text("print('hi')\n", encoding="utf-8")
+    run = lambda *a: subprocess.run(["git", "-C", str(bb), *a],
+                                    capture_output=True, text=True, check=True)
+    run("init", "-q")
+    run("config", "user.email", "t@t"); run("config", "user.name", "t")
+    run("add", "-A"); run("commit", "-q", "-m", "x")
+    return bb
+
+
+def _sync(aa, bb, tag):
+    import subprocess
+    return subprocess.run(["bash", ".staging/toolkit/scripts/sync.sh", tag],
+                          capture_output=True, text=True, cwd=aa)
+
+
+def _fresh_aa(tmp_path, bb):
+    import subprocess
+
+    aa = tmp_path / "work"
+    (aa / ".staging").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(aa)], check=True)
+    subprocess.run(["git", "clone", "-q", str(bb), str(aa / ".staging" / "toolkit")],
+                   check=True)
+    return aa
+
+
+def test_sync_hint_skips_pip_when_dependencies_did_not_change(tmp_path):
+    """규격 부록에서 이 블록만 갈라져 있다. 갈라진 이유가 지워지지 않게 고정한다.
+
+    부록은 매번 pip 와 PYTHONPATH 를 찍는다. 둘 다 늘 필요한 것이 아닌데,
+    사람은 여기 찍힌 줄을 그대로 따라간다. 필요 없는 줄이 섞이면 매번 안 해도
+    될 일을 하거나 - 더 나쁘게는 - 이 안내를 통째로 안 믿게 된다.
+    """
+    import subprocess
+
+    bb = _fake_repo(tmp_path)
+    subprocess.run(["git", "-C", str(bb), "tag", "v1"], check=True)
+    aa = _fresh_aa(tmp_path, bb)
+
+    first = _sync(aa, bb, "v1")
+    assert first.returncode == 0, first.stderr
+    assert "pip install" in first.stdout, "최초에는 의존 설치를 안내해야 한다"
+
+    again = _sync(aa, bb, "v1")
+    assert again.returncode == 0, again.stderr
+    assert "pip install" not in again.stdout, (
+        "의존이 그대로인데 pip 를 또 안내한다:\n" + again.stdout)
+
+
+def test_sync_hint_warns_when_dependencies_changed(tmp_path):
+    import subprocess
+
+    bb = _fake_repo(tmp_path)
+    subprocess.run(["git", "-C", str(bb), "tag", "v1"], check=True)
+    aa = _fresh_aa(tmp_path, bb)
+    _sync(aa, bb, "v1")
+
+    (bb / "requirements.txt").write_text("pydantic>=2.0\nrequests>=2\n", encoding="utf-8")
+    for a in (["add", "-A"], ["commit", "-q", "-m", "dep"], ["tag", "v2"]):
+        subprocess.run(["git", "-C", str(bb), *a], check=True)
+
+    out = _sync(aa, bb, "v2")
+    assert out.returncode == 0, out.stderr
+    assert "requirements.txt 가 바뀌었습니다" in out.stdout, out.stdout
+    assert "pip install" in out.stdout
+
+
+def test_sync_hint_prefers_the_launcher_over_pythonpath(tmp_path):
+    """진입 스크립트가 있으면 PYTHONPATH 없는 형태를 안내한다."""
+    import subprocess
+
+    bb = _fake_repo(tmp_path, with_launcher=True)
+    subprocess.run(["git", "-C", str(bb), "tag", "v1"], check=True)
+    out = _sync(_fresh_aa(tmp_path, bb), bb, "v1")
+    assert "python toolkit/conv_parse.py" in out.stdout, out.stdout
+    assert "PYTHONPATH" not in out.stdout
+
+
+def test_sync_hint_falls_back_to_pythonpath_without_a_launcher(tmp_path):
+    """진입 스크립트를 안 주는 프로젝트에서는 규격 형태를 안내한다."""
+    import subprocess
+
+    bb = _fake_repo(tmp_path, with_launcher=False)
+    subprocess.run(["git", "-C", str(bb), "tag", "v1"], check=True)
+    out = _sync(_fresh_aa(tmp_path, bb), bb, "v1")
+    assert "PYTHONPATH=toolkit/src python -m somepkg" in out.stdout, out.stdout
