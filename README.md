@@ -26,8 +26,9 @@
 
 ```bash
 python conv_parse.py --conv-data conv-eval.json --filter filter.json   # 분류
-python conv_parse.py --golden                                          # 관측 품질
+python conv_parse.py --golden                                          # 3단계 판정 품질
 python conv_parse.py --legacy-regression                               # 회귀 기준선
+python -m pytest tests/ -q                                             # LLM 없이 도는 전부
 ```
 
 ## 실행에 필요한 것 세 가지
@@ -300,10 +301,12 @@ leakage가 일어나면 **검색 실패가 '근거 미활용'으로 오분류되
 
 | 셋 | 무엇을 재나 | 현재 |
 |---|---|---|
-| 관측 골든셋 30건 (`--golden`) | Step 1 관측 **하나하나**의 정확도 | 55/55 |
+| 관측 골든셋 44건 (`--golden`) | Step 1 관측 **하나하나**의 정확도 | 72/72 |
+| 판정 골든셋 18건 (`--golden`) | Step 2·3 의 verdict·인용 위치 정확도 | 22/22 |
 | 구 회귀셋 23건 (`--legacy-regression`) | 관측이 조합되어 case 로 가는 **경로** | 23/23 |
+| 단위 테스트 (`pytest`) | LLM 없이 도는 전부 | 304개 |
 
-**한쪽만으로는 부족하다.** 골든셋이 98% 일 때 회귀셋은 15/23 이었다. 관측 필드
+**세 층은 서로를 대체하지 못한다.** 골든셋이 98% 일 때 회귀셋은 15/23 이었다. 관측 필드
 자체는 멀쩡한데 그 값을 **라우팅 어디에 놓았느냐**가 틀렸던 것이고, 필드 단위
 측정으로는 절대 보이지 않는다.
 
@@ -490,15 +493,16 @@ ragdiag/
   classify.py    3단계 오케스트레이션
   output.py      pre_data_format 형태 출력
   survey.py      데이터 실태 조사 (--inspect)
-  golden.py      관측 채점
+  golden.py      골든셋 채점 (관측 · 판정)
   backends.py    로컬 LLM / Claude Code CLI / Anthropic API
   load.py        구 포맷 로더 (회귀셋용)
   decide.py      구 진리표 (회귀 기준선용)
   report.py      구 리포트 (회귀 기준선용)
 
 fixtures/
-  observations.py  Step 1 관측 골든셋 30건
-  synthetic.py     구 회귀셋 23건 + 신 case 매핑
+  observations.py  Step 1 관측 골든셋 44건 (필드별 양성·음성)
+  judgments.py     Step 2·3 판정 골든셋 18건 (충족도 10 · 근거 활용 8)
+  synthetic.py     구 회귀셋 23건 + 구→신 case 매핑
 ```
 
 `load.py` · `decide.py` · `report.py` 는 구 파이프라인 전용이다. 새 코드에서 쓰지 말 것 —
