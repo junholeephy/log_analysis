@@ -660,13 +660,18 @@ build_outcome(owners, results).save("conv_parsed.json")
 ```bash
 pip install streamlit pandas          # 분류 파이프라인에는 불필요하다
 
-streamlit run log_analysis/src/dashboard.py -- \
+python -m streamlit run log_analysis/src/dashboard.py -- \
     --result     outputs/conv_parsed.json \
     --dept-class outputs/class_dept.json \
     --job-class  outputs/class_job.json
 ```
 
 `--` 가 있어야 한다. 앞은 streamlit 이 먹고 뒤가 스크립트로 넘어간다.
+
+**`streamlit run` 이 아니라 `python -m streamlit run` 이다.** 앞의 형태는 PATH 에
+실행 파일이 있어야 하는데, venv 를 activate 하지 않았거나 공용 venv 를 쓰면
+`streamlit: command not found` 가 난다. `python -m` 은 지금 쓰는 인터프리터를
+그대로 쓰므로 PATH 를 타지 않는다.
 `--dept-class` · `--job-class` 는 없어도 돌아간다 — 부서·직급이 대분류로
 접히지 않고 로그 원본 값으로 나올 뿐이다.
 

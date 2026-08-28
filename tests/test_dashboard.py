@@ -133,7 +133,10 @@ def test_running_with_plain_python_says_to_use_streamlit():
     proc = subprocess.run([sys.executable, str(DASHBOARD)],
                           capture_output=True, text=True, cwd=ROOT)
     assert proc.returncode == 2, proc.stdout + proc.stderr
-    assert "streamlit run" in proc.stderr, proc.stderr
+    assert "-m streamlit run" in proc.stderr, (
+        "PATH 를 타지 않는 형태로 안내해야 한다. `streamlit run` 만 쓰면 venv 를 "
+        "activate 하지 않았을 때 command not found 가 난다.\n" + proc.stderr)
+    assert sys.executable in proc.stderr, "지금 도는 인터프리터를 그대로 알려준다"
     assert "--" in proc.stderr, "`--` 가 필요하다는 것도 알려야 한다"
     assert str(DASHBOARD) in proc.stderr, (
         "사용자가 친 경로를 그대로 돌려줘야 한다. 사본 위치가 배포마다 다르다.")

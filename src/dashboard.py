@@ -1,6 +1,6 @@
 """분류 결과를 훑어보는 대시보드.
 
-  streamlit run <저장소>/src/dashboard.py -- \
+  python -m streamlit run <저장소>/src/dashboard.py -- \
       --result outputs/conv_parsed.json \
       --dept-class outputs/class_dept.json \
       --job-class outputs/class_job.json
@@ -48,14 +48,19 @@ except ModuleNotFoundError as e:
 # streamlit 서버 없이 이 파일을 직접 실행하면 경고만 쏟고 아무 화면도 안 나온다.
 # 실패로 끝나지도 않아서 뭐가 잘못됐는지 알기 어렵다.
 if not st.runtime.exists():
+    # 경로는 사용자가 친 것을, 인터프리터는 지금 도는 것을 그대로 돌려준다.
+    # `streamlit run` 은 PATH 에 실행 파일이 있어야 하는데 venv 를 activate 하지
+    # 않았거나 공용 venv 를 쓰면 command not found 가 난다. python -m 은 지금
+    # 이 인터프리터를 그대로 쓰므로 PATH 를 타지 않는다.
     _bail("이 파일은 streamlit 이 실행합니다. python 으로 직접 돌리면\n"
           "경고만 나오고 화면이 뜨지 않습니다.\n\n"
-          # 사용자가 친 경로를 그대로 돌려준다. 사본 위치가 배포마다 다르다.
-          f"  streamlit run {sys.argv[0]} -- \\\n"
+          f"  {sys.executable} -m streamlit run {sys.argv[0]} -- \\\n"
           "      --result     outputs/conv_parsed.json \\\n"
           "      --dept-class outputs/class_dept.json \\\n"
           "      --job-class  outputs/class_job.json\n\n"
-          "`--` 가 있어야 합니다. 앞은 streamlit 이 먹고 뒤가 이 스크립트로 갑니다.")
+          "`--` 가 있어야 합니다. 앞은 streamlit 이 먹고 뒤가 이 스크립트로 갑니다.\n"
+          "`python -m streamlit` 은 PATH 를 타지 않습니다 — `streamlit` 만 쓰면\n"
+          "venv 를 activate 하지 않았을 때 command not found 가 납니다.")
 
 from ragdiag import taxonomy as tx
 
