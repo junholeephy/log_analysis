@@ -1,16 +1,34 @@
-# RAG 충족도 진단기
+# 대화 로그 실패 분류기
 
-사내 지식 챗봇 대화 로그에서, **사용자가 직전 답변에 불만을 표한 턴**을 모아
-"그때 검색된 문서(`rag_data`)가 그 질문에 만족스럽게 답하기에 충분했는가"를 판정한다.
+사내 지식 챗봇의 대화 로그에서 **사용자가 직전 답변에 불만을 표한 턴**을 골라,
+그 실패가 taxonomy 30개 케이스 중 어디에 해당하는지 분류한다.
 
-목적은 개별 답변을 고치는 게 아니라, **집계했을 때 어디를 고쳐야 하는지**를 알아내는 것이다.
+목적은 개별 답변을 고치는 게 아니라 **집계했을 때 어디를 고쳐야 하는지**를
+알아내는 것이다. 그래서 라벨은 증상이 아니라 **조치 주체**로 나뉜다 — 같은 증상도
+문서팀이 고칠 일과 프롬프트 담당이 고칠 일은 다르다.
 
-📋 **[실패 분류 체계](TAXONOMY.md)** — 원본 taxonomy 30개 케이스를 "지금 이 로그로
-판정 가능한 것"만으로 다시 배치한 것. 현재 구현된 건 `case17` ↔ `case18` 판별이다.
+📋 **[실패 분류 체계](TAXONOMY.md)** — 30개 케이스 중 무엇이 이 로그로 판정 가능하고
+무엇이 아닌지, 그 판단 근거.
 
 📊 **[파이프라인 흐름도](https://claude.ai/code/artifact/180f8cc5-d5fb-41e0-9084-8be60c271d5f)**
-— 3단계 판정, 각 단계가 일부러 감추는 입력, 인용 검증, 관측 한계를 그림으로.
-(비공개 링크. 공유 전에는 작성자만 열람 가능)
+— 3단계 판정과 각 단계가 일부러 감추는 입력을 그림으로. (비공개 링크)
+
+## 진입점 두 개
+
+| | 무엇 | 언제 |
+|---|---|---|
+| **`conv_parse.py`** | 본 파이프라인. conv_eval 로그를 30개 case 로 분류 | 실제 분석 |
+| `run.py` | 구 파이프라인. case17/18 판별만, 라벨 6개 | **회귀 기준선** |
+
+`run.py` 는 지우지 않는다. 이 프로젝트에서 **실제 LLM 으로 검증된 최초의 파이프라인**이고,
+그 23건 회귀셋이 새 파이프라인의 라우팅 결함을 잡아냈다(아래 검증 기록 참고).
+검증된 기준선을 지우면 같은 종류의 회귀를 다음에 못 잡는다.
+
+```bash
+python conv_parse.py --conv-data conv-eval.json --filter filter.json   # 분류
+python conv_parse.py --golden                                          # 관측 품질
+python conv_parse.py --legacy-regression                               # 회귀 기준선
+```
 
 ## 실행에 필요한 것 세 가지
 
@@ -20,7 +38,7 @@ pip install pydantic
 export LLM_API_URL=http://<서버>:8000   # /v1 이 붙어 있어도, 스킴이 없어도 된다
 export LLM_API_KEY=<키>
 
-python run.py --input data/logs.json
+python conv_parse.py --conv-data conv-eval.json --filter filter.json
 ```
 
 끝이다. 나머지는 자동으로 정해진다.
@@ -38,6 +56,25 @@ python run.py --input data/logs.json
 ```bash
 python run.py --check-llm     # 서버·모델·강제방식·1회 소요시간·전체 예상시간
 ```
+
+## 3단계 분류
+
+```
+Step 1  관측 추출     LLM 1회   ✂ rag_data 를 주지 않는다
+Step 2  조건부 검증   코드 항상 · LLM 은 도메인 질문일 때만  ✂ 충족도 판정에 답변을 주지 않는다
+Step 3  라우팅        코드      case 는 LLM 이 고르지 않는다
+```
+
+case 를 LLM 에게 직접 고르게 하지 않는 이유가 셋이다. 30지선다는 어떤 모델이든
+정확도가 안 나오지만 좁은 질문 여러 개는 안정적이고, 한 호출로 case 까지 물으면
+모델이 결론을 먼저 직감하고 관측값을 거기 맞추며, taxonomy 를 고쳐도 관측값은
+그대로 재사용되어 라우팅만 다시 돌리면 된다.
+
+category 는 따로 분류하지 않는다. 각 case 는 정확히 하나의 type 에, type 은 하나의
+category 에 속하므로 case 만 정하면 나머지는 계산이다.
+
+**Step 2 의 절반 이상이 코드다** — 언어·길이·포맷·잘림·개인정보·인용 대조·문법·계산.
+LLM 에 맡기면 비용도 들지만 무엇보다 같은 입력에 다른 답이 나온다.
 
 ## 왜 이 구조인가
 
@@ -120,19 +157,33 @@ leakage가 일어나면 **검색 실패가 '근거 미활용'으로 오분류되
 함정 유형: `near_miss`(주제 일치·답 부재), `partial`, `distractor`(그럴듯한 오답 문서),
 `generation_failure`, `leakage_probe`, `context_dependent`, `format_complaint`.
 
-### 이 셋이 실제로 잡아낸 것 (설계 검증 기록)
+### 검증 기록 — 두 셋이 서로 다른 층을 잡는다
 
-프롬프트를 돌려보기 전에는 보이지 않던 결함들이다.
-
-| 결함 | 증상 | 수정 |
+| 셋 | 무엇을 재나 | 현재 |
 |---|---|---|
-| 사용량 집계 동시성 경합 | 공유 카운터 차이로 케이스별 사용량을 재서 15콜·$1.08로 보고 (실제 6콜·$0.49) | 호출이 자기 사용량을 반환, 케이스가 지역 변수에 누적 |
-| `partial`/`insufficient` 정의 중복 | 두 설명이 같은 상황을 서술해 distractor가 partial로 샘 | "이 인용이 요구의 **어느 부분에 답하는가**" 시험 추가 |
-| `unmet_need` 부풀리기 | "정확한 금액이요"에 "직급별 금액표"까지 요구로 적어, 답이 있는 문서를 partial로 깎음 | "사용자가 요구한 범위를 넘지 마라" 제약 추가 |
-| `context_dependent` 과탐 | "애매하면 true" 규칙이 23건 중 15건을 찍어 플래그가 무의미해짐 | 대상 명사 유무로 판별, "확신 없으면 false" |
-| `false insufficient` 지표 사각지대 | `rag_insufficient`만 세어 `rag_partial` 과소평가를 놓침 | 두 라벨을 같은 방향으로 집계 + 회귀 테스트 |
+| 관측 골든셋 30건 (`--golden`) | Step 1 관측 **하나하나**의 정확도 | 55/55 |
+| 구 회귀셋 23건 (`--legacy-regression`) | 관측이 조합되어 case 로 가는 **경로** | 23/23 |
 
-프롬프트에 지시를 넣을 때는 **반대 방향 제약을 같이 넣어야 한다**는 게 반복된 교훈이다.
+**한쪽만으로는 부족하다.** 골든셋이 98% 일 때 회귀셋은 15/23 이었다. 관측 필드
+자체는 멀쩡한데 그 값을 **라우팅 어디에 놓았느냐**가 틀렸던 것이고, 필드 단위
+측정으로는 절대 보이지 않는다.
+
+돌려보지 않았으면 못 찾았을 결함들:
+
+| 결함 | 증상 | 고친 방식 |
+|---|---|---|
+| 사용량 집계 동시성 경합 | 15콜·$1.08 로 보고 (실제 6콜·$0.49) | 호출이 자기 사용량을 반환, 케이스가 지역 변수에 누적 |
+| `partial`/`insufficient` 정의 중복 | 두 설명이 같은 상황을 서술 | "이 인용이 요구의 **어느 부분에 답하는가**" 시험 |
+| `unmet_need` 부풀리기 | 답이 있는 문서를 partial 로 깎음 | "사용자가 요구한 범위를 넘지 마라" |
+| `context_dependent` 과탐 | 23건 중 15건이 찍힘 | 대상 명사 유무로 판별, "확신 없으면 false" |
+| 안전 지표 사각지대 | `rag_partial` 과소평가를 놓침 | 두 라벨을 같은 방향으로 집계 |
+| **`case14` 가 도메인 분기를 가로챔** | **회귀셋 6건이 샘** | 부가 케이스로 강등 |
+| **`answer_refused` 가 회피를 거절로 읽음** | **case18 탐지가 무너짐** | 정책·권한·보안으로 좁힘 |
+
+마지막 두 개는 같은 구조다 — **약한 증거가 강한 증거를 가로챘다.** 답변이 나쁘면
+여러 관측이 동시에 켜지므로, 라우팅 순서는 발견 순서가 아니라 **증거의 강도 순서**여야 한다.
+
+반복된 교훈: **프롬프트에 지시를 넣을 때는 반대 방향 제약을 같이 넣어야 한다.**
 "구체적으로 써라"는 요구 부풀리기를, "애매하면 넓게 잡아라"는 과탐을 낳았다.
 
 ## 판정 백엔드
@@ -283,14 +334,33 @@ python3 -m venv venv && ./venv/bin/pip install -r requirements.txt
 ## 구조
 
 ```
+conv_parse.py    본 진입점 — 분류 · --golden · --legacy-regression
+run.py           구 파이프라인 (회귀 기준선) · --inspect · --check-llm
+
 ragdiag/
-  schema.py    Case + Stage 1/2/3 출력 (Pydantic, 필드 순서에 의미 있음)
-  load.py      중첩 JSON flatten, 청크 경계 복원, 식별자 마스킹
-  prompts.py   판정 프롬프트 (단계별로 뺄 정보가 여기에 명시됨)
-  judge.py     LLM 호출, 디스크 캐시, 케이스 단위 병렬
-  backends.py  로컬 LLM(OpenAI 호환) / Claude Code CLI / Anthropic API 백엔드
-  verify.py    인용 대조 — leakage 차단 장치
-  decide.py    진리표 — 최종 라벨
-  report.py    라벨 분포, 라벨 x 부서/직급 교차표, 코퍼스 보강 목록
-fixtures/synthetic.py   함정 위주 합성 데이터 + 기대 라벨
+  conv.py        conv_eval 파싱, 턴 짝짓기 (N+1 불만 ↔ N 답변·문서)
+  filters.py     필터 적용, 점수 재계산, 단계별 탈락 기록
+  labels.py      llm_eval / llm_emotion 라벨 테이블과 점수
+  schema.py      Case + Step 1/2 출력 (Pydantic, 필드 순서에 의미 있음)
+  prompts.py     판정 프롬프트 (단계별로 뺄 정보가 여기에 명시됨)
+  judge.py       LLM 호출, 디스크 캐시, 케이스 단위 병렬
+  checks.py      코드 검증기 — 언어·길이·포맷·잘림·PII·인용·문법·계산·인젝션
+  verify.py      인용 대조 (leakage 차단)
+  route.py       Step 3 진리표 — 관측+검증 → case
+  taxonomy.py    30개 case 메타데이터
+  classify.py    3단계 오케스트레이션
+  output.py      pre_data_format 형태 출력
+  survey.py      데이터 실태 조사 (--inspect)
+  golden.py      관측 채점
+  backends.py    로컬 LLM / Claude Code CLI / Anthropic API
+  load.py        구 포맷 로더 (회귀셋용)
+  decide.py      구 진리표 (회귀 기준선용)
+  report.py      구 리포트 (회귀 기준선용)
+
+fixtures/
+  observations.py  Step 1 관측 골든셋 30건
+  synthetic.py     구 회귀셋 23건 + 신 case 매핑
 ```
+
+`load.py` · `decide.py` · `report.py` 는 구 파이프라인 전용이다. 새 코드에서 쓰지 말 것 —
+회귀 기준선을 그대로 두기 위해 남겨둔 것이지 현행 경로가 아니다.

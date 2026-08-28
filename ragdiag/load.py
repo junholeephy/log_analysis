@@ -1,4 +1,10 @@
-"""중첩 JSON -> Case 리스트.
+"""[회귀 기준선 전용] 새 코드에서 쓰지 말 것.
+
+conv_parse.py 가 현행 경로다. 이 모듈은 실제 LLM 으로 23/23 검증된
+구 파이프라인을 그대로 보존하기 위해 남아 있다 — 그 회귀셋이 새 파이프라인의
+라우팅 결함(약한 증거가 강한 증거를 가로챈 문제)을 잡아냈다.
+
+중첩 JSON -> Case 리스트.
 
 입력 형태(data_format_ex.json):
     {"analysis_results": [ {user meta..., "conversations": [ {"turns": [...]} ]} ]}
