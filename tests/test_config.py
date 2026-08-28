@@ -322,8 +322,8 @@ def test_backend_falls_back_to_the_environment(monkeypatch):
 # CLI 형태 — 사내에서 실제로 칠 명령
 # ---------------------------------------------------------------------------
 
-def test_launcher_runs_without_pythonpath(tmp_path):
-    """python conv_parse.py --conv-data ... --filter-data ... --output-dir ...
+def test_entry_script_runs_without_pythonpath(tmp_path):
+    """python <저장소>/src/run.py --conv-data ... --filter-data ... --output-dir ...
 
     사내에서 PYTHONPATH 를 매번 붙이지 않아도 되게 둔 진입점이다.
     규격의 `PYTHONPATH={BB}/src python -m ragdiag` 와 같은 일을 한다.
@@ -344,7 +344,7 @@ def test_launcher_runs_without_pythonpath(tmp_path):
 
     env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
     proc = subprocess.run(
-        [sys.executable, str(root / "conv_parse.py"),
+        [sys.executable, str(root / "src" / "run.py"),
          "--conv-data", str(log), "--output-dir", str(out), "--dry-run"],
         capture_output=True, text=True, env=env, cwd=tmp_path)
     assert proc.returncode == 0, proc.stderr
@@ -371,7 +371,7 @@ def test_output_dir_is_created_and_holds_both_artifacts(tmp_path):
     out = tmp_path / "없던" / "디렉터리"
 
     proc = subprocess.run(
-        [sys.executable, str(root / "conv_parse.py"), "--backend", "cli",
+        [sys.executable, str(root / "src" / "run.py"), "--backend", "cli",
          "--conv-data", str(log), "--output-dir", str(out)],
         capture_output=True, text=True, cwd=tmp_path)
     assert proc.returncode == 0, proc.stderr
@@ -388,7 +388,7 @@ def test_filter_keeps_the_old_flag_name(tmp_path):
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
-    proc = subprocess.run([sys.executable, str(root / "conv_parse.py"), "--help"],
+    proc = subprocess.run([sys.executable, str(root / "src" / "run.py"), "--help"],
                           capture_output=True, text=True)
     assert "--filter-data" in proc.stdout
     assert "--filter" in proc.stdout

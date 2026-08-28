@@ -82,17 +82,17 @@ main() {
   log "$DEST/ replaced ($(find "$DEST" -type f | wc -l | tr -d ' ') files, no .git)"
 
   # 4. 사내 자산 자리 — DEST 밖이어야 갱신에 살아남는다
-  mkdir -p configs outputs notebooks
+  mkdir -p outputs notebooks
 
-  # 5. 사내 설정 — 있으면 절대 건드리지 않는다
+  # 5. 사내 설정 — 설정 파일을 쓰는 프로젝트에서만. 있으면 절대 건드리지 않는다
   local ex="$DEST/configs/example.yaml"
-  if [[ ! -f configs/local.yaml ]]; then
-    [[ -f "$ex" ]] || die "$ex 이 없습니다"
-    cp "$ex" configs/local.yaml
-    log "configs/local.yaml 생성 — 사내 실값을 채우세요"
-  else
-    log "configs/local.yaml exists — kept"
-    if [[ -f "$ex" ]]; then
+  if [[ -f "$ex" ]]; then
+    mkdir -p configs
+    if [[ ! -f configs/local.yaml ]]; then
+      cp "$ex" configs/local.yaml
+      log "configs/local.yaml 생성 — 사내 실값을 채우세요"
+    else
+      log "configs/local.yaml exists — kept"
       local missing
       missing=$(comm -23 <(yaml_keys "$ex") <(yaml_keys configs/local.yaml) | tr '\n' ' ')
       missing="${missing%"${missing##*[! ]}"}"
@@ -111,25 +111,22 @@ main() {
   fi
   log "leak check: OK"
 
+  # 안내 문구용 진입점 — src/run.py 를 우선하고, 없으면 src/ 의 유일한 .py 를 쓴다
+  local entry="$DEST/src/run.py"
+  if [[ ! -f "$entry" ]]; then
+    local pys=("$DEST"/src/*.py)
+    if [[ ${#pys[@]} -eq 1 && -f "${pys[0]}" ]]; then entry="${pys[0]}"; else entry="$DEST/src/<entry>.py"; fi
+  fi
+
   # ---------------------------------------------------------------------
-  # 안내 문구
+  # 안내 문구 — **규격 부록에서 이 블록만 갈라져 있다.**
   #
-  # **규격 부록에서 이 블록만 갈라져 있다.** 부록은 매번 pip 와 PYTHONPATH 를
-  # 찍는데 둘 다 늘 필요한 것이 아니다. 사람은 여기 찍힌 줄을 그대로 따라가므로,
-  # 필요 없는 줄이 섞이면 매번 안 해도 될 일을 하거나 반대로 이 안내를 통째로
-  # 안 믿게 된다. **지금 실제로 필요한 줄만 찍는다.**
+  # 부록은 매번 pip 를 찍는데 늘 필요한 것이 아니다. 사람은 여기 찍힌 줄을
+  # 그대로 따라가므로, 필요 없는 줄이 섞이면 매번 안 해도 될 일을 하거나 -
+  # 더 나쁘게는 - 이 안내를 통째로 안 믿게 된다. 사내에서는 화면이 유일한
+  # 출력이라 안 믿게 되는 쪽이 더 비싸다.
   # ---------------------------------------------------------------------
-
-  # 패키지 이름 — src/ 아래 디렉터리가 하나면 그것으로 본다
-  local pkg="<pkg>" cands=("$DEST"/src/*/)
-  [[ ${#cands[@]} -eq 1 && -d "${cands[0]}" ]] && pkg=$(basename "${cands[0]}")
-
-  # 실행 형태 — 저장소가 진입 스크립트를 주면 그것을 쓴다 (PYTHONPATH 불필요)
-  local run="PYTHONPATH=$DEST/src python -m $pkg"
-  [[ -f "$DEST/conv_parse.py" ]] && run="python $DEST/conv_parse.py"
-
   printf '\nnext:\n'
-  # 의존이 바뀌었을 때만 안내한다. 안 바뀌었으면 돌릴 이유가 없다.
   local req_after=""
   [[ -f "$DEST/requirements.txt" ]] && req_after=$(cksum < "$DEST/requirements.txt")
   if [[ -n "$req_after" && "$req_before" != "$req_after" ]]; then
@@ -141,8 +138,9 @@ main() {
     printf '    pip install --dry-run -r %s/requirements.txt && pip check\n' "$DEST"
     printf '    pip install -r %s/requirements.txt      # --upgrade 는 쓰지 않는다\n' "$DEST"
   fi
-  printf '  %s --config configs/local.yaml --dry-run    # 스모크\n' "$run"
-  printf '  %s --config configs/local.yaml\n' "$run"
+  printf '  python %s --dry-run                        # ① 합성 스모크\n' "$entry"
+  printf '  python %s --conv-data <실데이터> --limit 1000   # ② 계약 확인\n' "$entry"
+  printf '  python %s --conv-data <실데이터> --output-dir outputs   # ③ 전체\n' "$entry"
 }
 
 main "$@"

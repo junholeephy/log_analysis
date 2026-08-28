@@ -43,8 +43,8 @@
 검증된 기준선을 지우면 같은 종류의 회귀를 다음에 못 잡는다.
 
 ```bash
-python conv_parse.py --conv-data <로그> --filter-data <필터> --output-dir <출력>
-python conv_parse.py --config configs/local.yaml --dry-run   # 설정 파일로도 된다
+python src/run.py --conv-data <로그> --filter-data <필터> --output-dir <출력>
+python src/run.py --config configs/local.yaml --dry-run   # 설정 파일로도 된다
 python -m ragdiag --golden                                # 3단계 판정 품질
 python -m ragdiag --legacy-regression                     # 회귀 기준선
 python -m pytest tests/ -q                                # LLM 없이 도는 전부
@@ -69,17 +69,25 @@ source <기존 venv>/bin/activate
 pip install --dry-run -r log_analysis/requirements.txt && pip check   # 충돌 먼저
 pip install -r log_analysis/requirements.txt
 
-python log_analysis/conv_parse.py \
-    --conv-data  data/conv_eval.json \
+python log_analysis/src/run.py --dry-run                     # ① 합성 스모크
+python log_analysis/src/run.py \
+    --conv-data data/conv_eval.json --limit 1000             # ② 계약 확인
+python log_analysis/src/run.py \
+    --conv-data   data/conv_eval.json \
     --filter-data data/filter.json \
-    --output-dir outputs \
-    --dry-run                              # 합성 데이터 스모크
-
-python log_analysis/conv_parse.py \
-    --conv-data  data/conv_eval.json \
-    --filter-data data/filter.json \
-    --output-dir outputs
+    --output-dir  outputs                                    # ③ 전체
 ```
+
+①에서 실패하면 **환경 문제**고, ②에서 나오는 계약 위반이 첫 사이클의 실제
+수확이다. 계약이 깨끗해진 뒤에 ③으로 간다 — 틀린 계약 위에서 뽑은 숫자는
+믿을 수 없다.
+
+`PYTHONPATH` 도 설치도 필요 없다. 파이썬이 스크립트가 있는 `src/` 를
+`sys.path[0]` 에 넣으므로 옆의 `ragdiag/` 가 그대로 import 된다. 공용 venv 에
+우리 패키지를 남기지 않고, 사본 통째 교체가 무연산이 된다.
+
+상대 경로는 전부 **실행 위치 기준**이다. 작업 폴더에서 실행하면 사본이
+어디 있든 `outputs/` 가 맞아떨어진다.
 
 `--output-dir` 에 두 파일이 생긴다.
 
@@ -91,8 +99,8 @@ python log_analysis/conv_parse.py \
 경로를 매번 치기 싫으면 설정에 넣고 `--config configs/local.yaml` 만 준다.
 CLI 인자가 설정을 덮어쓰므로 한 번만 다르게 돌려볼 때도 섞어 쓸 수 있다.
 
-규격이 정한 형태도 그대로 된다 — `conv_parse.py` 는 `sys.path` 에 옆의 `src/`
-를 끼워 넣을 뿐 로직이 없다.
+규격이 정한 형태도 그대로 된다 — `src/run.py` 는 파이썬이 스크립트 디렉터리를 `sys.path[0]` 에
+넣는 것을 쓸 뿐 로직이 없다.
 
 ```bash
 PYTHONPATH=log_analysis/src python -m ragdiag --config configs/local.yaml
@@ -101,6 +109,30 @@ PYTHONPATH=log_analysis/src python -m ragdiag --config configs/local.yaml
 **패키지를 venv 에 설치하지 않는다** — `PYTHONPATH` 로만 붙인다. 공용 venv 를
 오염시키지 않고 사본 통째 교체가 무연산이 된다. `--upgrade` 와
 `--force-reinstall` 은 쓰지 않는다. 남의 환경을 조용히 깨뜨리고 되돌릴 수 없다.
+
+### ⚠ 작업 폴더의 `.gitignore` 를 먼저 손볼 것
+
+`sync.sh` 는 `.staging/` 만 무시 목록에 넣는다. 나머지는 그대로 두면 사내 git 에
+커밋된다. 실행하면 작업 폴더에 이런 것들이 생긴다.
+
+| | 무엇 | 커밋해도 되나 |
+|---|---|---|
+| `.cache/` | **LLM 판정 응답.** 실데이터에서 뽑은 관측·인용이 그대로 들어 있다 | 판단 필요 |
+| `data/` | 실데이터 | 대개 아니다 |
+| `outputs/` | 분류 결과 · RUN SUMMARY | 남기고 싶을 수 있다 |
+| `configs/local.yaml` | 사내 실값 (경로·주소) | 판단 필요 |
+
+`AA/log_analysis` 사본이 커밋되는 것은 목적이지만 — "어떤 코드로 돌렸는지"가
+남는 유일한 형태다 — 나머지는 의도한 것만 남기는 편이 낫다. 특히 `.cache/` 는
+분류를 다시 돌리면 재생성되는 파생물이고, 대화 내용이 그대로 들어 있다.
+
+```bash
+cd <사내작업폴더>
+cat >> .gitignore <<'EOF'
+.cache/
+data/
+EOF
+```
 
 **태그 없이 실행하지 않는다.** 결과 파일이 반출되지 않으므로 사내에 남은 사본이
 "어떤 코드로 돌렸는지"를 알려주는 유일한 형태다.

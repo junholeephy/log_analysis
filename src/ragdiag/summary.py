@@ -61,6 +61,9 @@ def peak_memory_gb() -> Optional[float]:
 @dataclass
 class RunSummary:
     version: str = ""
+    # 실행 인자를 그대로 한 줄. 반출이 안 되므로 "그때 뭘로 돌렸는지"가 셸
+    # 히스토리에만 남으면 사라진다. 이 한 줄만 옮겨 적으면 재현된다.
+    args: str = ""
     input_shape: str = ""
     contract_ok: int = 0
     contract_mismatches: list = field(default_factory=list)
@@ -73,6 +76,8 @@ class RunSummary:
     def render(self) -> str:
         lines = [f"{'=' * 16} RUN SUMMARY {'=' * (WIDTH - 30)}"]
         lines.append(f"version   : {self.version}")
+        if self.args:
+            lines.append(f"args      : {self.args}")
         lines.append(f"input     : {self.input_shape}")
 
         n_bad = len(self.contract_mismatches)

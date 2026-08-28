@@ -24,7 +24,9 @@ CLI 플래그는 설정을 덮어쓴다 - 한 번만 다르게 돌려볼 때 쓴
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -302,11 +304,17 @@ def main() -> int:
         return run_legacy_regression(args)
 
     conv_data = args.conv_data or config.get("paths.conv_data")
-    if not conv_data:
-        print("분석할 로그가 없습니다. --conv-data 또는 설정의 paths.conv_data "
-              "가 필요합니다.", file=sys.stderr)
+
+    # 데이터 없는 --dry-run 은 합성 데이터로 도는 스모크다. 여기서 실패하면
+    # 환경 문제이지 데이터 문제가 아니다 - 그 둘을 갈라 보는 것이 목적이다.
+    synthetic = False
+    if not conv_data and args.dry_run:
+        synthetic = True
+    elif not conv_data:
+        print("분석할 로그가 없습니다. --conv-data 로 경로를 주거나, "
+              "--dry-run 으로 합성 데이터 스모크를 먼저 돌려보세요.", file=sys.stderr)
         return 2
-    if not Path(conv_data).exists():
+    elif not Path(conv_data).exists():
         print(f"로그 파일이 없습니다: {conv_data}", file=sys.stderr)
         return 2
 
@@ -325,12 +333,19 @@ def main() -> int:
     limit = args.limit or config.get("run.limit")
     history = args.history_turns if args.history_turns is not None else None
 
-    summary = RunSummary(version=version())
+    summary = RunSummary(version=version(), args=" ".join(sys.argv[1:]))
     timer = Timer().__enter__()
 
     # --- 계약 대조. 분류 전에 한다 -------------------------------------------
     # 여기서 나온 줄들이 사내에서 이쪽으로 돌아오는 포맷 정보의 전부다.
-    payload = json.loads(Path(conv_data).read_text(encoding="utf-8"))
+    if synthetic:
+        from ragdiag.fixtures.synth import generate
+
+        payload = generate(n=3, seed=0)
+        summary.notes.append("합성 데이터로 돌았다. 실데이터로 확인한 것이 아니다.")
+        conv_data = _write_temp(payload)
+    else:
+        payload = json.loads(Path(conv_data).read_text(encoding="utf-8"))
     summary.input_shape = contracts.shape(payload)
     report = contracts.check_log(payload)
     summary.contract_ok = report.n_ok
@@ -406,6 +421,21 @@ def main() -> int:
                              f"error 필드를 볼 것.")
     return finish("OK" if not outcome.n_failed else "PARTIAL",
                   1 if outcome.n_failed else 0)
+
+
+def _write_temp(payload: dict) -> str:
+    """합성 데이터를 임시 파일로. 파서가 경로를 받게 되어 있어서다.
+
+    저장소에도 작업 폴더에도 남기지 않는다 - 가짜 데이터가 파일로 남으면
+    사내 저장소로 흘러갈 길이 생긴다.
+    """
+    import tempfile
+
+    fd, path = tempfile.mkstemp(suffix=".json", prefix="ragdiag-smoke-")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False)
+    atexit.register(lambda: Path(path).unlink(missing_ok=True))
+    return path
 
 
 def _top_cases(outcome, limit: int = 5):

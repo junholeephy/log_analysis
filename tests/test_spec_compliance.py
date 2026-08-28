@@ -178,8 +178,7 @@ def test_sync_derives_names_instead_of_hardcoding_them():
     assert 'STAGING=".staging/BB"' not in text, "저장소 이름이 박혀 있다"
     assert 'DEST="BB"' not in text, "사본 경로가 박혀 있다"
     assert "BASH_SOURCE" in text, "스크립트 위치에서 이름을 유도해야 한다"
-    assert 'python -m <pkg>' not in text, "패키지 이름이 <pkg> 로 남아 있다"
-    assert '"$DEST"/src/*/' in text, "src/ 아래에서 패키지 이름을 읽어야 한다"
+    assert '"$DEST"/src/*.py' in text, "src/ 에서 진입점을 찾아야 한다"
 
 
 def test_sync_refuses_outside_the_work_root():
@@ -220,7 +219,7 @@ def _fake_repo(tmp_path, with_launcher=True, extra_req=""):
     (bb / "scripts" / "sync.sh").write_text(
         (ROOT / "scripts/sync.sh").read_text(encoding="utf-8"), encoding="utf-8")
     if with_launcher:
-        (bb / "conv_parse.py").write_text("print('hi')\n", encoding="utf-8")
+        (bb / "src" / "run.py").write_text("print('hi')\n", encoding="utf-8")
     run = lambda *a: subprocess.run(["git", "-C", str(bb), *a],
                                     capture_output=True, text=True, check=True)
     run("init", "-q")
@@ -287,22 +286,22 @@ def test_sync_hint_warns_when_dependencies_changed(tmp_path):
     assert "pip install" in out.stdout
 
 
-def test_sync_hint_prefers_the_launcher_over_pythonpath(tmp_path):
-    """진입 스크립트가 있으면 PYTHONPATH 없는 형태를 안내한다."""
+def test_sync_hint_points_at_the_entry_script(tmp_path):
+    """규격이 정한 src/run.py 를 안내한다. PYTHONPATH 는 필요 없다."""
     import subprocess
 
     bb = _fake_repo(tmp_path, with_launcher=True)
     subprocess.run(["git", "-C", str(bb), "tag", "v1"], check=True)
     out = _sync(_fresh_aa(tmp_path, bb), bb, "v1")
-    assert "python toolkit/conv_parse.py" in out.stdout, out.stdout
+    assert "python toolkit/src/run.py" in out.stdout, out.stdout
     assert "PYTHONPATH" not in out.stdout
 
 
-def test_sync_hint_falls_back_to_pythonpath_without_a_launcher(tmp_path):
-    """진입 스크립트를 안 주는 프로젝트에서는 규격 형태를 안내한다."""
+def test_sync_hint_marks_the_entry_when_it_cannot_be_found(tmp_path):
+    """진입점을 못 찾으면 자리표시자를 찍는다. 틀린 명령을 주는 것보다 낫다."""
     import subprocess
 
     bb = _fake_repo(tmp_path, with_launcher=False)
     subprocess.run(["git", "-C", str(bb), "tag", "v1"], check=True)
     out = _sync(_fresh_aa(tmp_path, bb), bb, "v1")
-    assert "PYTHONPATH=toolkit/src python -m somepkg" in out.stdout, out.stdout
+    assert "toolkit/src/<entry>.py" in out.stdout, out.stdout
