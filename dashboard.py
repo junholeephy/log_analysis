@@ -26,6 +26,8 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from ragdiag import taxonomy as tx
+
 CONF_ORDER = ["high", "medium", "low"]
 CONF_LABEL = {"high": "높음 (코드 검증)", "medium": "중간 (LLM+인용)",
               "low": "낮음 (사전지식 의존)"}
@@ -175,7 +177,13 @@ def main() -> None:
         st.header("좁히기")
         depts = st.multiselect("부서", sorted(df["부서"].unique()))
         grades = st.multiselect("직급", sorted(df["직급"].unique()))
-        cases = st.multiselect("case", sorted(df["case"].unique()))
+        # 번호만 보고 무엇인지 아는 사람은 없다. 고르는 자리에 이름을 붙이고,
+        # 고른 뒤에는 옆 케이스와 가르는 기준까지 펼쳐 준다.
+        cases = st.multiselect("case", sorted(df["case"].unique()),
+                               format_func=tx.label)
+        for cid in cases:
+            if tx.desc(cid):
+                st.caption(f"**{cid}** {tx.desc(cid)}")
         confs = st.multiselect(
             "신뢰도", [c for c in CONF_ORDER if c in set(df["신뢰도"])],
             format_func=lambda c: CONF_LABEL.get(c, c))
@@ -289,6 +297,20 @@ def main() -> None:
                                 f"  <sub>질문: {row['질문']}</sub>",
                                 unsafe_allow_html=True)
 
+    # --- 케이스 사전 --------------------------------------------------------
+    with st.expander(f"케이스 설명 — 이 데이터에 나온 {view['case'].nunique()}종"):
+        st.caption("무엇이 아닌가까지 적었다. 헷갈리는 쌍(case3/14, case4/13, "
+                   "case12/16, case19/20, case2/11)에서 라벨이 갈린다.")
+        counts = view["case"].value_counts()
+        st.dataframe(pd.DataFrame([
+            {"case": cid,
+             "이름": case.name if (case := tx.get(cid)) else cid,
+             "건수": int(n),
+             "신뢰도": CONF_LABEL.get(case.confidence, "—") if case else "—",
+             "설명": tx.desc(cid)}
+            for cid, n in counts.items()
+        ]), use_container_width=True, hide_index=True)
+
     # --- 개별 케이스 --------------------------------------------------------
     st.subheader("개별 케이스")
     st.caption("집계만 보고 근거를 못 보면 '왜 이 라벨이지'에서 막힌다.")
@@ -296,7 +318,7 @@ def main() -> None:
                        "신뢰도", "충족도", "근거활용", "질문"]]
     st.dataframe(table_view, use_container_width=True, height=280)
 
-    labels = [f"{r['대화']}:{r['턴']}  {r['case']}  {r['질문'][:40]}"
+    labels = [f"{r['대화']}:{r['턴']}  {tx.label(r['case'])}  {r['질문'][:40]}"
               for _, r in view.iterrows()]
     picked = st.selectbox("근거 펼쳐보기", range(len(labels)),
                           format_func=lambda i: labels[i])
@@ -306,6 +328,8 @@ def main() -> None:
 def detail(row: pd.Series) -> None:
     """한 케이스의 판정 경로를 원본 값 그대로 보여준다."""
     st.markdown(f"### {row['case']} · {row['case명']}")
+    if tx.desc(row["case"]):
+        st.caption(tx.desc(row["case"]))
     meta = st.columns(4)
     meta[0].metric("신뢰도", CONF_LABEL.get(row["신뢰도"], row["신뢰도"]))
     meta[1].metric("충족도", row["충족도"] or "—")
