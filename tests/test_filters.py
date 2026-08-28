@@ -188,7 +188,7 @@ def test_everything_means_no_filter():
     assert spec.positions == set()   # "전체"
     assert spec.depts == set()       # {}
     assert spec.job_names == set()
-    assert spec.turns == set()       # []
+    assert spec.turn_buckets == []   # []
 
 
 def test_org_tree_keys_become_the_department_filter():
@@ -336,3 +336,84 @@ def test_document_typo_still_resolves():
     assert resolve("예시 요첟", QUERY_LABELS).letter == "D"
     assert resolve("예시 요청", QUERY_LABELS).letter == "D"
     assert resolve("D. 예시 요첟", QUERY_LABELS).letter == "D"
+
+
+# ---------------------------------------------------------------------------
+# 턴 구간 — 정수가 아니라 구간 문자열로 온다
+# ---------------------------------------------------------------------------
+
+from ragdiag.filters import in_buckets, parse_turn_buckets
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("1-5 턴", [(1, 5)]),
+    ("6-10 턴", [(6, 10)]),
+    ("11-50 턴", [(11, 50)]),
+    ("1~5턴", [(1, 5)]),
+    ("3", [(3, 3)]),
+    ("10 턴 이하", [(1, 10)]),
+])
+def test_turn_bucket_forms(text, expected):
+    assert parse_turn_buckets([text]) == expected
+
+
+def test_open_ended_bucket_has_no_upper_bound():
+    (low, high), = parse_turn_buckets(["51 턴 이상"])
+    assert low == 51 and high == float("inf")
+    assert in_buckets(9999, [(low, high)])
+
+
+def test_multiple_buckets_are_a_union():
+    buckets = parse_turn_buckets(["1-5 턴", "51 턴 이상"])
+    assert [in_buckets(n, buckets) for n in (1, 5, 6, 50, 51, 99)] == [
+        True, True, False, False, True, True]
+
+
+def test_empty_turn_filter_means_all_turns():
+    assert parse_turn_buckets([]) == []
+    assert parse_turn_buckets(None) == []
+
+
+def test_unparseable_bucket_is_skipped_not_crashing():
+    assert parse_turn_buckets(["최근 턴", ""]) == []
+
+
+def test_turn_bucket_filters_selected_turns():
+    convs = _convs([_turn(1), _turn(2, "K", "I"), _turn(3, "K", "I"),
+                    _turn(4, "K", "I")])
+    spec = FilterSpec(turn_buckets=parse_turn_buckets(["3-4 턴"]))
+    assert [s.turn.turn for s in apply_filter(convs, spec)[0]] == [3, 4]
+
+
+# ---------------------------------------------------------------------------
+# role -> job_grade
+# ---------------------------------------------------------------------------
+
+def test_role_filters_on_job_grade():
+    convs = parse_conversations({"users": [{
+        "user_id": "u", "job_grade": "Staff Engineer", "db_dept_name": "인사팀",
+        "conversations": [{"conversation_id": "c", "turns": [_turn(1), _turn(2, "K", "I")]}],
+    }]})
+    assert len(apply_filter(convs, FilterSpec(job_grades={"Staff Engineer"}))[0]) == 1
+    assert apply_filter(convs, FilterSpec(job_grades={"Manager"}))[0] == []
+
+
+def test_role_everything_means_no_filter():
+    assert parse_filter({"state": {"role": "전체"}}).job_grades == set()
+
+
+def test_role_is_read_from_the_filter_file():
+    assert parse_filter({"state": {"role": "Principal Engineer"}}).job_grades == \
+        {"Principal Engineer"}
+
+
+# ---------------------------------------------------------------------------
+# 분석 대상은 2턴 이상 대화
+# ---------------------------------------------------------------------------
+
+def test_single_turn_conversations_are_excluded():
+    """1턴짜리 대화에는 비판받을 직전 답변이 없다."""
+    convs = _convs([_turn(1)])
+    selected, steps = apply_filter(convs, FilterSpec())
+    assert selected == []
+    assert "2턴 이상" in steps[0].name

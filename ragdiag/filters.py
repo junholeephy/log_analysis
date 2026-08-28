@@ -21,6 +21,8 @@ llm_alternatives 가 있으면 새 점수표로 재계산하고, 없을 때만 �
 from __future__ import annotations
 
 import json
+import math
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -64,13 +66,54 @@ def _as_range(value: Any) -> Optional[tuple[float, float]]:
     return (min(low, high), max(low, high))
 
 
+
+# 턴 필터는 정수가 아니라 구간 문자열로 온다: "1-5 턴", "6-10 턴", "51 턴 이상".
+# 정수로 파싱하면 조용히 0건이 된다.
+_RANGE = re.compile(r"(\d+)\s*[-~]\s*(\d+)")
+_AT_LEAST = re.compile(r"(\d+)[^\d]*이상")
+_AT_MOST = re.compile(r"(\d+)[^\d]*이하")
+_BARE = re.compile(r"^\D*(\d+)\D*$")
+
+
+def parse_turn_buckets(values: Any) -> list[tuple[int, float]]:
+    """구간 문자열들을 (하한, 상한) 목록으로. 여러 개면 합집합(OR)이다."""
+    buckets: list[tuple[int, float]] = []
+    for raw in (values or []):
+        text = str(raw).strip()
+        if not text:
+            continue
+        match = _RANGE.search(text)
+        if match:
+            low, high = int(match.group(1)), int(match.group(2))
+            buckets.append((min(low, high), max(low, high)))
+            continue
+        match = _AT_LEAST.search(text)
+        if match:
+            buckets.append((int(match.group(1)), math.inf))
+            continue
+        match = _AT_MOST.search(text)
+        if match:
+            buckets.append((1, int(match.group(1))))
+            continue
+        match = _BARE.match(text)
+        if match:
+            n = int(match.group(1))
+            buckets.append((n, n))
+    return buckets
+
+
+def in_buckets(turn: int, buckets: list[tuple[int, float]]) -> bool:
+    return any(low <= turn <= high for low, high in buckets)
+
+
 @dataclass
 class FilterSpec:
     name: str = "filter"
+    job_grades: set[str] = field(default_factory=set)   # 필터의 role
     positions: set[str] = field(default_factory=set)
     depts: set[str] = field(default_factory=set)
     job_names: set[str] = field(default_factory=set)
-    turns: set[int] = field(default_factory=set)
+    turn_buckets: list[tuple[int, float]] = field(default_factory=list)
     use_date: bool = False
     start_date: str = ""
     end_date: str = ""
@@ -102,10 +145,11 @@ def parse_filter(raw: dict) -> FilterSpec:
 
     return FilterSpec(
         name=raw.get("name") or "filter",
+        job_grades=_as_set(state.get("role")),
         positions=_as_set(org.get("db_position_name")),
         depts=_as_set(tree.get("db_dept_name")),
         job_names=_as_set(tree.get("db_job_name")),
-        turns={int(t) for t in (state.get("turn") or []) if str(t).lstrip("-").isdigit()},
+        turn_buckets=parse_turn_buckets(state.get("turn")),
         use_date=bool(state.get("use_date")),
         start_date=state.get("start_date") or "",
         end_date=state.get("end_date") or "",
@@ -172,10 +216,11 @@ def apply_filter(
         Selected(conv, turn, *score_turn(turn, spec))
         for conv in conversations
         for turn in conv.turns
-        # 후속 턴이면서 직전 턴이 실제로 있어야 케이스를 만들 수 있다.
+        # 분석 대상은 2턴 이상인 대화뿐이다. 후속 턴이면서 직전 턴이 실제로
+        # 있어야 "비판받은 답변"이 존재한다. 1턴짜리 대화는 여기서 전부 빠진다.
         if turn.is_followup and conv.turn_at(turn.turn - 1) is not None
     ]
-    steps = [Step("진단 가능 후속 턴", len(candidates), 0)]
+    steps = [Step("진단 가능 후속 턴 (2턴 이상 대화)", len(candidates), 0)]
 
     def narrow(name: str, active: bool, keep: Callable[[Selected], bool]) -> None:
         nonlocal candidates
@@ -185,12 +230,15 @@ def apply_filter(
         candidates = [s for s in candidates if keep(s)]
         steps.append(Step(name, len(candidates), before - len(candidates)))
 
+    narrow("직급(role)", bool(spec.job_grades),
+           lambda s: s.conversation.user.job_grade in spec.job_grades)
     narrow("부서", bool(spec.depts), lambda s: s.conversation.user.dept in spec.depts)
     narrow("직무", bool(spec.job_names),
            lambda s: s.conversation.user.job_name in spec.job_names)
     narrow("직위", bool(spec.positions),
            lambda s: s.conversation.user.position_name in spec.positions)
-    narrow("턴 번호", bool(spec.turns), lambda s: s.turn.turn in spec.turns)
+    narrow("턴 구간", bool(spec.turn_buckets),
+           lambda s: in_buckets(s.turn.turn, spec.turn_buckets))
     narrow(
         f"기간 {spec.start_date}~{spec.end_date}",
         spec.use_date and bool(spec.start_date or spec.end_date),
