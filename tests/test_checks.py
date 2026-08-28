@@ -15,6 +15,7 @@ from ragdiag.checks import (
     check_pii,
     check_python_syntax,
     check_quoted_spans,
+    check_service_error,
     check_truncated,
     detect_language,
     extract_quotes,
@@ -318,3 +319,64 @@ def test_not_applicable_is_never_reported_as_violated():
     ]
     assert all(c.verdict == "not_applicable" for c in checks)
     assert not any(c.violated for c in checks)
+
+
+# ---------------------------------------------------------------------------
+# 서비스 자원 부족 응답  (case9)
+# ---------------------------------------------------------------------------
+
+CANNED = "서비스에 문제가 있거나, 사용자 분들이 많아서 서버에 부하가 걸리고 있어요."
+
+
+@pytest.mark.parametrize("tail", [
+    "",
+    " 잠시 후 다시 시도해 주세요.",
+    " 잠시 후 다시 시도해 주세요. 불편을 드려 죄송합니다.",
+    " " + "안내 문구가 길게 이어집니다. " * 30,      # 길이 가드를 넘김
+])
+def test_service_error_matches_regardless_of_trailing_text(tail):
+    """확정 문구 뒤에 무엇이 얼마나 붙든 잡아야 한다.
+
+    실제 문구는 이 문장으로 끝나지 않고 안내가 더 이어진다. 부분 일치로 보는 이유고,
+    확정 문구 검사를 길이 가드보다 **앞에** 둔 이유다. 순서가 뒤집히면 안내가 긴
+    배포에서 통째로 놓친다.
+    """
+    assert check_service_error(CANNED + tail).violated
+
+
+def test_service_error_survives_whitespace_and_prefix():
+    """줄바꿈·띄어쓰기 차이와 앞에 붙은 인사말을 흡수한다."""
+    assert check_service_error("서비스에 문제가 있거나,\n사용자 분들이 많아서\n"
+                               "서버에 부하가 걸리고 있어요.").violated
+    assert check_service_error("서비스에 문제가있거나, 사용자분들이 많아서 "
+                               "서버에 부하가 걸리고 있어요.").violated
+    assert check_service_error("안녕하세요. " + CANNED).violated
+
+
+@pytest.mark.parametrize("text", [
+    "서비스에 문제가 있거나, 사용자 분들이 많아서 서버에 부하가 걸리고 있습니다.",
+    "서비스에 장애가 있거나, 사용자 분들이 많아서 서버에 부하가 걸리고 있어요.",
+    "일시적인 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.",
+])
+def test_service_error_falls_back_to_markers(text):
+    """문구가 조금 달라도 표지 두 개 이상이면 잡는다.
+
+    배포마다 문구가 다를 수 있고, 확정 문구 목록이 최신이 아닐 수 있다.
+    """
+    assert check_service_error(text).violated
+
+
+@pytest.mark.parametrize("text", [
+    "국내 출장 식비는 1일 3만원을 상한으로 합니다.",
+    "서버 증설은 IT인프라팀 승인 후 진행합니다.",          # 표지 한 개뿐
+    "서버에 부하가 걸리는 상황의 대응 절차는 다음과 같습니다. " * 12,   # 장애를 주제로 답한 정상 답변
+])
+def test_service_error_does_not_fire_on_normal_answers(text):
+    """오탐이 나면 멀쩡한 실패 판정이 통째로 case9 로 사라진다."""
+    assert not check_service_error(text).violated
+
+
+def test_service_error_on_empty_answer_is_not_applicable():
+    """빈 답변은 '서비스 오류'가 아니다. 잘림(case8) 쪽에서 볼 일이다."""
+    assert check_service_error("").verdict == "not_applicable"
+    assert check_service_error("   \n ").verdict == "not_applicable"
