@@ -35,7 +35,8 @@ class ConfigError(Exception):
 # 채로 30분이 지나가는 것이 가장 나쁜 결과다.
 SPEC: dict[str, tuple[type | tuple, bool]] = {
     "paths.conv_data": (str, False),
-    "paths.filter": (str, False),
+    "paths.filter_data": (str, False),
+    "paths.output_dir": (str, False),
     "paths.out": (str, False),
     "paths.cache": (str, False),
     "paths.dept_class": (str, False),

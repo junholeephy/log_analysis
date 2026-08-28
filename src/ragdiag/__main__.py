@@ -258,8 +258,11 @@ def main() -> int:
                    help="Step 1 관측 골든셋을 돌려 필드별 일치율을 잰다")
     p.add_argument("--legacy-regression", action="store_true",
                    help="구 회귀셋 23건을 새 파이프라인으로 돌려 대조한다")
-    p.add_argument("--filter", help="필터 JSON. 없으면 진단 가능한 후속 턴 전부")
-    p.add_argument("--out", help="결과 저장 경로")
+    p.add_argument("--filter-data", "--filter", dest="filter_data",
+                   help="필터 JSON. 없으면 진단 가능한 후속 턴 전부")
+    p.add_argument("--output-dir", dest="output_dir",
+                   help="산출물을 넣을 디렉터리. 없으면 만든다")
+    p.add_argument("--out", help="결과 파일 경로. --output-dir 보다 우선한다")
 
     # 아래 기본값은 전부 None 이다. 설정과 CLI 를 구분하기 위해서다 -
     # argparse 기본값을 넣으면 "사용자가 준 것"과 "기본값"을 못 가린다.
@@ -307,8 +310,17 @@ def main() -> int:
         print(f"로그 파일이 없습니다: {conv_data}", file=sys.stderr)
         return 2
 
-    filter_path = args.filter or config.get("paths.filter")
-    out_path = args.out or config.get("paths.out", "conv_parsed.json")
+    filter_path = args.filter_data or config.get("paths.filter_data")
+
+    # --out(파일)이 --output-dir(디렉터리)보다 우선한다. 둘 다 없으면 현재 위치.
+    out_dir = args.output_dir or config.get("paths.output_dir")
+    out_path = args.out or config.get("paths.out")
+    if not out_path:
+        out_path = str(Path(out_dir or ".") / "conv_parsed.json")
+    if out_dir:
+        # 없으면 만든다. 30분 돌린 뒤 디렉터리가 없어서 못 쓰면 그 사이클을 버린다.
+        Path(out_dir).mkdir(parents=True, exist_ok=True)
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     workers = args.workers or config.get("run.workers")
     limit = args.limit or config.get("run.limit")
     history = args.history_turns if args.history_turns is not None else None
@@ -328,8 +340,17 @@ def main() -> int:
         summary.status = status
         summary.runtime_sec = timer.seconds
         summary.peak_gb = peak_memory_gb()
+        text = summary.render()
         print()
-        print(summary.render())
+        print(text)
+        # 화면이 유일한 출력이지만, 손으로 옮겨 적을 때 스크롤을 거슬러 올라가는
+        # 것보다 파일을 여는 편이 낫다. 사내 밖으로 나가는 것은 아니다.
+        if out_dir:
+            try:
+                (Path(out_dir) / "run_summary.txt").write_text(text + "\n",
+                                                               encoding="utf-8")
+            except OSError:
+                pass
         return code
 
     try:

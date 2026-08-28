@@ -43,8 +43,8 @@
 검증된 기준선을 지우면 같은 종류의 회귀를 다음에 못 잡는다.
 
 ```bash
-python -m ragdiag --config configs/local.yaml --dry-run   # 합성 데이터 스모크
-python -m ragdiag --config configs/local.yaml             # 분류
+python conv_parse.py --conv-data <로그> --filter-data <필터> --output-dir <출력>
+python conv_parse.py --config configs/local.yaml --dry-run   # 설정 파일로도 된다
 python -m ragdiag --golden                                # 3단계 판정 품질
 python -m ragdiag --legacy-regression                     # 회귀 기준선
 python -m pytest tests/ -q                                # LLM 없이 도는 전부
@@ -68,7 +68,33 @@ bash .staging/log_analysis/scripts/sync.sh v0.2
 source <기존 venv>/bin/activate
 pip install --dry-run -r log_analysis/requirements.txt && pip check   # 충돌 먼저
 pip install -r log_analysis/requirements.txt
-PYTHONPATH=log_analysis/src python -m ragdiag --config configs/local.yaml --dry-run
+
+python log_analysis/conv_parse.py \
+    --conv-data  data/conv_eval.json \
+    --filter-data data/filter.json \
+    --output-dir outputs \
+    --dry-run                              # 합성 데이터 스모크
+
+python log_analysis/conv_parse.py \
+    --conv-data  data/conv_eval.json \
+    --filter-data data/filter.json \
+    --output-dir outputs
+```
+
+`--output-dir` 에 두 파일이 생긴다.
+
+| | |
+|---|---|
+| `conv_parsed.json` | 분류 결과 |
+| `run_summary.txt` | RUN SUMMARY 사본. 손으로 옮겨 적을 때 스크롤을 뒤지지 않게 |
+
+경로를 매번 치기 싫으면 설정에 넣고 `--config configs/local.yaml` 만 준다.
+CLI 인자가 설정을 덮어쓰므로 한 번만 다르게 돌려볼 때도 섞어 쓸 수 있다.
+
+규격이 정한 형태도 그대로 된다 — `conv_parse.py` 는 `sys.path` 에 옆의 `src/`
+를 끼워 넣을 뿐 로직이 없다.
+
+```bash
 PYTHONPATH=log_analysis/src python -m ragdiag --config configs/local.yaml
 ```
 

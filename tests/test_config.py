@@ -316,3 +316,79 @@ def test_backend_falls_back_to_the_environment(monkeypatch):
     backend = make_backend(args, Config())
     assert type(backend).__name__ == "ClaudeCodeBackend", (
         "환경변수가 없으면 CLI 백엔드로 떨어져야 한다")
+
+
+# ---------------------------------------------------------------------------
+# CLI 형태 — 사내에서 실제로 칠 명령
+# ---------------------------------------------------------------------------
+
+def test_launcher_runs_without_pythonpath(tmp_path):
+    """python conv_parse.py --conv-data ... --filter-data ... --output-dir ...
+
+    사내에서 PYTHONPATH 를 매번 붙이지 않아도 되게 둔 진입점이다.
+    규격의 `PYTHONPATH={BB}/src python -m ragdiag` 와 같은 일을 한다.
+    """
+    import json
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    from ragdiag.fixtures.synth import generate
+
+    log = tmp_path / "conv_eval.json"
+    log.write_text(json.dumps(generate(n=2, seed=0), ensure_ascii=False),
+                   encoding="utf-8")
+    out = tmp_path / "outputs"
+
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    proc = subprocess.run(
+        [sys.executable, str(root / "conv_parse.py"),
+         "--conv-data", str(log), "--output-dir", str(out), "--dry-run"],
+        capture_output=True, text=True, env=env, cwd=tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    assert "RUN SUMMARY" in proc.stdout
+
+
+def test_output_dir_is_created_and_holds_both_artifacts(tmp_path):
+    """디렉터리가 없으면 만든다.
+
+    30분 돌린 뒤 디렉터리가 없어서 못 쓰면 그 사이클을 버린다.
+    RUN SUMMARY 를 파일로도 남긴다 - 손으로 옮겨 적을 때 스크롤을 뒤지지 않게.
+    """
+    import json
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    from ragdiag.fixtures.synth import generate
+
+    log = tmp_path / "conv_eval.json"
+    log.write_text(json.dumps(generate(n=1, seed=0), ensure_ascii=False),
+                   encoding="utf-8")
+    out = tmp_path / "없던" / "디렉터리"
+
+    proc = subprocess.run(
+        [sys.executable, str(root / "conv_parse.py"), "--backend", "cli",
+         "--conv-data", str(log), "--output-dir", str(out)],
+        capture_output=True, text=True, cwd=tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    assert (out / "conv_parsed.json").exists()
+    assert (out / "run_summary.txt").exists()
+    assert "RUN SUMMARY" in (out / "run_summary.txt").read_text(encoding="utf-8")
+
+
+def test_filter_keeps_the_old_flag_name(tmp_path):
+    """--filter 로 적어둔 스크립트가 있을 수 있다. 둘 다 받는다."""
+    import argparse
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    proc = subprocess.run([sys.executable, str(root / "conv_parse.py"), "--help"],
+                          capture_output=True, text=True)
+    assert "--filter-data" in proc.stdout
+    assert "--filter" in proc.stdout
