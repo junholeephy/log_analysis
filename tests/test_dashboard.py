@@ -116,3 +116,53 @@ def test_dashboard_works_without_org_classification(result_file):
     """조직 분류 JSON 을 안 줘도 돌아야 한다. 사내에 그 파일이 없을 수 있다."""
     at = render(result_file)
     assert not at.exception, [f"{e.type}: {e.message}" for e in at.exception]
+
+
+# ---------------------------------------------------------------------------
+# 잘못 실행했을 때 무엇을 하라고 하는가
+#
+# 사내에서는 맨 트레이스백 하나가 사이클을 먹는다. 인터넷도 없고 물어볼 곳도
+# 없어서 화면에 적힌 것이 전부다.
+# ---------------------------------------------------------------------------
+
+def test_running_with_plain_python_says_to_use_streamlit():
+    """python src/dashboard.py 는 경고만 쏟고 화면이 안 뜬다. 실패로도 안 끝난다."""
+    import subprocess
+    import sys
+
+    proc = subprocess.run([sys.executable, str(DASHBOARD)],
+                          capture_output=True, text=True, cwd=ROOT)
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "streamlit run" in proc.stderr, proc.stderr
+    assert "--" in proc.stderr, "`--` 가 필요하다는 것도 알려야 한다"
+    assert str(DASHBOARD) in proc.stderr, (
+        "사용자가 친 경로를 그대로 돌려줘야 한다. 사본 위치가 배포마다 다르다.")
+
+
+def test_missing_dependency_names_the_install_command(tmp_path):
+    """pandas·streamlit 이 없을 때 무엇을 깔라는지 적어야 한다."""
+    import subprocess
+    import sys
+    import textwrap
+
+    # 의존이 없는 상태를 흉내낸다 - 실제로 지울 수는 없다.
+    stub = tmp_path / "block.py"
+    stub.write_text(textwrap.dedent("""
+        import builtins
+        _real = builtins.__import__
+        def _blocked(name, *a, **k):
+            if name.split(".")[0] == "pandas":
+                raise ModuleNotFoundError("No module named 'pandas'", name="pandas")
+            return _real(name, *a, **k)
+        builtins.__import__ = _blocked
+        import runpy, sys
+        sys.argv = [%r]
+        runpy.run_path(sys.argv[0], run_name="__main__")
+    """) % str(DASHBOARD), encoding="utf-8")
+
+    proc = subprocess.run([sys.executable, str(stub)],
+                          capture_output=True, text=True, cwd=ROOT)
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "pip install streamlit pandas" in proc.stderr, proc.stderr
+    assert "분류 파이프라인" in proc.stderr, (
+        "파이프라인에는 필요 없다는 것도 알려야 반입 부담을 안 늘린다")

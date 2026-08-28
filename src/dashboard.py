@@ -25,8 +25,37 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-import pandas as pd
-import streamlit as st
+
+def _bail(message: str) -> None:
+    """무엇을 하라는지까지 적고 멈춘다.
+
+    사내에서는 맨 트레이스백 하나가 사이클을 먹는다. 인터넷도 없고 물어볼
+    곳도 없어서, 화면에 적힌 것이 전부다.
+    """
+    print(f"\n{message}\n", file=sys.stderr)
+    raise SystemExit(2)
+
+
+try:
+    import pandas as pd
+    import streamlit as st
+except ModuleNotFoundError as e:
+    _bail(f"대시보드에 필요한 {e.name} 이 없습니다.\n\n"
+          "  pip install streamlit pandas\n\n"
+          "분류 파이프라인(src/run.py)에는 필요 없습니다. "
+          "대시보드를 볼 때만 설치하세요.")
+
+# streamlit 서버 없이 이 파일을 직접 실행하면 경고만 쏟고 아무 화면도 안 나온다.
+# 실패로 끝나지도 않아서 뭐가 잘못됐는지 알기 어렵다.
+if not st.runtime.exists():
+    _bail("이 파일은 streamlit 이 실행합니다. python 으로 직접 돌리면\n"
+          "경고만 나오고 화면이 뜨지 않습니다.\n\n"
+          # 사용자가 친 경로를 그대로 돌려준다. 사본 위치가 배포마다 다르다.
+          f"  streamlit run {sys.argv[0]} -- \\\n"
+          "      --result     outputs/conv_parsed.json \\\n"
+          "      --dept-class outputs/class_dept.json \\\n"
+          "      --job-class  outputs/class_job.json\n\n"
+          "`--` 가 있어야 합니다. 앞은 streamlit 이 먹고 뒤가 이 스크립트로 갑니다.")
 
 from ragdiag import taxonomy as tx
 
