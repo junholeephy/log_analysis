@@ -11,7 +11,7 @@ PyYAML>=6.0
 # 개발/검증용
 pytest>=8.0
 
-# 대시보드(src/ragdiag/dashboard.py)를 볼 때만. 분류 파이프라인에는 불필요하다.
+# 대시보드(src/dashboard.py)를 볼 때만. 분류 파이프라인에는 불필요하다.
 # streamlit>=1.30
 # pandas>=2.0
 

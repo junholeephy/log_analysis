@@ -1,18 +1,20 @@
-"""분류 결과 탐색 대시보드.
+"""분류 결과를 훑어보는 대시보드.
 
-  streamlit run dashboard.py -- --result output/conv_parsed.json \
-      --dept-class output/class_dept.json --job-class output/class_job.json
+  streamlit run <저장소>/src/dashboard.py -- \
+      --result outputs/conv_parsed.json \
+      --dept-class outputs/class_dept.json \
+      --job-class outputs/class_job.json
 
-에어갭 장비에서 돌아야 하므로 streamlit 하나만 추가로 필요하다. 차트는 내장
-st.bar_chart 로 그린다 - plotly 를 쓰면 반입할 패키지가 늘어난다.
+**src/ 직하에 있어야 한다.** streamlit 은 스크립트가 있는 디렉터리를
+sys.path[0] 에 넣는다. src/ragdiag/ 안에 두면 그 디렉터리가 올라가고 src/ 는
+안 올라가서 `import ragdiag` 가 자기 자신을 못 찾는다. 실제로 한 번 그렇게
+깨졌는데, 서버는 정상으로 뜨고 헬스체크도 통과해서 로그만 봐서는 멀쩡해 보였다 -
+streamlit 이 스크립트를 브라우저 접속 시에 실행하고 예외를 화면에만 보이기
+때문이다. src/run.py 와 같은 이유로 여기 둔다.
 
-조직 분류 파일을 주면 집계 축을 대분류/중분류/소분류로 접었다 펼 수 있다. 팀이 수십
-개일 때 소분류로만 보면 표가 읽히지 않는다 - 대분류로 접어야 "어느 본부가 문제인가"가
-보이고 그다음 좁혀 들어간다. 어느 필드에 붙는 분류인지는 값을 대조해 자동 판별한다.
-
-화면 구성은 "좁혀들어가기"다. 위에서 필터로 범위를 정하면 아래 모든 표가 같이
-좁아지고, 마지막에 개별 케이스의 근거까지 펼쳐본다. 집계만 보여주고 근거를
-못 보면 "왜 이 라벨이지"에서 막힌다.
+에어갭 장비에서 돌아야 하므로 streamlit·pandas 둘만 추가로 필요하다. 차트는
+내장 st.bar_chart 로 그리고 히트맵은 CSS 를 직접 만든다 - plotly 나 matplotlib
+을 쓰면 반입할 패키지가 늘어난다.
 """
 
 from __future__ import annotations
@@ -39,7 +41,7 @@ CONF_LABEL = {"high": "높음 (코드 검증)", "medium": "중간 (LLM+인용)",
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--result", default="output/conv_parsed.json")
+    parser.add_argument("--result", default="outputs/conv_parsed.json")
     parser.add_argument("--dept-class", help="부서 분류 체계 JSON")
     parser.add_argument("--job-class", help="직급 분류 체계 JSON")
     known, _ = parser.parse_known_args(sys.argv[1:])
@@ -160,7 +162,7 @@ def main() -> None:
     path = Path(args.result)
     if not path.exists():
         st.error(f"결과 파일이 없습니다: {path}\n\n"
-                 "먼저 conv_parse.py 로 분류를 돌리세요.")
+                 "먼저 src/run.py 로 분류를 돌리세요.")
         st.stop()
 
     df = load(str(path))

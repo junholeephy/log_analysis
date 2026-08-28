@@ -655,6 +655,28 @@ build_outcome(owners, results).save("conv_parsed.json")
 `owners` 는 결과를 되돌릴 대화 객체다. `conversation_id` 와 `user` 두 속성만
 읽으므로 그쪽 파서가 만든 객체를 그대로 넣어도 된다.
 
+## 대시보드
+
+```bash
+pip install streamlit pandas          # 분류 파이프라인에는 불필요하다
+
+streamlit run log_analysis/src/dashboard.py -- \
+    --result     outputs/conv_parsed.json \
+    --dept-class outputs/class_dept.json \
+    --job-class  outputs/class_job.json
+```
+
+`--` 가 있어야 한다. 앞은 streamlit 이 먹고 뒤가 스크립트로 넘어간다.
+`--dept-class` · `--job-class` 는 없어도 돌아간다 — 부서·직급이 대분류로
+접히지 않고 로그 원본 값으로 나올 뿐이다.
+
+`src/run.py` 와 같은 이유로 **`src/` 직하**에 있다. streamlit 은 스크립트가 있는
+디렉터리를 `sys.path[0]` 에 넣으므로, `src/ragdiag/` 안에 두면 그 디렉터리가
+올라가고 `src/` 는 안 올라가서 `import ragdiag` 가 자기 자신을 못 찾는다.
+실제로 한 번 그렇게 깨졌는데 **서버는 정상으로 뜨고 헬스체크도 통과했다** —
+streamlit 이 스크립트를 브라우저 접속 시에 실행하고 예외를 화면에만 보이기
+때문이다. `tests/test_dashboard.py` 가 스크립트를 끝까지 실행해 그걸 잡는다.
+
 ## 구조
 
 ```
