@@ -78,6 +78,8 @@ def secondary_from(obs: Observation, checks: dict[str, Check]) -> list[str]:
     arithmetic = _check(checks, "arithmetic")
     if arithmetic is not None and arithmetic.violated:
         extra.append("case22")         # 계산 오류
+    if obs.answer_used_history == "ignored":
+        extra.append("case14")         # 이전 턴 맥락 상실
     return extra
 
 
@@ -161,11 +163,6 @@ def route(
         return done(taxonomy.UNCLASSIFIED, "이전 답변과 다르다는 불만",
                     ["case16 — 교차 세션 비교가 필요해 턴 단위로는 판정 불가"])
 
-    # --- 4b. 이전 턴 맥락 상실 -------------------------------------------------
-    # 답변이 히스토리를 잘못 이어받았으면 문서 충족도를 따지기 전에 그것부터다.
-    if obs.answer_used_history == "ignored":
-        return done("case14", "답변이 이전 턴의 내용을 잊거나 잘못 연결함")
-
     # --- 5. 내용 불만: 질문의 성격으로 갈린다 -----------------------------------
     if obs.question_domain == "general_knowledge":
         return done("case21", "상식 질문에 대한 불만",
@@ -193,6 +190,13 @@ def route(
         return _route_domain(obs, judgment, citation, grounding, done)
 
     # --- 6. 남은 것 -----------------------------------------------------------
+    # case14 는 여기서만 주 라벨이 된다. 앞에 두면 case17/18 을 가로챈다 —
+    # 검색이 실패해 답변이 부실하면 모델은 그걸 "히스토리를 못 이어받았다"로도
+    # 읽기 때문이다. 인용으로 검증된 문서 증거가 LLM 의 인상보다 강하다.
+    if obs.answer_used_history == "ignored":
+        return done("case14", "답변이 이전 턴의 내용을 잊거나 잘못 연결함",
+                    ["더 구체적인 원인을 찾지 못해 맥락 상실로 판정"])
+
     if obs.complaint_target == "other":
         return done(taxonomy.OUT_OF_TAXONOMY, "불만 성격이 taxonomy 어디에도 맞지 않음")
     return done(taxonomy.UNCLASSIFIED,

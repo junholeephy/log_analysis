@@ -49,6 +49,71 @@ def make_backend(args):
     )
 
 
+def run_legacy_regression(args) -> int:
+    """구 회귀셋을 새 파이프라인으로 돌려 판별력이 유지되는지 본다.
+
+    이 23건은 실제 LLM 으로 검증된 유일한 케이스 집합이다. 관측 골든셋이
+    **관측 하나하나**를 재는 것과 달리, 이건 관측이 조합되어 case 로 가는
+    **경로**를 잰다. 층이 달라서 한쪽만으로는 부족하다 — 실제로 골든셋이 98%
+    였을 때 회귀셋은 15/23 이었고, 그 차이가 라우팅 순서의 결함을 드러냈다.
+    """
+    import collections
+
+    sys.path.insert(0, str(Path(__file__).parent))
+    from fixtures.synthetic import build, expected_cases
+
+    from ragdiag.classify import classify_all
+    from ragdiag.load import parse_cases
+
+    data, expected = build()
+    cases = parse_cases(data)
+    if args.limit:
+        cases = cases[: args.limit]
+
+    try:
+        backend = make_backend(args)
+    except JudgeError as e:
+        print(e, file=sys.stderr)
+        return 2
+
+    judge = Judge(backend, cache_dir=None if args.no_cache else ".cache")
+    print(f"구 회귀셋 {len(cases)}건 · {backend.model} · 동시 {args.workers}",
+          file=sys.stderr)
+    results = classify_all(cases, judge, max_workers=args.workers)
+
+    hits, rows = 0, []
+    for result in results:
+        meta = expected[result.case.case_id]
+        want = expected_cases(result.case.conversation_id, result.case.turn,
+                              meta["expect"][0])
+        got = (result.classification.primary_case if result.classification
+               else f"ERROR:{result.error}")
+        ok = got in want
+        hits += ok
+        rows.append((ok, meta["trap"], result, want, got))
+
+    print("=" * 78)
+    print(f"구 회귀셋 -> 신 taxonomy   일치 {hits}/{len(rows)}")
+    print("=" * 78)
+    for ok, trap, result, want, got in rows:
+        secondary = (result.classification.secondary_cases
+                     if result.classification else [])
+        extra = f"  +{','.join(secondary)}" if secondary else ""
+        print(f"{'OK ' if ok else 'X  '}[{trap:<18}] "
+              f"{result.case.conversation_id}:{result.case.turn:<4} -> {got}{extra}")
+        if not ok:
+            print(f"      기대: {sorted(want)}")
+
+    by_trap = collections.defaultdict(list)
+    for ok, trap, *_ in rows:
+        by_trap[trap].append(ok)
+    print("\n함정 유형별:")
+    for trap in sorted(by_trap):
+        print(f"  {trap:<20} {sum(by_trap[trap])}/{len(by_trap[trap])}")
+    print(f"\nLLM 호출 {sum(r.n_calls for r in results)}회")
+    return 0 if hits == len(rows) else 1
+
+
 def run_golden(args) -> int:
     """Step 1 관측만 돌려 필드별 일치율을 잰다. Step 2·3 은 호출하지 않는다."""
     sys.path.insert(0, str(Path(__file__).parent))
@@ -114,6 +179,8 @@ def main() -> int:
     p.add_argument("--conv-data", help="conv_eval JSON 경로")
     p.add_argument("--golden", action="store_true",
                    help="Step 1 관측 골든셋을 돌려 필드별 일치율을 잰다")
+    p.add_argument("--legacy-regression", action="store_true",
+                   help="구 case17/18 회귀셋 23건을 새 파이프라인으로 돌려 대조한다")
     p.add_argument("--filter", help="필터 JSON. 없으면 진단 가능한 후속 턴 전부")
     p.add_argument("--out", default="conv_parsed.json", help="결과 저장 경로")
 
@@ -138,6 +205,9 @@ def main() -> int:
 
     if args.golden:
         return run_golden(args)
+
+    if args.legacy_regression:
+        return run_legacy_regression(args)
 
     if not args.conv_data:
         print("--conv-data 또는 --golden 중 하나가 필요합니다.", file=sys.stderr)
