@@ -552,7 +552,23 @@ near-miss 가 전부 partial 로 새어 "문서는 어느 정도 있었다"가 �
 
 **목적** — 관측과 검증을 **진리표**로 조합해 case 를 정한다. LLM 은 여기 없다.
 
-**입력** — 관측 17개 + 검증기 11종 + 충족도 + 인용 + 근거 활용
+**입력** — 앞 단계가 낸 것 전부. 다만 **전부를 읽지는 않는다.**
+
+| 어디서 | 라우팅이 읽는 것 | 안 읽는 것 |
+|---|---|---|
+| ⑤ 관측 (17개 중 **10개**) | `complaint_target` `question_domain` `question_self_contained` `question_multi_intent` `question_answerable_as_asked` `answer_refused` `answer_covers_all_intents` `answer_actionable` `answer_used_history` `requests_unsupported_output` | `resolved_question` `unmet_need` `reasoning` `requested_language` `requested_length_kind` `requested_length_value` `requested_format` |
+| ⑥ 검증기 (11종 중 **8종**) | `service_error` `truncated` `pii` `quoted_spans` `arithmetic` `injection` + `language` `length` `format` | `python_syntax` `sql_shape` (`case27` 안에서 함께 읽는다) |
+| ⑦ 충족도 | `verdict` | `evidence` `missing` `reasoning` |
+| ⑧ 인용 | `n_kept` `n_chunks` | `kept` `dropped` 의 내용 |
+| ⑨ 근거 활용 | `answer_used_rag` | `reasoning` |
+
+**`requested_*` 넷을 라우팅이 안 읽는 것이 이 표의 요점이다.** 그 값은 ⑥이 소비해
+`language` · `length` · `format` 검증기의 `verdict` 로 바뀌어 있다. 라우팅은 관측이
+아니라 **검증 결과**를 본다 — "요구했다"(관측)가 아니라 "지켰나"(코드)로 판정한다.
+
+`resolved_question` 과 `unmet_need` 도 안 읽는다. 그 둘은 ⑦에 넘기는 입력이자
+결과 파일에 남기는 근거이지 판정의 갈림길이 아니다.
+
 
 ```
  0. 서비스 자원 부족 확정 문구?   코드      → case9   서비스 자원 부족 응답

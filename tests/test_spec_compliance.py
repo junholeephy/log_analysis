@@ -650,3 +650,34 @@ def test_process_flow_documents_every_checker_verdict_rule():
     listed = set(re.findall(r"\| `(\w+)` \|", table))
     assert listed == real, (
         f"문서에만: {sorted(listed - real)} / 코드에만: {sorted(real - listed)}")
+
+
+def test_process_flow_routing_inputs_match_route_py():
+    """라우팅이 관측 17개를 다 읽는 것이 아니다.
+
+    requested_* 넷은 ⑥이 소비해 검증기 verdict 로 바뀌어 있고 라우팅은 안 본다 —
+    "요구했다"가 아니라 "지켰나"로 판정한다는 뜻이다. 문서가 이걸 뭉뚱그리면
+    라우팅을 고칠 때 어느 값이 실제로 갈림길인지 알 수 없다.
+    """
+    import re
+
+    from ragdiag.schema import Observation
+
+    route = (ROOT / "src/ragdiag/route.py").read_text(encoding="utf-8")
+    real = {f for f in Observation.model_fields if re.search(rf"obs\.{f}\b", route)}
+    assert real, "route.py 에서 관측 필드 참조를 못 찾았다"
+
+    doc = (ROOT / "process_flow.md").read_text(encoding="utf-8")
+    table = doc.split("| 어디서 | 라우팅이 읽는 것 | 안 읽는 것 |")[1].split("\n\n")[0]
+    rows = [l for l in table.splitlines() if l.startswith("| ⑤")]
+    assert rows, "⑩ 입력 표에 관측 행이 없다"
+    reads, skips = (set(re.findall(r"`(\w+)`", c)) for c in rows[0].split("|")[2:4])
+
+    assert reads == real, (
+        f"읽는다고 적었는데 안 읽음: {sorted(reads - real)} / "
+        f"실제로 읽는데 문서에 없음: {sorted(real - reads)}")
+    assert not (skips & real), (
+        f"안 읽는다고 적었는데 실제로는 읽는다: {sorted(skips & real)}")
+    assert reads | skips == set(Observation.model_fields), (
+        f"표에서 빠진 관측 필드: "
+        f"{sorted(set(Observation.model_fields) - reads - skips)}")
