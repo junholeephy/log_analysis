@@ -598,3 +598,55 @@ def test_process_flow_checker_inputs_match_run_checks():
             if alias not in shown:
                 wrong.append(f"{name}: 문서에 `{alias}` 가 없다 — '{shown.strip()}'")
     assert not wrong, "\n".join(wrong)
+
+
+def test_process_flow_input_tables_name_real_fields():
+    """입력 표가 "답변" 대신 필드명을 쓰면 코드와 대조할 수 있다.
+
+    한국어 표현으로 두면 어느 필드인지 알 수 없고 — 실제로 그 질문을 받았다 —
+    무엇보다 문서가 코드와 어긋나도 알아챌 방법이 없다.
+    """
+    import re
+
+    from ragdiag.schema import Case, GroundingCheck, Observation, SufficiencyJudgment
+
+    known = (set(Case.__dataclass_fields__) | set(Observation.model_fields)
+             | set(SufficiencyJudgment.model_fields) | set(GroundingCheck.model_fields)
+             | {"llm_eval_*", "llm_emotion_*", "timestamp", "verdict",
+                "pre_queries[-1]", "requested_*", "requested_length_*"})
+
+    doc = (ROOT / "process_flow.md").read_text(encoding="utf-8")
+    unknown = []
+    for step in ["## ⑤", "## ⑦", "## ⑨"]:
+        table = doc.split(step)[1].split("**출력**")[0]
+        rows = [l for l in table.splitlines() if l.startswith("|") and "---" not in l]
+        assert len(rows) > 2, f"{step} 에 입력 표가 없다"
+        cells = [c for row in rows[1:] for c in row.split("|")[1:-1]]
+        assert any("`" in c for c in cells), f"{step} 입력 표에 필드명이 하나도 없다"
+        for name in re.findall(r"`(\w+(?:\[-?\d\])?\*?)`", " ".join(cells)):
+            if name not in known and not name.endswith("*"):
+                unknown.append(f"{step}: `{name}` 은 어느 모델에도 없는 필드")
+    assert not unknown, "\n".join(unknown)
+
+
+def test_process_flow_documents_every_checker_verdict_rule():
+    """verdict 를 어떻게 만드는지 검증기마다 적혀 있어야 한다.
+
+    "룰 기반"이라고만 하면 어떤 룰인지 알 수 없고, 임계값을 바꿀 때 무엇이
+    영향받는지도 모른다.
+    """
+    import inspect
+    import re
+
+    from ragdiag import classify
+
+    body = inspect.getsource(classify.run_checks)
+    real = (set(re.findall(r'"(\w+)":\s*check_', body))
+            | set(re.findall(r'checks\["(\w+)"\]', body)))
+
+    doc = (ROOT / "process_flow.md").read_text(encoding="utf-8")
+    assert "### verdict 를 어떻게 만드나" in doc, "판정 규칙 절이 없다"
+    table = doc.split("| 검증기 | `not_applicable` |")[1].split("\n\n")[0]
+    listed = set(re.findall(r"\| `(\w+)` \|", table))
+    assert listed == real, (
+        f"문서에만: {sorted(listed - real)} / 코드에만: {sorted(real - listed)}")
