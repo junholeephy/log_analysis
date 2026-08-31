@@ -74,11 +74,11 @@ next:
     pip install -r log_analysis/requirements.txt      # --upgrade 는 쓰지 않는다
   python log_analysis/src/run.py --dry-run                        # ① 합성 스모크
   python log_analysis/src/run.py --conv-data <실데이터> --limit 1000   # ② 계약 확인
-  python log_analysis/src/run.py --conv-data <실데이터> --output-dir outputs   # ③ 전체
+  python log_analysis/src/run.py --conv-data <실데이터>              # ③ 전체 (결과는 ./output)
 
   대시보드 (선택 · 결과를 본 뒤에)
     python -m pip install -r log_analysis/requirements-dashboard.txt
-    python -m streamlit run log_analysis/src/dashboard.py -- --result outputs/conv_parsed.json
+    python -m streamlit run log_analysis/src/dashboard.py          # ./output 의 최신 결과
 ```
 
 두 번째 갱신부터는 `pip` 줄이 사라진다. `requirements.txt` 가 바뀌었을 때만 다시 나오고,
@@ -93,7 +93,11 @@ next:
 우리 패키지를 남기지 않고, 사본 통째 교체가 무연산이 된다.
 
 상대 경로는 전부 **실행 위치 기준**이다. 작업 폴더에서 실행하면 사본이
-어디 있든 `outputs/` 가 맞아떨어진다.
+어디 있든 `output/` 이 맞아떨어진다.
+
+> **`sync.sh` 는 규격대로 `outputs/` 를 만드는데 프로그램은 `output/` 에 쓴다.**
+> 둘 다 생기지만 `outputs/` 는 비어 있게 된다. 신경 쓰이면 지워도 되고,
+> `--output-dir outputs` 를 주면 규격 쪽에 맞출 수 있다.
 
 `--output-dir` 을 생략하면 **실행 위치의 `./output`** 에 넣는다. 파일 이름에는
 **끝난 시각**이 붙는다.
@@ -136,7 +140,7 @@ PYTHONPATH=log_analysis/src python -m ragdiag --config configs/local.yaml
 |---|---|---|
 | `.cache/` | **LLM 판정 응답.** 실데이터에서 뽑은 관측·인용이 그대로 들어 있다 | 판단 필요 |
 | `data/` | 실데이터 | 대개 아니다 |
-| `outputs/` | 분류 결과 · RUN SUMMARY | 남기고 싶을 수 있다 |
+| `output/` | 분류 결과 · RUN SUMMARY (파일명에 시각) | 남기고 싶을 수 있다 |
 | `configs/local.yaml` | 사내 실값 (경로·주소) | 판단 필요 |
 
 `AA/log_analysis` 사본이 커밋되는 것은 목적이지만 — "어떤 코드로 돌렸는지"가
@@ -707,8 +711,8 @@ python3 -m venv venv && ./venv/bin/pip install -r requirements.txt
 pip install streamlit pandas          # 분류 파이프라인에는 불필요하다
 
 python -m streamlit run log_analysis/src/dashboard.py -- \
-        --dept-class outputs/class_dept.json \
-    --job-class  outputs/class_job.json
+    --dept-class output/class_dept.json \
+    --job-class  output/class_job.json
 ```
 
 `--` 가 있어야 한다. 앞은 streamlit 이 먹고 뒤가 스크립트로 넘어간다.

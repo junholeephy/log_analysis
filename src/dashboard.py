@@ -1,9 +1,13 @@
 """분류 결과를 훑어보는 대시보드.
 
+  python -m streamlit run <저장소>/src/dashboard.py
+
+--result 를 생략하면 ./output 에서 가장 최근 conv_parsed_*.json 을 고른다.
+조직 분류를 붙이려면:
+
   python -m streamlit run <저장소>/src/dashboard.py -- \
-      --result outputs/conv_parsed.json \
-      --dept-class outputs/class_dept.json \
-      --job-class outputs/class_job.json
+      --dept-class output/class_dept.json \
+      --job-class  output/class_job.json
 
 **src/ 직하에 있어야 한다.** streamlit 은 스크립트가 있는 디렉터리를
 sys.path[0] 에 넣는다. src/ragdiag/ 안에 두면 그 디렉터리가 올라가고 src/ 는
@@ -56,11 +60,9 @@ if not st.runtime.exists():
     # 이 인터프리터를 그대로 쓰므로 PATH 를 타지 않는다.
     _bail("이 파일은 streamlit 이 실행합니다. python 으로 직접 돌리면\n"
           "경고만 나오고 화면이 뜨지 않습니다.\n\n"
-          f"  {sys.executable} -m streamlit run {sys.argv[0]} -- \\\n"
-          "      --result     outputs/conv_parsed.json \\\n"
-          "      --dept-class outputs/class_dept.json \\\n"
-          "      --job-class  outputs/class_job.json\n\n"
-          "`--` 가 있어야 합니다. 앞은 streamlit 이 먹고 뒤가 이 스크립트로 갑니다.\n"
+          f"  {sys.executable} -m streamlit run {sys.argv[0]}\n\n"
+          "결과 경로를 생략하면 ./output 의 최신 것을 봅니다. 인자를 주려면\n"
+          "`--` 뒤에 붙입니다 — 앞은 streamlit 이 먹습니다.\n"
           "`python -m streamlit` 은 PATH 를 타지 않습니다 — `streamlit` 만 쓰면\n"
           "venv 를 activate 하지 않았을 때 command not found 가 납니다.")
 
