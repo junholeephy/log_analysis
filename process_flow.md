@@ -178,6 +178,53 @@ llm_ans_on_last_q == "서비스에 문제가 있거나, 사용자 분들이 많�
 `vague_short`("짧게 답해줘")처럼 수치가 없는 요구는 임계값(기본 400자)으로 재고,
 그 임계값은 설정으로 바꿀 수 있다.
 
+### 17개는 항상 다 나온다 — 다만 두 가지를 헷갈리면 안 된다
+
+**(1) 모든 턴이 ⑤를 거치지는 않는다.**
+
+| 어떤 턴 | observation |
+|---|---|
+| 보통의 턴 | 17개 전부 |
+| `case9` (④에서 코드로 끊김) | **없음.** LLM 을 한 번도 안 불렀다 |
+| 판정 실패(`error`) | 없음 |
+
+`case9` 인 턴의 `evidence` 에는 `checks` 만 있고 `observation` 이 없다. 그게
+"LLM 을 안 거쳤다"는 표시이기도 하다.
+
+**(2) 17개를 내지만 결과 파일에는 7개만 실린다.**
+
+```
+Step 1 이 내는 것        17개 (전부 필수. 기본값이 없어 LLM 이 반드시 채운다)
+결과 파일에 실리는 것      7개
+```
+
+실리는 7개 —
+
+| 필드 | 왜 남기나 |
+|---|---|
+| `resolved_question` `unmet_need` | 무엇을 물었고 무엇을 못 받았나 |
+| `complaint_target` `question_domain` | 불만의 방향과 질문 성격 |
+| `question_self_contained` `question_multi_intent` `answer_refused` | 라우팅의 주요 갈림길 |
+
+나머지 10개(`answer_actionable` · `answer_used_history` · `answer_covers_all_intents` ·
+`question_answerable_as_asked` · `requests_unsupported_output` · `requested_language` ·
+`requested_length_kind` · `requested_length_value` · `requested_format` · `reasoning`)는
+**⑥ 검증기와 ⑩ 라우팅이 쓰고 버린다.** 결과는 `checks` 와 `case_id` 에 반영돼 있다.
+
+> **한계**: 그래서 `case12`(요구 포맷 불이행)가 나왔을 때 **무슨 포맷을 요구했는지**를
+> 결과 파일에서 알 수 없다. `checks.format` 의 `detail` 에 일부 남지만 요구값 자체는
+> 아니다. 사내에서는 결과를 반출할 수 없어 화면과 이 파일이 전부이므로, 되짚을 일이
+> 잦아지면 실리는 목록을 늘려야 한다.
+
+**(3) 17개 중 상당수는 "해당 없음" 센티널이다.**
+
+합성 데이터 41턴 기준으로 `answer_refused` 는 41/41 이 `false`,
+`question_multi_intent` 는 38/41 이 `false` 다. 실데이터에서는 `requested_*` 도
+대부분 `none` · `""` · `0` 일 것이다.
+
+**"17개를 관측했다"가 아니라 "17개 슬롯을 채웠고 대부분은 해당 없음"이다.** 그래서
+`not_applicable` 과 `violated` 를 섞으면 안 된다는 ⑥의 규칙이 여기서부터 시작된다.
+
 Step 1이 내는 것은 **관측 17개**이지 case가 아니다. `answer_refused`, `question_multi_intent`,
 `requested_format` 같은 좁은 질문들이다. 29지선다는 어떤 모델이든 정확도가 안 나오지만
 좁은 질문은 안정적이고, 무엇보다 **판정자가 원인을 먼저 정하고 사실을 끼워 맞추는 것을 막는다.**
@@ -467,8 +514,8 @@ outputs/conv_parsed.json    원본 필드는 그대로, classification 아래에
 outputs/run_summary.txt     RUN SUMMARY 사본
 ```
 
-`classification.evidence`에 각 단계가 본 것과 낸 것이 남는다 — 관측 17개, 검증기 결과,
-충족도와 인용(버려진 인용 포함), 근거 활용. **집계만 보고 근거를 못 보면 "왜 이 라벨이지"에서
+`classification.evidence`에 각 단계가 본 것과 낸 것이 남는다 — 관측 **7개**(⑤가 낸
+17개 중 라우팅의 갈림길이 되는 것들), 검증기 결과, 충족도와 인용(버려진 인용 포함), 근거 활용. **집계만 보고 근거를 못 보면 "왜 이 라벨이지"에서
 막히기 때문**이다.
 
 case9는 evidence에 `checks`만 있고 `observation`이 없다. ④에서 끊겨 LLM을 한 번도

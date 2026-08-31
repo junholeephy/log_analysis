@@ -456,3 +456,27 @@ def test_process_flow_lists_every_observation_field():
     doc = (ROOT / "process_flow.md").read_text(encoding="utf-8")
     missing = [n for n in Observation.model_fields if f"`{n}`" not in doc]
     assert not missing, f"process_flow.md 에 없는 관측 필드: {missing}"
+
+
+def test_process_flow_names_the_fields_that_reach_the_output_file():
+    """Step 1 은 17개를 내지만 결과 파일에는 7개만 실린다.
+
+    문서가 이걸 구분하지 않으면 결과 파일에 17개가 다 있는 줄 알고 찾게 된다.
+    output.py 가 싣는 목록이 바뀌면 문서도 따라 바뀌어야 한다.
+    """
+    import inspect
+    import re
+
+    from ragdiag import output
+
+    src = inspect.getsource(output._evidence_payload)
+    block = src.split('payload["observation"] = {')[1].split("}")[0]
+    shipped = set(re.findall(r'"(\w+)": obs\.', block))
+    assert shipped, "output.py 에서 observation 필드를 못 찾았다"
+
+    doc = (ROOT / "process_flow.md").read_text(encoding="utf-8")
+    section = doc.split("실리는 7개")[1].split("나머지")[0]
+    listed = set(re.findall(r"`(\w+)`", section))
+    assert listed == shipped, (
+        f"문서에만: {sorted(listed - shipped)} / "
+        f"output.py 에만: {sorted(shipped - listed)}")
