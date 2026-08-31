@@ -152,7 +152,33 @@ llm_ans_on_last_q == "서비스에 문제가 있거나, 사용자 분들이 많�
 
 사용자가 무엇을 원했는지는 **사용자의 말만 보고** 정해야 한다.
 
-Step 1이 내는 것은 **관측 15개**이지 case가 아니다. `answer_refused`, `question_multi_intent`,
+### ⑤ 가 낼 수 있는 값 — 관측 17개
+
+| 필드 | 값 | 무엇을 |
+|---|---|---|
+| `reasoning` | 자유 문장 | 불만과 질문을 어떻게 읽었는지 2~3문장 |
+| `resolved_question` | 자유 문장 | 대명사·생략을 푼, 그 자체로 이해되는 질문 |
+| `unmet_need` | 자유 문장 | 원했는데 못 받은 것. **요구하지 않은 것을 덧붙이지 않는다** |
+| `complaint_target` | `tone` `format` `language` `length` `content_missing` `content_wrong` `no_answer` `refusal` `inconsistency` `other` | 불만이 무엇을 향하나 |
+| `question_domain` | `domain` `general_knowledge` `calculation` `code` `tool_usage` `unclear` | 질문의 성격 |
+| `question_self_contained` | `true` / `false` | 그 문장만으로 검색 쿼리가 되나 (case4의 반대) |
+| `question_multi_intent` | `true` / `false` | 요구가 둘 이상 섞였나 (case3) |
+| `answer_refused` | `true` / `false` | 정책·권한을 이유로 거절했나 (case28) |
+| `question_answerable_as_asked` | `true` / `false` | 질문이 답을 특정할 만큼 분명한가 (case1) |
+| `answer_covers_all_intents` | `true` / `false` | 복합 질문의 모든 요구를 다뤘나 (case15) |
+| `answer_actionable` | `true` / `false` | 다음에 무엇을 할지 알 수 있나 (case17) |
+| `answer_used_history` | `not_needed` `used` `ignored` | 이전 턴을 이어받았나 (case14) |
+| `requests_unsupported_output` | `true` / `false` | 낼 수 없는 형태를 요구했나 (case2) |
+| `requested_language` | `ko` `en` `ja` `zh` · 없으면 빈 문자열 | 요구 언어 |
+| `requested_length_kind` | `none` `max_chars` `max_sentences` `max_lines` `vague_short` | 길이 요구의 종류 |
+| `requested_length_value` | 정수 · 수치가 없으면 `0` | 길이 요구의 값 |
+| `requested_format` | `none` `numbered_list` `bullet_list` `table` `code_block` `json` `prose` | 요구 형식 |
+
+`requested_*` 셋은 **관측이지 판정이 아니다.** "요구했다"까지만 적고 "지켰나"는 ⑥이 코드로 본다.
+`vague_short`("짧게 답해줘")처럼 수치가 없는 요구는 임계값(기본 400자)으로 재고,
+그 임계값은 설정으로 바꿀 수 있다.
+
+Step 1이 내는 것은 **관측 17개**이지 case가 아니다. `answer_refused`, `question_multi_intent`,
 `requested_format` 같은 좁은 질문들이다. 29지선다는 어떤 모델이든 정확도가 안 나오지만
 좁은 질문은 안정적이고, 무엇보다 **판정자가 원인을 먼저 정하고 사실을 끼워 맞추는 것을 막는다.**
 
@@ -172,6 +198,35 @@ Step 1이 내는 것은 **관측 15개**이지 case가 아니다. `answer_refuse
 | `python_syntax` `sql_shape` | 답변 | 코드 결함 (case27 코드/도구 사용법 오답) |
 | `arithmetic` | 답변 | 등식 재계산 (case26) |
 | `injection` | 문서 + 답변 | 문서의 숨은 지시를 수행했나 (case29 간접 프롬프트 인젝션) |
+
+### ⑥ 이 낼 수 있는 값
+
+검증기마다 네 값 중 실제로 나올 수 있는 것이 다르다.
+
+| 검증기 | 낼 수 있는 verdict |
+|---|---|
+| `pii` | `ok` · `violated` |
+| `service_error` `sql_shape` `arithmetic` `format` | `ok` · `violated` · `not_applicable` |
+| `truncated` | `ok` · `violated` · `undetermined` |
+| `language` | `ok` · `violated` · `not_applicable` · `undetermined` |
+| `injection` | `violated` · `not_applicable` · `undetermined` |
+| `quoted_spans` | `ok` · `not_applicable` · `undetermined` |
+| `python_syntax` | `ok` · `not_applicable` |
+| `length` | `not_applicable` · `undetermined` |
+
+| verdict | 뜻 | 라우팅이 어떻게 읽나 |
+|---|---|---|
+| `ok` | 검증했고 위반이 없다 | 그 case 로 보내지 않는다 |
+| `violated` | 검증했고 위반이다 | 그 case 로 보낸다 (신뢰도 high) |
+| `not_applicable` | **잴 요구가 없었다** | 위반과 섞지 않는다 |
+| `undetermined` | 요구는 있는데 코드로 판정 못 한다 | case 는 유지하되 **신뢰도를 낮춘다** |
+
+`length`에 `ok`·`violated`가 없는 것은 길이 판정이 관측의 요구값에 의존해서다 —
+수치 요구는 `undetermined` 로 두고 측정값을 함께 남겨, 나중에 임계값을 바꿔도
+LLM 을 다시 돌리지 않아도 되게 했다.
+
+`detail`에는 **무엇을 보고 그렇게 판정했는지**가 들어간다
+(`"종결 부호 없이 끝남: …'그리고 담당자'"`, `"모호한 짧게 요구 (기준 400자) · 실제 812자"`).
 
 요구가 없었는데 검증하면 `not_applicable`이 나온다. 그걸 위반과 섞으면 멀쩡한 답변이
 전부 실패로 집계되므로 네 값(`ok` / `violated` / `not_applicable` / `undetermined`)으로 구분한다.
@@ -208,6 +263,25 @@ Step 1이 내는 것은 **관측 15개**이지 case가 아니다. `answer_refuse
 
 답변을 보여주면 이 갈림길 자체가 사라진다.
 
+### ⑦ 이 낼 수 있는 값
+
+| 필드 | 값 |
+|---|---|
+| `verdict` | `sufficient` · `partial` · `insufficient` |
+| `evidence` | `[{chunk_index: 0-기반 정수, quote: 청크에서 글자 그대로 복사한 문장}]` · 없으면 `[]` |
+| `missing` | 문서에 없어서 답할 수 없었던 것 · `sufficient` 면 빈 문자열 |
+| `reasoning` | 자유 문장 |
+
+| verdict | 뜻 |
+|---|---|
+| `sufficient` | `unmet_need` 전부가 문서에 있다 |
+| `partial` | 일부만 있다 — **요구의 어느 부분에 답하는가**로 가른다 |
+| `insufficient` | 물어본 것이 없다. 주제가 같고 항목이 다른 near-miss 도 여기다 |
+
+`partial`과 `insufficient`의 정의가 한 번 겹쳤다. "관련 문서가 있으면 partial"로 두면
+near-miss 가 전부 partial 로 새어 "문서는 어느 정도 있었다"가 된다. 지금은 **인용이
+요구의 어느 부분에 답하는가**를 묻는다 — 답하는 부분이 없으면 주제가 같아도 insufficient 다.
+
 ### rag_chunks가 비어 있으면 LLM을 부르지 않는다
 
 대조할 문서가 없으면 verdict는 물어볼 것 없이 `insufficient`다. 부르면 호출만 쓰는 게
@@ -228,6 +302,25 @@ verdict가 sufficient/partial → insufficient 로 강등
 판정자가 사내 규정을 "아는" 것처럼 답하면(사전지식) 인용할 원문이 없으므로 여기서 걸린다.
 **"모르는 건 모른다고 해라"를 프롬프트로 부탁하는 대신 구조로 막는 것**이다.
 프롬프트 요청은 모델이 바뀌면 무너지지만 이건 안 무너진다.
+
+### ⑧ 이 낼 수 있는 값
+
+| 필드 | 값 |
+|---|---|
+| `kept` | 살아남은 인용 `[{chunk_index, quote, ratio, index_corrected}]` |
+| `dropped` | 버려진 인용 `[{quote, reason, best_ratio}]` |
+| `n_chunks` | 대조 대상 청크 수 · **0이면 검색 결과가 아예 없었다** |
+
+| `reason` | 뜻 |
+|---|---|
+| `too_short` | 인용이 8자 미만. 짧으면 아무 문서에나 우연히 들어맞아 검증을 무력화한다 |
+| `not_found` | 어느 청크와도 연속 일치 90% 미만. **지어낸 인용이 여기 걸린다** |
+
+`index_corrected`는 인용은 맞는데 판정자가 청크 번호를 틀린 경우다. 버리지 않고
+맞는 번호로 고쳐 살린다 — 번호를 틀린 것과 내용을 지어낸 것은 다른 실수다.
+
+`dropped`가 결과 파일에 그대로 남는다. **지어낸 인용 건수**가 대시보드의 판정 건강
+지표 중 하나이고, 이게 크면 그 배치의 판정을 먼저 의심해야 한다.
 
 `n_chunks`도 여기서 기록한다. 0이면 "검색 결과가 아예 없었다"는 **로그에 적힌 사실**이라
 ⑩이 case20(가져왔으나 빗나감)과 다르게 읽는다.
@@ -252,6 +345,17 @@ verdict가 sufficient/partial → insufficient 로 강등
 **왜 질문을 감추나.** 여기서 묻는 건 하나다 — "답변이 이 문서를 **썼는가**".
 `used` / `ignored` / `contradicted` 중 하나다.
 
+### ⑨ 가 낼 수 있는 값
+
+| `answer_used_rag` | 뜻 | 어디로 |
+|---|---|---|
+| `used` | 표현이 달라도 문서 내용을 반영했다 | 문서·답변 다 멀쩡 → case17 / case13 |
+| `ignored` | 문서에 있는데 일반론으로 때웠다. **"인사팀에 문의하세요" 같은 회피성 안내도 여기다** | case22 |
+| `contradicted` | 문서와 어긋나는 숫자·결론을 말했다 | case18 |
+
+회피성 안내를 거절(case28)로 분류하면 case22(문서엔 답이 있는데 안 씀)가 통계에서
+사라진다. 실제로 구현 중 그렇게 새서 `answer_refused`의 범위를 정책·권한·보안으로 좁혔다.
+
 질문을 같이 주면 "이 답변이 질문에 잘 답했나"라는 다른 판단이 섞인다. 그건 이미 ⑦이
 다른 각도에서 봤고, 여기서 또 보면 두 판정이 같은 방향으로 쏠려 **독립적이지 않은 두 표**가 된다.
 
@@ -259,7 +363,7 @@ verdict가 sufficient/partial → insufficient 로 강등
 
 ## ⑩ 라우팅 — case는 코드가 정한다
 
-관측 15개 + 검증기 10개 + 충족도 + 인용 + 근거활용을 **진리표**로 조합한다. LLM은 여기 없다.
+관측 17개 + 검증기 11종 + 충족도 + 인용 + 근거활용을 **진리표**로 조합한다. LLM은 여기 없다.
 
 ```
  0. 서비스 자원 부족 확정 문구?   코드      → case9   서비스 자원 부족 응답
@@ -287,6 +391,70 @@ verdict가 sufficient/partial → insufficient 로 강등
 회귀셋 6건이 그렇게 샜다. **인용으로 검증된 문서 증거가 LLM의 인상보다 강하다.**
 case14는 9번에서만 주 라벨이 되고, 그 전에는 부가 케이스로만 붙는다.
 
+### ⑩ 이 낼 수 있는 값 — case 25개 + 미분류 2개
+
+| case | 이름 | 신뢰도 | 무엇이 정하나 |
+|---|---|---|---|
+| `case1` | 이해하기 어려운 질문 | medium | 관측 |
+| `case2` | 지원하지 않는 포맷 요구 | medium | 관측 |
+| `case3` | 복합 질문을 함 | medium | 관측 · **부가로만** |
+| `case4` | 참조가 모호한 질문 | medium | 관측 · **부가로만** |
+| `case6` | 질문에 개인정보 포함 | high | 코드 · **부가로만** |
+| `case8` | 출력 잘림 | high | 코드 |
+| `case9` | 서비스 자원 부족 응답 | high | 코드 · LLM 0회 |
+| `case10` | 요구 언어 불이행 | high | 관측 + 코드 |
+| `case11` | 요구 길이 불이행 | high | 관측 + 코드 |
+| `case12` | 요구 포맷 불이행 | high | 관측 + 코드 |
+| `case13` | 의도와 다른 답변 | medium | 관측 |
+| `case14` | 이전 턴 맥락 상실 | medium | 관측 |
+| `case15` | 복합 질문 일부만 답변 | medium | 관측 |
+| `case16` | 말투·어조 불이행 | medium | 관측 |
+| `case17` | 실행할 수 없는 수준 | medium | 관측 + LLM |
+| `case18` | 문서와 어긋나는 주장 | medium | LLM(⑨) |
+| `case20` | Retrieve 실패 | medium | LLM(⑦) + 인용 |
+| `case21` | 검색 미수행 | high | 코드 (빈 리스트) |
+| `case22` | Retrieve 성공, 생성 실패 | medium | LLM(⑦+⑨) + 인용 |
+| `case24` | 출처/인용 표기 오류 | high | 코드 · **부가로만** |
+| `case25` | 상식 질문 오답 | **low** | 관측만 |
+| `case26` | 계산 오답 | high | 코드 |
+| `case27` | 코드/도구 사용법 오답 | medium | 관측 + 코드 |
+| `case28` | 보안 정책상 답변 불가 | medium | 관측 |
+| `case29` | 간접 프롬프트 인젝션 | medium | 코드 |
+| `unclassified` | 분류 실패 | — | **"문제 없음"이 아니라 수동 검토 대상** |
+| `out_of_taxonomy` | taxonomy 에 없는 유형 | — | 쌓이면 케이스를 추가하라는 신호 |
+
+29개 중 4개(`case5` `case7` `case19` `case23`)는 **라우팅이 절대 만들지 않는다.**
+필드가 없어 판정할 수 없는 것들이고, 목록에서 지우지 않은 이유는 "우리 분류에는
+그런 게 없다"가 되지 않게 하기 위해서다.
+
+**부가로만** 표시한 것은 주 라벨이 되지 않고 `secondary_cases`에만 붙는다. 주 라벨로
+두면 더 구체적인 원인을 가로챈다 — case14 를 앞에 뒀다가 회귀셋 6건이 샌 것과 같은 이유다.
+
+`case25`만 신뢰도 **low** 다. 판정 근거가 판정자의 사전지식뿐이라 — 이 도구가 문서
+판정에서 막으려던 바로 그것을 여기서는 근거로 쓴다 — **다른 케이스와 같은 무게로
+집계하면 안 된다.** 대시보드에 "신뢰도 낮음 제외" 스위치가 있는 이유다.
+
+### 한 턴이 낳는 것 전부
+
+| 필드 | 값 |
+|---|---|
+| `case_id` | 위 27개 중 하나 |
+| `case_name` `type_id` `type_name` `category` | case_id 에서 계산된다. 따로 분류하지 않는다 |
+| `confidence` | `high` · `medium` · `low` — taxonomy 기본값이되 코드 근거가 없으면 낮춘다 |
+| `reason` | 왜 이 라벨인지 한 문장 (`"문서에 답이 있는데 답변이 쓰지 않음"`) |
+| `secondary_cases` | 주 라벨과 별개로 성립한 case 들 |
+| `notes` | 판정의 한계 (`"검색 실패와 코퍼스 부재는 구분 불가 — 부서 편중으로만 추정"`) |
+| `llm_calls` | 0 · 1 · 2 · 3 |
+
+`llm_calls` 가 그 턴이 어디까지 갔는지 그대로 보여준다.
+
+| 호출 | 어디까지 |
+|---|---|
+| 0 | ④에서 끊김 (case9) 또는 캐시 히트 |
+| 1 | ⑤만. 형식·언어·길이 불만이나 도메인이 아닌 질문 |
+| 2 | ⑤+⑦. 문서가 불충분해 ⑨까지 안 감 |
+| 3 | ⑤+⑦+⑨. 문서는 충분했고 활용 여부까지 물음 |
+
 case를 코드가 정하면 얻는 것이 하나 더 있다. taxonomy가 바뀌어도 **LLM을 다시 돌릴 필요가
 없다.** 관측은 그대로 두고 진리표만 고치면 된다.
 
@@ -299,7 +467,7 @@ outputs/conv_parsed.json    원본 필드는 그대로, classification 아래에
 outputs/run_summary.txt     RUN SUMMARY 사본
 ```
 
-`classification.evidence`에 각 단계가 본 것과 낸 것이 남는다 — 관측 15개, 검증기 결과,
+`classification.evidence`에 각 단계가 본 것과 낸 것이 남는다 — 관측 17개, 검증기 결과,
 충족도와 인용(버려진 인용 포함), 근거 활용. **집계만 보고 근거를 못 보면 "왜 이 라벨이지"에서
 막히기 때문**이다.
 

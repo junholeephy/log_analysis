@@ -411,3 +411,48 @@ def test_steps_withhold_what_the_document_claims():
     assert not leaks, (
         "단계에 주지 않기로 한 정보가 프롬프트에 들어갔다:\n"
         + "\n".join(f"  {l}" for l in leaks))
+
+
+def test_process_flow_output_table_matches_the_code():
+    """문서의 case 표(이름·신뢰도·도달 가능 목록)가 코드와 같아야 한다.
+
+    출력 목록은 읽는 사람이 "이 파이프라인이 뭘 낼 수 있나"를 판단하는 근거다.
+    빠지거나 틀리면 없는 라벨을 찾거나 있는 라벨을 놓친다.
+    """
+    import re
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_route import reachable_cases
+
+    from ragdiag import taxonomy as tx
+
+    doc = (ROOT / "process_flow.md").read_text(encoding="utf-8")
+    rows = re.findall(r"\| `(case\d+)` \| ([^|]+?) \| (?:\*\*)?(high|medium|low)(?:\*\*)? \|",
+                      doc)
+    assert rows, "process_flow.md 에 case 출력 표가 없다"
+
+    wrong = []
+    for cid, name, conf in rows:
+        case = tx.get(cid)
+        if case is None:
+            wrong.append(f"{cid}: 없는 케이스")
+        else:
+            if case.name != name.strip():
+                wrong.append(f"{cid} 이름: 문서 '{name.strip()}' vs 실제 '{case.name}'")
+            if case.confidence != conf:
+                wrong.append(f"{cid} 신뢰도: 문서 '{conf}' vs 실제 '{case.confidence}'")
+    assert not wrong, "\n".join(wrong)
+
+    listed, actual = {r[0] for r in rows}, reachable_cases()
+    assert listed == actual, (
+        f"문서에만: {sorted(listed - actual)} / 코드에만: {sorted(actual - listed)}")
+
+
+def test_process_flow_lists_every_observation_field():
+    """관측 필드가 늘면 문서에도 늘어야 한다. 안 적힌 필드는 없는 것과 같다."""
+    from ragdiag.schema import Observation
+
+    doc = (ROOT / "process_flow.md").read_text(encoding="utf-8")
+    missing = [n for n in Observation.model_fields if f"`{n}`" not in doc]
+    assert not missing, f"process_flow.md 에 없는 관측 필드: {missing}"
