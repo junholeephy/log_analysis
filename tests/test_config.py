@@ -375,9 +375,11 @@ def test_output_dir_is_created_and_holds_both_artifacts(tmp_path):
          "--conv-data", str(log), "--output-dir", str(out)],
         capture_output=True, text=True, cwd=tmp_path)
     assert proc.returncode == 0, proc.stderr
-    assert (out / "conv_parsed.json").exists()
-    assert (out / "run_summary.txt").exists()
-    assert "RUN SUMMARY" in (out / "run_summary.txt").read_text(encoding="utf-8")
+    results = list(out.glob("conv_parsed_*.json"))
+    summaries = list(out.glob("run_summary_*.txt"))
+    assert results, f"결과 파일이 없다: {list(out.iterdir())}"
+    assert summaries, "RUN SUMMARY 사본이 없다"
+    assert "RUN SUMMARY" in summaries[0].read_text(encoding="utf-8")
 
 
 def test_filter_keeps_the_old_flag_name(tmp_path):
@@ -392,3 +394,64 @@ def test_filter_keeps_the_old_flag_name(tmp_path):
                           capture_output=True, text=True)
     assert "--filter-data" in proc.stdout
     assert "--filter" in proc.stdout
+
+
+def test_output_filename_carries_the_finish_time(tmp_path):
+    """같은 데이터를 여러 번 돌리면 어느 것이 언제 것인지 알 수 없다.
+
+    사내에서는 결과를 반출할 수 없어 이 파일들이 그 자리에 계속 쌓인다.
+    파일 이름에 시각이 없으면 덮어써지거나 뒤섞인다.
+    """
+    import json
+    import re
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    from ragdiag.fixtures.synth import generate
+
+    log = tmp_path / "conv_eval.json"
+    log.write_text(json.dumps(generate(n=1, seed=0), ensure_ascii=False), encoding="utf-8")
+
+    proc = subprocess.run(
+        [sys.executable, str(root / "src" / "run.py"), "--backend", "cli",
+         "--conv-data", str(log)],
+        capture_output=True, text=True, cwd=tmp_path)
+    assert proc.returncode == 0, proc.stderr
+
+    # --output-dir 을 안 줘도 ./output 에 생긴다
+    out = tmp_path / "output"
+    assert out.is_dir(), f"기본 출력 디렉터리가 없다: {list(tmp_path.iterdir())}"
+    results = list(out.glob("conv_parsed_*.json"))
+    summaries = list(out.glob("run_summary_*.txt"))
+    assert results, f"시각이 붙은 결과 파일이 없다: {list(out.iterdir())}"
+    assert summaries, "RUN SUMMARY 사본이 없다"
+
+    stamp = re.search(r"conv_parsed_(\d{8}-\d{6})\.json", results[0].name)
+    assert stamp, f"파일명에 시각이 없다: {results[0].name}"
+    # 결과와 요약이 같은 시각을 쓴다 — 짝을 찾을 수 있어야 한다
+    assert (out / f"run_summary_{stamp.group(1)}.txt").exists(), (
+        "결과와 RUN SUMMARY 의 시각이 다르다")
+
+
+def test_out_flag_overrides_the_timestamp(tmp_path):
+    """--out 을 주면 그 경로 그대로 쓴다. 자동화에서 경로를 고정해야 할 때가 있다."""
+    import json
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    from ragdiag.fixtures.synth import generate
+
+    log = tmp_path / "conv_eval.json"
+    log.write_text(json.dumps(generate(n=1, seed=0), ensure_ascii=False), encoding="utf-8")
+    fixed = tmp_path / "고정경로.json"
+
+    proc = subprocess.run(
+        [sys.executable, str(root / "src" / "run.py"), "--backend", "cli",
+         "--conv-data", str(log), "--out", str(fixed)],
+        capture_output=True, text=True, cwd=tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    assert fixed.exists(), "--out 경로에 안 썼다"

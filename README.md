@@ -95,12 +95,23 @@ next:
 상대 경로는 전부 **실행 위치 기준**이다. 작업 폴더에서 실행하면 사본이
 어디 있든 `outputs/` 가 맞아떨어진다.
 
-`--output-dir` 에 두 파일이 생긴다.
+`--output-dir` 을 생략하면 **실행 위치의 `./output`** 에 넣는다. 파일 이름에는
+**끝난 시각**이 붙는다.
 
-| | |
-|---|---|
-| `conv_parsed.json` | 분류 결과 |
-| `run_summary.txt` | RUN SUMMARY 사본. 손으로 옮겨 적을 때 스크롤을 뒤지지 않게 |
+```
+output/conv_parsed_20260831-153708.json    분류 결과
+output/run_summary_20260831-153708.txt     RUN SUMMARY 사본
+```
+
+같은 데이터를 여러 번 돌리거나 설정을 바꿔 다시 돌렸을 때 **어느 것이 언제
+것인지 파일 이름만 보고 알 수 있어야 한다** — 사내에서는 결과를 반출할 수 없어
+이 파일들이 그 자리에 계속 쌓인다. 덮어쓰지 않는다.
+
+경로를 고정해야 하는 자동화가 있으면 `--out` 으로 직접 준다. 그때는 시각
+스탬프를 붙이지 않는다.
+
+대시보드는 `--result` 를 생략하면 `--output-dir` 에서 **가장 최근 것**을 고르고,
+다른 실행이 몇 건 더 있는지 화면에 적는다.
 
 경로를 매번 치기 싫으면 설정에 넣고 `--config configs/local.yaml` 만 준다.
 CLI 인자가 설정을 덮어쓰므로 한 번만 다르게 돌려볼 때도 섞어 쓸 수 있다.
@@ -696,8 +707,7 @@ python3 -m venv venv && ./venv/bin/pip install -r requirements.txt
 pip install streamlit pandas          # 분류 파이프라인에는 불필요하다
 
 python -m streamlit run log_analysis/src/dashboard.py -- \
-    --result     outputs/conv_parsed.json \
-    --dept-class outputs/class_dept.json \
+        --dept-class outputs/class_dept.json \
     --job-class  outputs/class_job.json
 ```
 

@@ -77,11 +77,29 @@ CONF_LABEL = {"high": "높음 (코드 검증)", "medium": "중간 (LLM+인용)",
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--result", default="outputs/conv_parsed.json")
+    parser.add_argument("--result", help="분류 결과 JSON. 생략하면 --output-dir 의 최신 것")
+    parser.add_argument("--output-dir", default="output",
+                        help="여기서 가장 최근 conv_parsed_*.json 을 고른다")
     parser.add_argument("--dept-class", help="부서 분류 체계 JSON")
     parser.add_argument("--job-class", help="직급 분류 체계 JSON")
     known, _ = parser.parse_known_args(sys.argv[1:])
+    if not known.result:
+        known.result = newest_result(known.output_dir)
     return known
+
+
+def newest_result(out_dir: str) -> str:
+    """--output-dir 에서 가장 최근 결과를 고른다.
+
+    파일 이름에 끝난 시각이 박혀 있어(conv_parsed_20260831-150422.json) 고정된
+    경로를 기본값으로 둘 수 없다. 이름이 시각순으로 정렬되므로 마지막이 최신이다.
+    """
+    found = sorted(Path(out_dir).glob("conv_parsed_*.json"))
+    if found:
+        return str(found[-1])
+    # 시각 스탬프가 없던 시절의 파일이나 --out 으로 직접 지정한 것
+    legacy = Path(out_dir) / "conv_parsed.json"
+    return str(legacy)
 
 
 @st.cache_data
@@ -208,7 +226,9 @@ def main() -> None:
         st.stop()
 
     st.title("대화 로그 실패 분류")
-    st.caption(f"{path}  ·  {len(df)}건")
+    others = len(sorted(Path(args.output_dir).glob("conv_parsed_*.json"))) - 1
+    stamp = f"  ·  다른 실행 {others}건 더 있음" if others > 0 else ""
+    st.caption(f"{path}  ·  {len(df)}건{stamp}")
 
     # --- 필터 ---------------------------------------------------------------
     with st.sidebar:

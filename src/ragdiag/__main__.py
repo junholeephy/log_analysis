@@ -28,6 +28,7 @@ import atexit
 import json
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from ragdiag.backends import (
@@ -49,6 +50,10 @@ from ragdiag.pipeline import (
     make_judge,
 )
 from ragdiag.summary import RunSummary, Timer, peak_memory_gb, version
+
+# --output-dir 도 설정도 없을 때. 실행 위치 기준이라 사내에서는
+# 작업 폴더 아래에 생긴다.
+DEFAULT_OUTPUT_DIR = "output"
 
 
 def make_backend(args, config=None):
@@ -263,8 +268,8 @@ def main() -> int:
     p.add_argument("--filter-data", "--filter", dest="filter_data",
                    help="필터 JSON. 없으면 진단 가능한 후속 턴 전부")
     p.add_argument("--output-dir", dest="output_dir",
-                   help="산출물을 넣을 디렉터리. 없으면 만든다")
-    p.add_argument("--out", help="결과 파일 경로. --output-dir 보다 우선한다")
+                   help="산출물을 넣을 디렉터리 (기본 output). 없으면 만든다. 파일명에 끝난 시각이 붙는다")
+    p.add_argument("--out", help="결과 파일 경로를 직접 지정. --output-dir 와 시각 스탬프를 무시한다")
 
     # 아래 기본값은 전부 None 이다. 설정과 CLI 를 구분하기 위해서다 -
     # argparse 기본값을 넣으면 "사용자가 준 것"과 "기본값"을 못 가린다.
@@ -321,10 +326,14 @@ def main() -> int:
     filter_path = args.filter_data or config.get("paths.filter_data")
 
     # --out(파일)이 --output-dir(디렉터리)보다 우선한다. 둘 다 없으면 현재 위치.
-    out_dir = args.output_dir or config.get("paths.output_dir")
+    out_dir = args.output_dir or config.get("paths.output_dir") or DEFAULT_OUTPUT_DIR
     out_path = args.out or config.get("paths.out")
+    # 끝난 시각을 파일 이름에 박는다. 같은 데이터를 여러 번 돌리거나 설정을 바꿔
+    # 다시 돌렸을 때 어느 것이 언제 것인지 파일 이름만 보고 알 수 있어야 한다 —
+    # 사내에서는 결과를 반출할 수 없어 이 파일들이 그 자리에 계속 쌓인다.
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     if not out_path:
-        out_path = str(Path(out_dir or ".") / "conv_parsed.json")
+        out_path = str(Path(out_dir) / f"conv_parsed_{stamp}.json")
     if out_dir:
         # 없으면 만든다. 30분 돌린 뒤 디렉터리가 없어서 못 쓰면 그 사이클을 버린다.
         Path(out_dir).mkdir(parents=True, exist_ok=True)
@@ -362,8 +371,8 @@ def main() -> int:
         # 것보다 파일을 여는 편이 낫다. 사내 밖으로 나가는 것은 아니다.
         if out_dir:
             try:
-                (Path(out_dir) / "run_summary.txt").write_text(text + "\n",
-                                                               encoding="utf-8")
+                (Path(out_dir) / f"run_summary_{stamp}.txt").write_text(
+                    text + "\n", encoding="utf-8")
             except OSError:
                 pass
         return code

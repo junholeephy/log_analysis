@@ -206,3 +206,36 @@ def test_detail_panel_does_not_claim_zero_llm_involvement(result_file):
         "이번 실행의 호출 수를 판정 근거처럼 보여주고 있다. "
         "어디까지 봤는지(판정 단계)를 보여줄 것.")
     assert "판정 단계" in labels, f"판정 단계 지표가 없다: {labels}"
+
+
+def test_dashboard_picks_the_newest_result(tmp_path):
+    """파일명에 시각이 붙어 고정 경로를 기본값으로 둘 수 없다.
+
+    --result 를 안 주면 --output-dir 에서 가장 최근 것을 골라야 한다.
+    """
+    import json
+    import sys
+
+    import streamlit as st
+
+    out = tmp_path / "output"
+    out.mkdir()
+    payload = json.loads((ROOT / "outputs" / "conv_parsed.json").read_text(encoding="utf-8")) \
+        if (ROOT / "outputs" / "conv_parsed.json").exists() else {"analysis_results": []}
+    for stamp in ("20260101-000000", "20260831-153018", "20260501-120000"):
+        (out / f"conv_parsed_{stamp}.json").write_text(
+            json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    saved = sys.argv
+    sys.argv = ["dashboard.py", "--output-dir", str(out)]
+    try:
+        st.cache_data.clear()
+        at = AppTest.from_file(str(DASHBOARD), default_timeout=120)
+        at.run()
+    finally:
+        sys.argv = saved
+
+    assert not at.exception, [f"{e.type}: {e.message}" for e in at.exception]
+    shown = " ".join(c.value for c in at.caption)
+    assert "20260831-153018" in shown, f"최신을 안 골랐다: {shown[:120]}"
+    assert "다른 실행 2건" in shown, "몇 건이 더 있는지 알려줘야 한다"
