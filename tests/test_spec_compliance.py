@@ -346,3 +346,68 @@ def test_dashboard_deps_are_not_in_the_main_requirements():
             f"{banned} 이 requirements.txt 에 있다. "
             "requirements-dashboard.txt 로 옮길 것.")
     assert (ROOT / "requirements-dashboard.txt").exists()
+
+
+# ---------------------------------------------------------------------------
+# process_flow.md 가 코드보다 앞서 나가지 않도록
+# ---------------------------------------------------------------------------
+
+def test_process_flow_case_names_match_the_taxonomy():
+    """문서가 든 case 이름이 실제와 달라지면 읽는 사람이 잘못 배운다."""
+    import re
+
+    from ragdiag import taxonomy as tx
+
+    doc = (ROOT / "process_flow.md").read_text(encoding="utf-8")
+    unknown = [c for c in set(re.findall(r"case(\d+)", doc)) if not tx.get(f"case{c}")]
+    assert not unknown, f"없는 케이스를 참조한다: {sorted(unknown)}"
+
+    wrong = []
+    for m in re.finditer(r"case(\d+)\s+([가-힣][^\n|→]{2,25}?)(?=\s*$|\s*\||\n)", doc):
+        case = tx.get(f"case{m.group(1)}")
+        name = m.group(2).strip()
+        if case and name != case.name and case.name not in name:
+            wrong.append(f"case{m.group(1)}: 문서 '{name}' vs 실제 '{case.name}'")
+    assert not wrong, "\n".join(wrong)
+
+
+def test_steps_withhold_what_the_document_claims():
+    """문서의 핵심 주장은 '단계마다 무엇을 일부러 안 준다'는 것이다.
+
+    프롬프트 조립이 바뀌어 그게 새어 들어가면 문서가 거짓이 되고, 더 나쁘게는
+    판정이 조용히 다른 것을 재기 시작한다.
+    """
+    from ragdiag import prompts
+    from ragdiag.schema import Case, Observation
+
+    case = Case(
+        case_id="x", user_id="u", dept="인사팀", job_grade="사원", job_name="인사",
+        position_name="", conversation_id="C", turn=4,
+        pre_queries=["연차 이월 예외 조건"],
+        llm_ans_on_last_q="사규에 따라 운영됩니다.",
+        current_query="예외 조건을 물었는데요.",
+        rag_chunks=["연차는 반차 단위로도 사용할 수 있다."])
+    obs = Observation(
+        reasoning="r", resolved_question="연차 이월 예외 조건", unmet_need="예외 조건",
+        complaint_target="content_missing", question_domain="domain",
+        question_self_contained=True, question_multi_intent=False, answer_refused=False,
+        question_answerable_as_asked=True, answer_covers_all_intents=False,
+        answer_actionable=False, answer_used_history="used",
+        requests_unsupported_output=False, requested_language="none",
+        requested_length_kind="none", requested_length_value=0, requested_format="none")
+
+    withheld = {
+        "Step 1 관측": (prompts.observe_user_message(case),
+                      {"문서": case.rag_chunks[0], "부서": case.dept}),
+        "Step 2 충족도": (prompts.sufficiency_user_message(case, obs),
+                       {"챗봇 답변": case.llm_ans_on_last_q,
+                        "불만 원문": case.current_query}),
+        "Step 3 근거활용": (prompts.grounding_user_message(case),
+                        {"질문": obs.resolved_question,
+                         "불만 원문": case.current_query}),
+    }
+    leaks = [f"{step}: {what}" for step, (msg, banned) in withheld.items()
+             for what, value in banned.items() if value in msg]
+    assert not leaks, (
+        "단계에 주지 않기로 한 정보가 프롬프트에 들어갔다:\n"
+        + "\n".join(f"  {l}" for l in leaks))
