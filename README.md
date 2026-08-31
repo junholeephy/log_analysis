@@ -168,6 +168,56 @@ status    : PARTIAL
 계약 위반 줄은 **그대로 옮겨 적어** `docs/insights/` 에 넣는다. 그게 포맷이
 이쪽으로 돌아오는 유일한 경로다.
 
+### 무엇을 가져가나 — 경계는 `Case` 다
+
+```
+  로그 → 필터 → Case → 판정 → 출력 JSON
+         └ 그쪽 것 ┘   └──── 가져갈 것 ────┘
+```
+
+로그를 읽고 필터를 거는 부분은 사내 머신에 이미 있다. 이 저장소의 `conv.py` ·
+`filters.py` 는 여기서 검증할 때만 쓴다. **`Case` 를 만들어 넣을 수만 있으면**
+나머지는 그대로 돈다.
+
+<!-- copy-list -->
+```
+src/ragdiag/settings.py    배포마다 바뀌는 값 — 여기부터 열 것
+src/ragdiag/schema.py      Case + Step 1·2·3 출력 (Pydantic, 필드 순서에 의미 있음)
+src/ragdiag/taxonomy.py    case 29개 메타데이터와 설명
+src/ragdiag/prompts.py     판정 프롬프트 (단계별로 뺄 정보가 여기에 명시됨)
+src/ragdiag/backends.py    로컬 LLM / Claude Code CLI / Anthropic API
+src/ragdiag/judge.py       LLM 호출, 디스크 캐시, 케이스 단위 병렬
+src/ragdiag/decide.py      구 진리표 (judge 가 참조)
+src/ragdiag/verify.py      인용 대조 (사전지식 오염 차단)
+src/ragdiag/checks.py      코드 검증기 — 언어·길이·포맷·잘림·PII·인용·문법·계산·인젝션·서비스오류
+src/ragdiag/route.py       라우팅 진리표 — 관측+검증 → case
+src/ragdiag/classify.py    Step 1·2·3 오케스트레이션
+src/ragdiag/output.py      pre_data_format 형태 출력
+src/ragdiag/pipeline.py    단계별 함수
+```
+<!-- /copy-list -->
+
+이 목록은 `tests/test_boundary.py` 가 **실제로 import 해서** 확인한다. 코어 모듈
+하나가 입력 계층을 끌어오면 테스트가 깨진다. 문서로만 적어두면 누가 import 하나를
+추가하는 순간 조용히 무너지고, 알아채는 건 사내 머신에서 `ImportError` 가 났을
+때다.
+
+#### 붙이는 법
+
+```python
+from ragdiag.backends import backend_from_env
+from ragdiag.pipeline import build_outcome, judge_cases, make_judge
+from ragdiag.schema import Case
+
+cases = [Case(...) for turn in 그쪽_필터_결과]   # 여기만 새로 쓰면 된다
+judge = make_judge(backend_from_env())
+results = judge_cases(cases, judge, workers=4)
+build_outcome(owners, results).save("conv_parsed.json")
+```
+
+`owners` 는 결과를 되돌릴 대화 객체다. `conversation_id` 와 `user` 두 속성만
+읽으므로 그쪽 파서가 만든 객체를 그대로 넣어도 된다.
+
 ## 실행에 필요한 것
 
 ```bash
@@ -639,58 +689,6 @@ python3 -m venv venv && ./venv/bin/pip install -r requirements.txt
 로딩 단계에 둔 이유는 원본 식별자가 어떤 산출물에도 들어가지 않게 하기 위해서다.
 해시는 salt 없는 결정적 값이라 그룹핑은 그대로 되고 필요하면 역조회도 가능하다.
 집계는 부서·직급 단위로만 낸다 — "누가 못 쓰는가"가 아니라 "어디가 안 되는가"를 보는 도구다.
-
-## 사내 머신으로 무엇을 가져가나
-
-경계는 **`Case`** 다.
-
-```
-  로그 → 필터 → Case → 판정 → 출력 JSON
-         └ 그쪽 것 ┘   └──── 가져갈 것 ────┘
-```
-
-로그를 읽고 필터를 거는 부분은 사내 머신에 이미 있다. 이 저장소의 `conv.py` ·
-`filters.py` 는 여기서 검증할 때만 쓴다. **`Case` 를 만들어 넣을 수만 있으면**
-나머지는 그대로 돈다.
-
-<!-- copy-list -->
-```
-src/ragdiag/settings.py    배포마다 바뀌는 값 — 여기부터 열 것
-src/ragdiag/schema.py      Case + Step 1/2 출력 (Pydantic, 필드 순서에 의미 있음)
-src/ragdiag/taxonomy.py    case 29개 메타데이터와 설명
-src/ragdiag/prompts.py     판정 프롬프트 (단계별로 뺄 정보가 여기에 명시됨)
-src/ragdiag/backends.py    로컬 LLM / Claude Code CLI / Anthropic API
-src/ragdiag/judge.py       LLM 호출, 디스크 캐시, 케이스 단위 병렬
-src/ragdiag/decide.py      구 진리표 (judge 가 참조)
-src/ragdiag/verify.py      인용 대조 (사전지식 오염 차단)
-src/ragdiag/checks.py      코드 검증기 — 언어·길이·포맷·잘림·PII·인용·문법·계산·인젝션·서비스오류
-src/ragdiag/route.py       Step 3 진리표 — 관측+검증 → case
-src/ragdiag/classify.py    3단계 오케스트레이션
-src/ragdiag/output.py      pre_data_format 형태 출력
-src/ragdiag/pipeline.py    단계별 함수
-```
-<!-- /copy-list -->
-
-이 목록은 `tests/test_boundary.py` 가 **실제로 import 해서** 확인한다. 코어 모듈
-하나가 입력 계층을 끌어오면 테스트가 깨진다. 문서로만 적어두면 누가 import 하나를
-추가하는 순간 조용히 무너지고, 알아채는 건 사내 머신에서 `ImportError` 가 났을
-때다.
-
-### 붙이는 법
-
-```python
-from ragdiag.backends import backend_from_env
-from ragdiag.pipeline import build_outcome, judge_cases, make_judge
-from ragdiag.schema import Case
-
-cases = [Case(...) for turn in 그쪽_필터_결과]   # 여기만 새로 쓰면 된다
-judge = make_judge(backend_from_env())
-results = judge_cases(cases, judge, workers=4)
-build_outcome(owners, results).save("conv_parsed.json")
-```
-
-`owners` 는 결과를 되돌릴 대화 객체다. `conversation_id` 와 `user` 두 속성만
-읽으므로 그쪽 파서가 만든 객체를 그대로 넣어도 된다.
 
 ## 대시보드
 
