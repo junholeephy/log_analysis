@@ -618,10 +618,13 @@ def test_process_flow_input_tables_name_real_fields():
     doc = (ROOT / "process_flow.md").read_text(encoding="utf-8")
     unknown = []
     for step in ["## ⑤", "## ⑦", "## ⑨"]:
-        table = doc.split(step)[1].split("**출력**")[0]
+        # "주는 것 / 안 주는 것" 표만 본다. 같은 절의 다른 표(question_domain 의
+        # 값 목록 같은 것)는 필드명이 아니라 값이라 섞어 읽으면 오탐이 난다.
+        section = doc.split(step)[1].split("**출력**")[0]
+        assert "| 주는 것 | 안 주는 것 |" in section, f"{step} 에 입력 표가 없다"
+        table = section.split("| 주는 것 | 안 주는 것 |")[1].split("\n\n")[0]
         rows = [l for l in table.splitlines() if l.startswith("|") and "---" not in l]
-        assert len(rows) > 2, f"{step} 에 입력 표가 없다"
-        cells = [c for row in rows[1:] for c in row.split("|")[1:-1]]
+        cells = [c for row in rows for c in row.split("|")[1:-1]]
         assert any("`" in c for c in cells), f"{step} 입력 표에 필드명이 하나도 없다"
         for name in re.findall(r"`(\w+(?:\[-?\d\])?\*?)`", " ".join(cells)):
             if name not in known and not name.endswith("*"):
