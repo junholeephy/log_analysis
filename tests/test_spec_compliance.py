@@ -362,11 +362,14 @@ def test_process_flow_case_names_match_the_taxonomy():
     unknown = [c for c in set(re.findall(r"case(\d+)", doc)) if not tx.get(f"case{c}")]
     assert not unknown, f"없는 케이스를 참조한다: {sorted(unknown)}"
 
+    # 괄호 표기 caseN(이름) 만 본다. 산문의 `case6 이 …` 처럼 뒤에 조사가 붙는 것을
+    # 이름으로 읽으면 오탐이 난다. 표는 아래 test_process_flow_output_table_... 이
+    # 이름·신뢰도까지 엄밀히 대조한다.
     wrong = []
-    for m in re.finditer(r"case(\d+)\s+([가-힣][^\n|→]{2,25}?)(?=\s*$|\s*\||\n)", doc):
+    for m in re.finditer(r"case(\d+)\(([^)]{2,30})\)", doc):
         case = tx.get(f"case{m.group(1)}")
         name = m.group(2).strip()
-        if case and name != case.name and case.name not in name:
+        if case and case.name not in name and name not in case.name:
             wrong.append(f"case{m.group(1)}: 문서 '{name}' vs 실제 '{case.name}'")
     assert not wrong, "\n".join(wrong)
 
