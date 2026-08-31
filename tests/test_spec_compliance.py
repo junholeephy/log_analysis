@@ -416,13 +416,29 @@ def test_steps_withhold_what_the_document_claims():
         + "\n".join(f"  {l}" for l in leaks))
 
 
-def test_process_flow_output_table_matches_the_code():
-    """문서의 case 표(이름·신뢰도·도달 가능 목록)가 코드와 같아야 한다.
+def _flow_tables():
+    """process_flow.md 의 case 표를 섹션별로 나눠 읽는다.
 
-    출력 목록은 읽는 사람이 "이 파이프라인이 뭘 낼 수 있나"를 판단하는 근거다.
-    빠지거나 틀리면 없는 라벨을 찾거나 있는 라벨을 놓친다.
+    서두의 개요표(29개 전부)와 ⑩의 출력표(라우팅이 실제로 내는 25개)는 모양이
+    같아서 한꺼번에 읽으면 서로를 오염시킨다. 재는 것이 다르므로 갈라 본다.
     """
     import re
+
+    doc = (ROOT / "process_flow.md").read_text(encoding="utf-8")
+    row = re.compile(r"\|\s*(✗?)\s*\| `(case\d+)` \| ([^|]+?) \| (?:\*\*)?(high|medium|low)(?:\*\*)? \|")
+    overview = doc.split("## 전체 그림")[0]
+    routing = doc.split("**출력** — case 25개")[1]
+    return ([m.groups() for m in row.finditer(overview)],
+            [m.groups() for m in
+             re.finditer(r"\| `(case\d+)` \| ([^|]+?) \| (?:\*\*)?(high|medium|low)(?:\*\*)? \|",
+                         routing)])
+
+
+def test_process_flow_overview_lists_every_case():
+    """서두 개요표는 29개 전부를 담고, 도달 못 하는 것에 ✗ 를 붙인다.
+
+    빠진 case 가 있으면 읽는 사람은 그게 없는 줄 안다.
+    """
     import sys
 
     sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -430,21 +446,38 @@ def test_process_flow_output_table_matches_the_code():
 
     from ragdiag import taxonomy as tx
 
-    doc = (ROOT / "process_flow.md").read_text(encoding="utf-8")
-    rows = re.findall(r"\| `(case\d+)` \| ([^|]+?) \| (?:\*\*)?(high|medium|low)(?:\*\*)? \|",
-                      doc)
-    assert rows, "process_flow.md 에 case 출력 표가 없다"
+    rows, _ = _flow_tables()
+    assert len(rows) == len(tx.CASES), (
+        f"개요표 {len(rows)}개 vs taxonomy {len(tx.CASES)}개")
 
+    unreachable = set(tx.CASES) - reachable_cases()
     wrong = []
-    for cid, name, conf in rows:
+    for mark, cid, name, conf in rows:
         case = tx.get(cid)
         if case is None:
-            wrong.append(f"{cid}: 없는 케이스")
-        else:
-            if case.name != name.strip():
-                wrong.append(f"{cid} 이름: 문서 '{name.strip()}' vs 실제 '{case.name}'")
-            if case.confidence != conf:
-                wrong.append(f"{cid} 신뢰도: 문서 '{conf}' vs 실제 '{case.confidence}'")
+            wrong.append(f"{cid}: 없는 케이스"); continue
+        if case.name != name.strip():
+            wrong.append(f"{cid} 이름: '{name.strip()}' vs '{case.name}'")
+        if case.confidence != conf:
+            wrong.append(f"{cid} 신뢰도: '{conf}' vs '{case.confidence}'")
+        if bool(mark) != (cid in unreachable):
+            wrong.append(f"{cid}: ✗ 표시가 라우팅 도달 여부와 어긋난다")
+    assert not wrong, "\n".join(wrong)
+
+
+def test_process_flow_routing_table_matches_the_code():
+    """⑩ 의 출력표는 라우팅이 **실제로 내는** case 만 담는다."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_route import reachable_cases
+
+    from ragdiag import taxonomy as tx
+
+    _, rows = _flow_tables()
+    wrong = [f"{cid}: '{name.strip()}' vs '{tx.get(cid).name}'"
+             for cid, name, _ in rows
+             if tx.get(cid) and tx.get(cid).name != name.strip()]
     assert not wrong, "\n".join(wrong)
 
     listed, actual = {r[0] for r in rows}, reachable_cases()

@@ -277,7 +277,7 @@ answer_refused           False
 문서를 주지 않은 덕에 `unmet_need` 가 "3만원"이 아니라 사용자가 원한 것으로 나왔다.
 문서를 봤다면 거기 있는 내용 쪽으로 끌려갔을 것이다.
 
-### Step 2 · 검증
+### Step 2 · 충족도 판정 (+ 코드 검증기)
 
 코드 검증(LLM 0회)은 요구가 없던 항목이 `not_applicable` 이라 출력에 실리지 않는다.
 실린 것은 항상 도는 둘뿐이다.
@@ -310,7 +310,7 @@ answer_used_rag   ignored
 
 이 시점엔 충족도가 이미 확정돼 있어 오염될 수 없다.
 
-### Step 4 · 라우팅 — 코드, LLM 0회
+### 라우팅 — 코드, LLM 0회
 
 ```
 complaint_target=content_missing   -> 내용 불만
@@ -371,9 +371,12 @@ case22  Retrieve 성공, 생성 실패    (TYPE5 / category_2, 신뢰도 medium)
 
 | 단계 | 주는 것 | **빼는 것** | 왜 |
 |---|---|---|---|
-| 1. 정보 요구 추출 | 질문 히스토리, 답변, 불만 | **`rag_data`** | 문서를 같이 주면 모델이 "사용자가 원한 것"을 문서에 있는 내용 쪽으로 끌어당긴다(anchoring). 요구와 문서가 저절로 일치해 보여서 sufficiency가 항상 후해진다 |
-| 2. 충족도 판정 | 정리된 질문, 미충족 요구, 청크 | **챗봇 답변** | 답변을 보여주면 판정자가 답변을 문서의 대리물로 착각한다 — "답변이 이렇게 말했으니 문서에 있었겠지" |
-| 3. 근거 활용 확인 | 답변, 청크 | — | 2가 sufficient일 때만 실행 |
+| Step 1 관측 추출 | 질문 히스토리, 답변, 불만 | **`rag_data`** | 문서를 같이 주면 모델이 "사용자가 원한 것"을 문서에 있는 내용 쪽으로 끌어당긴다(anchoring). 요구와 문서가 저절로 일치해 보여서 sufficiency가 항상 후해진다 |
+| Step 2 충족도 판정 | 정리된 질문, 미충족 요구, 청크 | **챗봇 답변** | 답변을 보여주면 판정자가 답변을 문서의 대리물로 착각한다 — "답변이 이렇게 말했으니 문서에 있었겠지" |
+| Step 3 근거 활용 | 답변, 청크 | **질문 · 불만** | 질문을 주면 "질문에 잘 답했나"라는 다른 판단이 섞인다. 그건 Step 2 가 이미 봤고, 여기서 또 보면 같은 방향으로 쏠린 두 번째 표가 된다 |
+| 라우팅 | 관측 + 검증 전부 | **LLM 자체** | 결론을 먼저 정하고 사실을 끼워 맞추는 것을 막는다 |
+
+단계별 상세는 **[처리 흐름](process_flow.md)** 에 목적·입력·출력으로 정리돼 있다.
 
 ### 인용 강제가 knowledge leakage를 막는다
 
@@ -388,45 +391,50 @@ leakage가 일어나면 **검색 실패가 '근거 미활용'으로 오분류되
 ### 라벨은 LLM이 아니라 코드가 결정한다
 
 한 번의 호출로 원인까지 물으면 모델이 원인을 먼저 직감하고 판정값을 거기에 역으로
-맞춘다(합리화). 판정값만 받아서 `decide.py`의 진리표가 조합하면 그 경로가 막히고,
-라벨 체계를 바꿀 때 LLM을 다시 돌리지 않아도 되며, "왜 이 라벨이 붙었나"에 항상 답할 수 있다.
+맞춘다(합리화). 관측값만 받아서 `route.py`의 진리표가 조합하면 그 경로가 막히고,
+taxonomy 를 바꿀 때 LLM을 다시 돌리지 않아도 되며, "왜 이 라벨이 붙었나"에 항상 답할 수 있다.
 
-| complaint_type | verdict | used_rag | 라벨 | 고칠 곳 |
+도메인 질문의 내용 불만이 갈리는 지점만 추리면 이렇다. 전체 순서는
+[처리 흐름](process_flow.md) 의 ⑩에 있다.
+
+| 청크 | verdict | used_rag | case | 고칠 곳 |
 |---|---|---|---|---|
-| format_or_style | — | — | `out_of_scope` | 없음 (rag 무관) |
-| other | — | — | `unclassified` | 수동 검토 |
-| content | insufficient | — | **`rag_insufficient`** | **코퍼스 / 검색** |
-| content | partial | — | `rag_partial` | 코퍼스 보강 |
-| content | sufficient | ignored / contradicted | `rag_sufficient_generation_failed` | 생성 프롬프트 |
-| content | sufficient | used | `rag_sufficient_other` | 깊이 / 표현 |
+| 빈 리스트 | — | — | **`case21`** 검색 미수행 | **검색 트리거** |
+| 있음 | insufficient / partial | — | **`case20`** Retrieve 실패 | **코퍼스 / 검색기** |
+| 있음 | sufficient | ignored | **`case22`** Retrieve 성공, 생성 실패 | **생성 프롬프트** |
+| 있음 | sufficient | contradicted | `case18` 문서와 어긋나는 주장 | 생성 프롬프트 |
+| 있음 | sufficient | used | `case17` / `case13` | 답변의 구체성 · 의도 이해 |
 
 ## 알려진 한계
 
-- **`rag_data`만으로는 '검색 실패'와 '코퍼스에 애초에 문서 없음'을 구분할 수 없다.**
+- **`rag_data`만으로는 '검색기가 못 찾음'과 '코퍼스에 애초에 문서 없음'을 구분할 수 없다.**
   가져온 top-k에 답이 없다는 사실은 코퍼스 어딘가에 답이 있는지에 대해 아무것도 말해주지
-  않는다. 그래서 두 라벨을 `rag_insufficient` 하나로 합쳤다. 구분 못 하는 걸 구분한 척하는
-  라벨이 제일 나쁘다. **라벨 x 부서 교차표가 이 구분을 간접적으로 되살리는 유일한 신호다** —
-  특정 부서에 몰려 있으면 그 도메인 문서가 비어 있다는 뜻이다.
-  나중에 코퍼스에 접근할 수 있게 되면 재검색으로 두 라벨을 쪼갤 수 있다.
-- `rag_sufficient_other`는 잔여 범주라 경계가 흐리다. 집계에서 이게 크면 라벨을 쪼갤 때다.
-- `turns`에 불만 턴만 들어있다고 가정한다. 전체 턴이 들어오면 불만 탐지 단계가 앞에 필요하다.
+  않는다. 그래서 둘을 `case20` 하나로 둔다. 구분 못 하는 걸 구분한 척하는 라벨이 제일 나쁘다.
+  **case × 부서 교차표가 이 구분을 간접적으로 되살리는 유일한 신호다** — 특정 부서에
+  몰려 있으면 그 도메인 문서가 비어 있다는 뜻이다. 코퍼스에 접근할 수 있게 되면
+  재검색으로 쪼갤 수 있다. (검색을 **아예 안 탄** 경우는 `case21` 로 갈린다 — 빈 리스트는
+  로그에 적힌 사실이라 판정이 아니다.)
+- `case13`(의도와 다른 답변)과 `case17`(실행할 수 없는 수준)은 잔여 범주라 경계가 흐리다.
+  집계에서 이게 크면 라벨을 쪼갤 때다.
+- **전체 대화가 들어온다고 가정한다.** 불만 턴만 골라 넣으면 직전 턴(비판받은 답변)이
+  없어 짝짓기가 성립하지 않는다. 필터가 2턴 이상인 대화에서 후속 턴을 찾는다.
 - **`rag_data`는 청크를 `\n\n`(또는 `\n`)으로 이어붙인 통문자열이라 청크 경계를 복원해야 한다.**
   빈 줄을 먼저 시도하고 그걸로 안 쪼개질 때만 단일 개행으로 내려간다 — 청크 내부에도 개행이
   있을 수 있어서 순서가 반대면 한 청크가 여러 조각으로 찢어진다. 청크가 단일 개행으로
   이어붙여져 있고 내부에도 개행이 있으면 경계는 원리적으로 복원 불가능하다.
   다만 인용 검증이 전 청크를 훑기 때문에 잘못 쪼개진 경계는 `index_corrected`로 흡수되고,
-  sufficiency 판정 자체는 영향을 받지 않는다. 리포트 `[4] 판정 건강 지표`의
-  "청크 1개 이하인 케이스"가 이 실패를 드러낸다.
+  sufficiency 판정 자체는 영향을 받지 않는다. 대시보드의 **판정 건강** 지표와
+  결과 파일의 `n_chunks` 가 이 실패를 드러낸다.
 
 ## 합성 데이터의 위치
 
-`fixtures/synthetic.py`는 **정확도 측정용이 아니라 회귀 테스트용**이다.
+`src/ragdiag/fixtures/synthetic.py` 는 **정확도 측정용이 아니라 회귀 테스트용**이다.
 
 1. 데이터와 판정 프롬프트를 같은 사람이 만들면 편향을 공유한다. 여기서 나온 일치율은 실전보다 후하다.
 2. 합성 문서는 지어낸 사내 규정이라 판정자가 사전지식으로 알 리가 없다. `leakage_probe`
    케이스(상식으로 답 가능한 질문 + 그 답이 없는 문서)가 그 틈을 일부 메우지만 완전히는 못 메운다.
 
-**이 셋은 이제 독립적인 측정 도구가 아니다.** 판정 실패를 보고 프롬프트를 네 차례 고치는 데
+**이 셋은 이제 독립적인 측정 도구가 아니다.** 판정 실패를 보고 프롬프트를 여섯 차례 고치는 데
 사용됐기 때문이다. 현재 23/23이 나오지만 이건 "알려진 회귀가 없다"는 뜻이지 정확도가 100%라는
 뜻이 아니다. 프롬프트를 이 셋의 실패에 맞춰 조정한 이상, 같은 셋으로 잰 점수는 과대평가다.
 
@@ -458,14 +466,17 @@ leakage가 일어나면 **검색 실패가 '근거 미활용'으로 오분류되
 | `partial`/`insufficient` 정의 중복 | 두 설명이 같은 상황을 서술 | "이 인용이 요구의 **어느 부분에 답하는가**" 시험 |
 | `unmet_need` 부풀리기 | 답이 있는 문서를 partial 로 깎음 | "사용자가 요구한 범위를 넘지 마라" |
 | `context_dependent` 과탐 | 23건 중 15건이 찍힘 | 대상 명사 유무로 판별, "확신 없으면 false" |
-| 안전 지표 사각지대 | `rag_partial` 과소평가를 놓침 | 두 라벨을 같은 방향으로 집계 |
+| 안전 지표 사각지대 | `partial` 과소평가를 놓침 (당시 구 라벨 `rag_partial`) | 두 verdict 를 같은 방향으로 집계 |
 | **`case14` 가 도메인 분기를 가로챔** | **회귀셋 6건이 샘** | 부가 케이스로 강등 |
 | **`answer_refused` 가 회피를 거절로 읽음** | **case22 탐지가 무너짐** | 정책·권한·보안으로 좁힘 |
 | **빈 `rag_data` 를 '검색 실패'와 합쳐 셈** | **검색 트리거 문제가 임베딩 문제로 보임** | 빈 리스트를 case21 로 분리, 충족도 LLM 생략 |
 | **`answer_refused` 가 서비스 장애 문구를 거절로 읽음** | **인프라 장애가 case28(보안 정책)로 집계** | 확정 문구를 코드로 대조해 LLM 이전에 단락 (case9) |
 
-마지막 두 개는 같은 구조다 — **약한 증거가 강한 증거를 가로챘다.** 답변이 나쁘면
+굵게 표시한 넷은 같은 구조다 — **약한 증거가 강한 증거를 가로챘다.** 답변이 나쁘면
 여러 관측이 동시에 켜지므로, 라우팅 순서는 발견 순서가 아니라 **증거의 강도 순서**여야 한다.
+`case14`(LLM 의 인상)가 `case20`·`case22`(인용으로 검증된 문서 증거)를 가로챈 것,
+회피성 안내가 거절로 읽혀 `case22` 를 삼킨 것, 서비스 장애 문구가 거절로 읽힌 것이
+전부 같은 모양이다.
 
 반복된 교훈: **프롬프트에 지시를 넣을 때는 반대 방향 제약을 같이 넣어야 한다.**
 "구체적으로 써라"는 요구 부풀리기를, "애매하면 넓게 잡아라"는 과탐을 낳았다.
@@ -588,25 +599,39 @@ CLI 경로에는 서버측 스키마 강제가 없으므로 `prompts.output_cont
 
 프롬프트 전문은 `python scripts/legacy_run.py --show-prompts`로 예시 입력과 함께 볼 수 있다.
 
-## 사용법
+## 이 장비에서 개발할 때
 
 ```bash
 python3 -m venv venv && ./venv/bin/pip install -r requirements.txt
+./venv/bin/pip install -r requirements-dashboard.txt      # 대시보드를 볼 때만
 
-./venv/bin/python -m pytest tests/ -q          # API 없이 도는 부분 검증
-./venv/bin/python scripts/legacy_run.py --show-prompts        # 파이프라인 전체 프롬프트
-./venv/bin/python scripts/legacy_run.py --trace C-4002:3     # 케이스 하나의 실제 통과 경로
-./venv/bin/python scripts/legacy_run.py --synthetic           # 합성 데이터 회귀 검증 (23건)
-./venv/bin/python scripts/legacy_run.py --input data/logs.json --limit 20   # 실데이터, 비용 확인용
-./venv/bin/python scripts/legacy_run.py --input data/logs.json --workers 12
+./venv/bin/python -m pytest tests/ -q            # LLM 없이 도는 전부
+./venv/bin/python src/run.py --dry-run           # 합성 데이터로 끝까지
+./venv/bin/python src/run.py --golden            # 3단계 판정 품질
+./venv/bin/python src/run.py --legacy-regression # 회귀 기준선 23건
 ```
 
-케이스당 LLM 호출은 평균 2회 내외다 (형식 불만이면 1회, sufficient일 때만 3회).
-판정 결과는 `.cache/`에 저장되어 재실행 시 재사용된다 — 리포트 코드를 고칠 때마다
-판정을 다시 살 필요가 없다.
+판정 결과는 `.cache/` 에 저장되어 재실행 시 재사용된다 — 리포트나 라우팅을 고칠 때마다
+판정을 다시 살 필요가 없다. 관측이 그대로면 taxonomy 를 바꿔도 LLM 을 안 부른다.
 
-주요 옵션: `--effort {low,medium,high,xhigh,max}`, `--no-cache`,
-`--no-fallbacks`(refusal 서버측 폴백 beta가 조직에 미활성인 경우).
+케이스당 LLM 호출은 평균 2회 내외다 (형식 불만이면 1회, `sufficient` 일 때만 3회,
+서비스 오류 문구면 0회).
+
+### 구 파이프라인 (회귀 기준선)
+
+```bash
+./venv/bin/python scripts/legacy_run.py --check-llm     # 서버 규약 확정
+./venv/bin/python scripts/legacy_run.py --show-prompts  # 프롬프트 전문
+./venv/bin/python scripts/legacy_run.py --trace C-4002:3  # 케이스 하나의 통과 경로
+./venv/bin/python scripts/legacy_run.py --inspect --conv data/conv_eval.json  # 데이터 실태
+```
+
+`--show-prompts` 가 보여주는 것은 **구 파이프라인의 Stage 1(정보 요구 추출)** 이다.
+현행 Step 1(관측 추출)은 `OBSERVE_SYSTEM` 이고 필드가 더 많다. 충족도·근거 활용
+프롬프트는 둘이 공유하므로 그 둘은 그대로 읽어도 된다.
+
+분류 자체는 `src/run.py` 로 한다. 단계별로 무엇을 주고 무엇을 감추는지는
+**[처리 흐름](process_flow.md)** 에 있다.
 
 ## 개인정보
 
@@ -697,28 +722,38 @@ streamlit 이 스크립트를 브라우저 접속 시에 실행하고 예외를 
 ## 구조
 
 ```
-src/ragdiag/__main__.py    본 진입점 — 분류 · --golden · --legacy-regression
-run.py           구 파이프라인 (회귀 기준선) · --inspect · --check-llm
+src/
+  run.py           본 진입점 — 분류 · --golden · --legacy-regression
+  dashboard.py     대시보드 (streamlit 이 실행)
+  ragdiag/         (반입 목록은 위 참고)
+    settings.py    배포마다 바뀌는 값을 한 곳에
+    config.py      YAML 설정 읽기 · 시작 즉시 검증
+    contracts.py   입력 계약 — 사내에서 회수한 포맷이 도착하는 지점
+    pipeline.py    단계별 함수 — 노트북·다른 스크립트에서 부를 수 있게
+    summary.py     RUN SUMMARY
 
-src/ragdiag/         (반입 목록은 위 참고)
-  settings.py    배포마다 바뀌는 값을 한 곳에
-  pipeline.py    단계별 함수 — 노트북·다른 스크립트에서 부를 수 있게
+    ── 여기 전용 (사내 머신에는 그쪽 구현이 있다) ──
+    conv.py        conv_eval 파싱, 턴 짝짓기 (N+1 불만 ↔ N 답변·문서)
+    filters.py     필터 적용, 점수 재계산, 단계별 탈락 기록
+    labels.py      llm_eval / llm_emotion 라벨 테이블과 점수
+    load.py        구 포맷 로더 (회귀셋용)
+    org.py         조직 분류 대분류/중분류/소분류 (대시보드용)
+    survey.py      데이터 실태 조사
+    golden.py      골든셋 채점 (관측 · 판정)
+    report.py      구 리포트 (회귀 기준선용)
 
-  ── 여기 전용 (사내 머신에는 그쪽 구현이 있다) ──
-  conv.py        conv_eval 파싱, 턴 짝짓기 (N+1 불만 ↔ N 답변·문서)
-  filters.py     필터 적용, 점수 재계산, 단계별 탈락 기록
-  labels.py      llm_eval / llm_emotion 라벨 테이블과 점수
-  load.py        구 포맷 로더 (회귀셋용)
-  org.py         조직 분류 대분류/중분류/소분류 (대시보드용)
-  survey.py      데이터 실태 조사 (--inspect)
-  golden.py      골든셋 채점 (관측 · 판정)
-  report.py      구 리포트 (회귀 기준선용)
+    fixtures/
+      synth.py         generate(n, seed) — 가짜 데이터는 파일이 아니라 코드
+      observations.py  Step 1 관측 골든셋 44건 (필드별 양성·음성)
+      judgments.py     Step 2·3 판정 골든셋 18건 (충족도 10 · 근거 활용 8)
+      synthetic.py     구 회귀셋 23건 + 구→신 case 매핑
 
-fixtures/
-  observations.py  Step 1 관측 골든셋 44건 (필드별 양성·음성)
-  judgments.py     Step 2·3 판정 골든셋 18건 (충족도 10 · 근거 활용 8)
-  synthetic.py     구 회귀셋 23건 + 구→신 case 매핑
-  pseudo.py        대시보드 데모용 유사 데이터
+scripts/
+  sync.sh          이식 (규격 부록 A 전문 + 안내 문구만 갈라짐)
+  legacy_run.py    구 파이프라인 (회귀 기준선)
+
+configs/example.yaml   모든 설정 키
+docs/insights/         사내에서 본 것을 적어 오는 자리
 ```
 
 `load.py` · `decide.py` · `report.py` 는 구 파이프라인 전용이다. 새 코드에서 쓰지 말 것 —
