@@ -722,3 +722,45 @@ def test_process_flow_states_when_sufficiency_runs():
     assert "회사마다 답이 달라지는가" in section, (
         "domain 과 general_knowledge 를 가르는 기준이 없다 — "
         "프롬프트가 그 문장으로 지시하고 있다")
+
+
+def test_process_flow_truth_table_matches_routing():
+    """문서의 TYPE5 진리표를 route.py 로 실제 돌려 대조한다.
+
+    이 분기가 이 도구의 핵심이고 값 네 개가 조합되는 유일한 곳이라, 표가
+    코드와 어긋나면 읽는 사람이 case20 과 case22 를 반대로 이해한다.
+    """
+    import re
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_route import checks, citation, ground, judgment, obs
+
+    from ragdiag.route import route
+
+    def run(n_chunks, verdict, kept, used_rag=None, actionable=True):
+        g = ground(used_rag) if used_rag else None
+        return route(obs(complaint_target="content_missing", question_domain="domain",
+                         answer_actionable=actionable),
+                     checks(), judgment(verdict),
+                     citation(kept, n_chunks=n_chunks), g).primary_case
+
+    expected = {
+        "case21": run(0, "insufficient", 0),
+        "case20": run(3, "insufficient", 0),
+        "case22": run(3, "sufficient", 1, "ignored"),
+        "case18": run(3, "sufficient", 1, "contradicted"),
+        "case17": run(3, "sufficient", 1, "used", actionable=False),
+        "case13": run(3, "sufficient", 1, "used", actionable=True),
+    }
+    wrong = [f"{want} 를 기대했으나 {got}" for want, got in expected.items() if want != got]
+    assert not wrong, "\n".join(wrong)
+
+    # 인용이 하나도 안 남으면 sufficient 여도 강등된다
+    assert run(3, "sufficient", 0) == "case20", "인용 검증 실패 강등이 안 걸린다"
+
+    doc = (ROOT / "process_flow.md").read_text(encoding="utf-8")
+    assert "### 진리표" in doc, "진리표 절이 없다"
+    table = doc.split("| `n_chunks` | `verdict` |")[1].split("\n\n")[0]
+    for cid in expected:
+        assert f"`{cid}`" in table, f"진리표에 {cid} 가 없다"
