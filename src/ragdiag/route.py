@@ -1,4 +1,4 @@
-"""Step 3 — 관측과 검증 결과를 taxonomy case 로 바꾼다. LLM 없음.
+"""라우팅 — 관측과 검증 결과를 taxonomy case 로 바꾼다. LLM 없음.
 
 case 를 LLM 에게 직접 고르게 하지 않는 이유가 셋 있다.
 

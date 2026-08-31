@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 """[회귀 기준선] RAG 충족도 진단 CLI — case20/case22 판별, 라벨 6개.
 
-현행 분석 경로는 conv_parse.py 다. 이 진입점은 검증된 기준선을 보존하고
+현행 분석 경로는 src/run.py 다. 여기서 단계를 Stage 라 부르는 것은
+구 파이프라인 고유의 이름이다 — 현행의 Step 1·2·3 과 헷갈리지 않게 그대로 둔다. 이 진입점은 검증된 기준선을 보존하고
 데이터 실태 조사(--inspect)·서버 점검(--check-llm)을 제공한다.
 
 
@@ -17,6 +18,10 @@ import json
 import os
 import sys
 from pathlib import Path
+
+# src/ 가 아니라 scripts/ 에 있어서 파이썬이 src/ 를 sys.path 에 넣어주지 않는다.
+# src/run.py 는 이 두 줄이 필요 없다 - 자기가 src/ 안에 있기 때문이다.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ragdiag import prompts
 from ragdiag.backends import (

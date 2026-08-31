@@ -1,7 +1,7 @@
 # 대화 로그 실패 분류기
 
 사내 지식 챗봇의 대화 로그에서 **사용자가 직전 답변에 불만을 표한 턴**을 골라,
-그 실패가 taxonomy 30개 케이스 중 어디에 해당하는지 분류한다.
+그 실패가 taxonomy 29개 케이스 중 어디에 해당하는지 분류한다.
 
 목적은 개별 답변을 고치는 게 아니라 **집계했을 때 어디를 고쳐야 하는지**를
 알아내는 것이다. 그래서 라벨은 증상이 아니라 **조치 주체**로 나뉜다 — 같은 증상도
@@ -10,7 +10,7 @@
 🔀 **[처리 흐름](process_flow.md)** — conv-data · filter-data 가 들어와 case 가 붙기까지,
 각 단계가 무엇을 쓰고 **무엇을 일부러 안 쓰는지**.
 
-📋 **[실패 분류 체계](TAXONOMY.md)** — 30개 케이스 중 무엇이 이 로그로 판정 가능하고
+📋 **[실패 분류 체계](TAXONOMY.md)** — 29개 케이스 중 무엇이 이 로그로 판정 가능하고
 무엇이 아닌지, 그 판단 근거.
 
 📊 **[파이프라인 흐름도](https://claude.ai/code/artifact/180f8cc5-d5fb-41e0-9084-8be60c271d5f)**
@@ -38,7 +38,7 @@
 
 | | 무엇 | 언제 |
 |---|---|---|
-| **`python -m ragdiag`** | 본 파이프라인. conv_eval 로그를 29개 case 로 분류 | 실제 분석 |
+| **`python src/run.py`** | 본 파이프라인. conv_eval 로그를 29개 case 로 분류 | 실제 분석 |
 | `scripts/legacy_run.py` | 구 파이프라인. case20/case22 판별만, 라벨 6개 | **회귀 기준선** |
 
 `legacy_run.py` 는 지우지 않는다. 이 프로젝트에서 **실제 LLM 으로 검증된 최초의
@@ -48,8 +48,8 @@
 ```bash
 python src/run.py --conv-data <로그> --filter-data <필터> --output-dir <출력>
 python src/run.py --config configs/local.yaml --dry-run   # 설정 파일로도 된다
-python -m ragdiag --golden                                # 3단계 판정 품질
-python -m ragdiag --legacy-regression                     # 회귀 기준선
+python src/run.py --golden                                # 3단계 판정 품질
+python src/run.py --legacy-regression                     # 회귀 기준선
 python -m pytest tests/ -q                                # LLM 없이 도는 전부
 ```
 
@@ -60,26 +60,29 @@ python -m pytest tests/ -q                                # LLM 없이 도는 �
 cd <사내작업폴더> && git clone <이 저장소> .staging/log_analysis
 
 # 매번. 멱등하다 — 최초든 갱신이든 같은 명령이다.
-bash .staging/log_analysis/scripts/sync.sh v0.2
+bash .staging/log_analysis/scripts/sync.sh <태그>   # 예: v0.11
 ```
 
-`sync.sh` 는 이름을 스스로 유도한다. 저장소 이름은 자기 위치에서,
-패키지 이름은 `src/` 아래에서 읽으므로 **손볼 것이 없다.** 위 명령이
-다음에 실행할 것까지 찍어 준다:
+`sync.sh` 는 이름을 스스로 유도한다. 저장소 이름은 자기 위치에서, 진입점은
+`src/run.py` 에서 찾으므로 **손볼 것이 없다.** 그리고 다음에 실행할 것까지 찍어 준다 —
+**지금 실제로 필요한 줄만** 나온다.
 
-```bash
-source <기존 venv>/bin/activate
-pip install --dry-run -r log_analysis/requirements.txt && pip check   # 충돌 먼저
-pip install -r log_analysis/requirements.txt
-
-python log_analysis/src/run.py --dry-run                     # ① 합성 스모크
-python log_analysis/src/run.py \
-    --conv-data data/conv_eval.json --limit 1000             # ② 계약 확인
-python log_analysis/src/run.py \
-    --conv-data   data/conv_eval.json \
-    --filter-data data/filter.json \
-    --output-dir  outputs                                    # ③ 전체
 ```
+next:
+  의존 설치 (최초 1회)
+    pip install --dry-run -r log_analysis/requirements.txt && pip check
+    pip install -r log_analysis/requirements.txt      # --upgrade 는 쓰지 않는다
+  python log_analysis/src/run.py --dry-run                        # ① 합성 스모크
+  python log_analysis/src/run.py --conv-data <실데이터> --limit 1000   # ② 계약 확인
+  python log_analysis/src/run.py --conv-data <실데이터> --output-dir outputs   # ③ 전체
+
+  대시보드 (선택 · 결과를 본 뒤에)
+    python -m pip install -r log_analysis/requirements-dashboard.txt
+    python -m streamlit run log_analysis/src/dashboard.py -- --result outputs/conv_parsed.json
+```
+
+두 번째 갱신부터는 `pip` 줄이 사라진다. `requirements.txt` 가 바뀌었을 때만 다시 나오고,
+그때는 `⚠ requirements.txt 가 바뀌었습니다` 가 함께 찍힌다.
 
 ①에서 실패하면 **환경 문제**고, ②에서 나오는 계약 위반이 첫 사이클의 실제
 수확이다. 계약이 깨끗해진 뒤에 ③으로 간다 — 틀린 계약 위에서 뽑은 숫자는
@@ -102,16 +105,16 @@ python log_analysis/src/run.py \
 경로를 매번 치기 싫으면 설정에 넣고 `--config configs/local.yaml` 만 준다.
 CLI 인자가 설정을 덮어쓰므로 한 번만 다르게 돌려볼 때도 섞어 쓸 수 있다.
 
-규격이 정한 형태도 그대로 된다 — `src/run.py` 는 파이썬이 스크립트 디렉터리를 `sys.path[0]` 에
-넣는 것을 쓸 뿐 로직이 없다.
+규격이 적은 `PYTHONPATH` 형태도 그대로 된다. `src/run.py` 가 하는 일이 그것뿐이라
+둘은 같은 것이다.
 
 ```bash
 PYTHONPATH=log_analysis/src python -m ragdiag --config configs/local.yaml
 ```
 
-**패키지를 venv 에 설치하지 않는다** — `PYTHONPATH` 로만 붙인다. 공용 venv 를
-오염시키지 않고 사본 통째 교체가 무연산이 된다. `--upgrade` 와
-`--force-reinstall` 은 쓰지 않는다. 남의 환경을 조용히 깨뜨리고 되돌릴 수 없다.
+**어느 쪽이든 패키지를 venv 에 설치하지 않는다.** 공용 venv 를 오염시키지 않고 사본
+통째 교체가 무연산이 된다. `--upgrade` 와 `--force-reinstall` 도 쓰지 않는다 —
+남의 환경을 조용히 깨뜨리고 되돌릴 수 없다.
 
 ### ⚠ 작업 폴더의 `.gitignore` 를 먼저 손볼 것
 
@@ -149,7 +152,8 @@ example 에만 있는 키를 경고한다(모르고 지나가면 조용히 기�
 
 ```
 ================ RUN SUMMARY =================================================
-version   : v0.2 (a1b2c3d)
+version   : v0.11 2982c80
+args      : --conv-data data/conv_eval.json --filter-data data/filter.json --ou
 input     : 12,004 users / 48,221 conversations / 210,553 turns
 contract  : 21 ok / 2 MISMATCH
   - turn.retrieved_data        : str|list 를 기대했으나 dict 가 왔다 (1,204건)
@@ -192,12 +196,15 @@ python scripts/legacy_run.py --check-llm   # 서버·모델·강제방식·1회 
 ## 3단계 분류
 
 ```
-Step 1  관측 추출     LLM 1회   ✂ rag_data 를 주지 않는다
-Step 2  조건부 검증   코드 항상 · LLM 은 도메인 질문일 때만  ✂ 충족도 판정에 답변을 주지 않는다
-Step 3  라우팅        코드      case 는 LLM 이 고르지 않는다
+Step 1  관측 추출     LLM   ✂ rag_data 를 주지 않는다
+Step 2  충족도 판정   LLM   ✂ 챗봇 답변을 주지 않는다   (도메인 질문일 때만)
+Step 3  근거 활용     LLM   ✂ 질문과 불만을 주지 않는다 (문서가 충분할 때만)
+라우팅                코드  case 는 LLM 이 고르지 않는다
+
+코드 검증기 11종은 Step 과 나란히 항상 돈다.
 ```
 
-case 를 LLM 에게 직접 고르게 하지 않는 이유가 셋이다. 30지선다는 어떤 모델이든
+case 를 LLM 에게 직접 고르게 하지 않는 이유가 셋이다. 29지선다는 어떤 모델이든
 정확도가 안 나오지만 좁은 질문 여러 개는 안정적이고, 한 호출로 case 까지 물으면
 모델이 결론을 먼저 직감하고 관측값을 거기 맞추며, taxonomy 를 고쳐도 관측값은
 그대로 재사용되어 라우팅만 다시 돌리면 된다.
@@ -205,8 +212,10 @@ case 를 LLM 에게 직접 고르게 하지 않는 이유가 셋이다. 30지선
 category 는 따로 분류하지 않는다. 각 case 는 정확히 하나의 type 에, type 은 하나의
 category 에 속하므로 case 만 정하면 나머지는 계산이다.
 
-**Step 2 의 절반 이상이 코드다** — 언어·길이·포맷·잘림·개인정보·인용 대조·문법·계산.
+**판정의 절반 이상이 코드다** — 언어·길이·포맷·잘림·개인정보·인용 대조·문법·계산.
 LLM 에 맡기면 비용도 들지만 무엇보다 같은 입력에 다른 답이 나온다.
+
+단계별로 무엇을 주고 무엇을 감추는지는 **[처리 흐름](process_flow.md)** 에 자세히 있다.
 
 ## 한 건을 끝까지 따라가기
 
@@ -435,7 +444,7 @@ leakage가 일어나면 **검색 실패가 '근거 미활용'으로 오분류되
 | 관측 골든셋 44건 (`--golden`) | Step 1 관측 **하나하나**의 정확도 | 72/72 |
 | 판정 골든셋 18건 (`--golden`) | Step 2·3 의 verdict·인용 위치 정확도 | 22/22 |
 | 구 회귀셋 23건 (`--legacy-regression`) | 관측이 조합되어 case 로 가는 **경로** | 23/23 |
-| 단위 테스트 (`pytest`) | LLM 없이 도는 전부 | 304개 |
+| 단위 테스트 (`pytest`) | LLM 없이 도는 전부 | 381개 |
 
 **세 층은 서로를 대체하지 못한다.** 골든셋이 98% 일 때 회귀셋은 15/23 이었다. 관측 필드
 자체는 멀쩡한데 그 값을 **라우팅 어디에 놓았느냐**가 틀렸던 것이고, 필드 단위
@@ -491,10 +500,10 @@ pip install pydantic                      # 사내 미러
 export LLM_API_URL=http://<서버>:8000
 export LLM_API_KEY=<키>
 
-python scripts/legacy_run.py --check-llm                 # 1. 서버 규약 확정
-python -m pytest tests/ -q                # 2. LLM 없이 도는 부분 (108개)
-python scripts/legacy_run.py --synthetic                 # 3. 그 모델이 프롬프트를 따르는지
-python scripts/legacy_run.py --input data/logs.json --limit 20   # 4. 실데이터
+python scripts/legacy_run.py --check-llm      # 1. 서버 규약 확정 (모델·강제방식·소요시간)
+python -m pytest tests/ -q                   # 2. LLM 없이 도는 부분
+python src/run.py --dry-run                  # 3. 합성 데이터로 끝까지 도는지
+python src/run.py --conv-data data/conv_eval.json --limit 20   # 4. 실데이터 일부
 ```
 
 `--model`은 서버가 여러 모델을 서빙하고 첫 번째가 아닌 걸 쓰고 싶을 때만 필요하다.

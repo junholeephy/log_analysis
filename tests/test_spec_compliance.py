@@ -480,3 +480,47 @@ def test_process_flow_names_the_fields_that_reach_the_output_file():
     assert listed == shipped, (
         f"문서에만: {sorted(listed - shipped)} / "
         f"output.py 에만: {sorted(shipped - listed)}")
+
+
+def test_every_entry_script_runs_without_pythonpath():
+    """진입 스크립트는 PYTHONPATH 없이 도는 상태여야 한다.
+
+    세 번 같은 실수를 했다. src/ragdiag/dashboard.py 는 streamlit 이 그 디렉터리를
+    sys.path[0] 에 넣어 ragdiag 를 못 찾았고, scripts/legacy_run.py 는 scripts/ 가
+    올라가 마찬가지였다. 사내에서는 인터넷도 없고 고칠 수도 없어서 그 자리에서 막힌다.
+    """
+    import os
+    import subprocess
+    import sys
+
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    for script, flag in [("src/run.py", "--help"),
+                         ("scripts/legacy_run.py", "--help"),
+                         ("src/dashboard.py", None)]:
+        path = ROOT / script
+        if not path.exists():
+            continue
+        args = [sys.executable, str(path)] + ([flag] if flag else [])
+        proc = subprocess.run(args, capture_output=True, text=True, cwd=ROOT, env=env)
+        combined = proc.stdout + proc.stderr
+        assert "ModuleNotFoundError: No module named 'ragdiag'" not in combined, (
+            f"{script} 가 PYTHONPATH 없이 ragdiag 를 못 찾는다.\n"
+            "src/ 밖에 있는 스크립트는 sys.path 부트스트랩이 필요하다.\n" + combined)
+
+
+def test_step_numbering_means_one_thing():
+    """'Step 3' 이 라우팅과 근거 활용을 동시에 가리킨 적이 있다.
+
+    골든셋 채점 화면과 대시보드가 근거 활용을 Step 3 이라 부르므로 그쪽이 기준이다.
+    라우팅은 Step 이 아니다.
+    """
+    import re
+
+    routing = (ROOT / "src/ragdiag/route.py").read_text(encoding="utf-8")
+    assert not re.search(r"Step 3\s*—.*case 로 바꾼다", routing), (
+        "route.py 가 자기를 Step 3 이라 부른다. 근거 활용이 Step 3 이다.")
+
+    for path in ["README.md", "process_flow.md", "src/ragdiag/classify.py"]:
+        text = (ROOT / path).read_text(encoding="utf-8")
+        assert "Step 3  라우팅" not in text and "Step 3 · 라우팅" not in text, (
+            f"{path} 가 라우팅을 Step 3 이라 부른다")

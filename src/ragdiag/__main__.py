@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 """conv_eval 로그를 taxonomy case 로 분류한다.
 
-  PYTHONPATH=BB/src python -m ragdiag --config configs/local.yaml --dry-run
-  PYTHONPATH=BB/src python -m ragdiag --config configs/local.yaml
+  python <저장소>/src/run.py --conv-data <로그> --output-dir outputs --dry-run
+  python <저장소>/src/run.py --conv-data <로그> --filter-data <필터> --output-dir outputs
 
 필터가 고른 턴만 3단계로 분류한다:
 
