@@ -332,19 +332,41 @@ def main() -> None:
     st.dataframe(share.style.format("{:.0%}").map(heat), use_container_width=True)
 
     # --- 코퍼스 보강 목록 ---------------------------------------------------
+    # --- 코퍼스 보강 목록 ---------------------------------------------------
+    #
+    # 부서로 먼저 묶으면 같은 요구가 부서 수만큼 쪼개진다. 그런데 **여러 부서가
+    # 같은 것에 막혔다는 사실이 가장 강한 신호다** - 실제로 "연차 이월 예외 조건"이
+    # 세 부서에서 나왔는데 부서별로 나누면 세 줄로 흩어져 안 보인다.
+    # 문서팀이 받는 것은 "쓸 문서 목록"이므로 요구를 축으로 세운다.
     gaps = view[view["case"].isin(["case20"]) & (view["없던것"] != "")]
-    st.subheader(f"코퍼스 보강 목록 ({len(gaps)}건)")
-    st.caption("문서에 없어서 답할 수 없었던 것. 문서팀에 그대로 넘길 수 있는 목록이다.")
-    if gaps.empty:
+    grouped = (gaps.groupby("원한것")
+               .agg(건수=("질문", "size"),
+                    부서=("부서", lambda x: " · ".join(sorted(set(x)))),
+                    부서수=("부서", lambda x: len(set(x))),
+                    질문=("질문", "first"))
+               .reset_index()
+               .sort_values(["부서수", "건수", "원한것"], ascending=[False, False, True]))
+
+    st.subheader(f"코퍼스 보강 목록 ({len(grouped)}종)")
+    st.caption("문서에 없어서 답할 수 없었던 것. 문서팀에 그대로 넘길 수 있는 목록이다. "
+               "**여러 부서가 막힌 것이 위로 온다** — 그게 우선순위다.")
+    if grouped.empty:
         st.info("해당 케이스가 없습니다.")
     else:
-        for dept in sorted(gaps["부서"].unique()):
-            block = gaps[gaps["부서"] == dept]
-            with st.expander(f"{dept} · {len(block)}건", expanded=len(gaps) <= 12):
-                for _, row in block.iterrows():
-                    st.markdown(f"- **{row['원한것']}**  \n"
-                                f"  <sub>질문: {row['질문']}</sub>",
-                                unsafe_allow_html=True)
+        if len(gaps) > len(grouped):
+            st.caption(f"턴 {len(gaps)}건이 요구 {len(grouped)}종으로 묶였다. "
+                       "판정자가 같은 요구를 조금 다르게 적으면 따로 잡히므로, "
+                       "비슷한 항목이 이웃해 있으면 한 문서로 묶어 볼 것.")
+        for _, row in grouped.iterrows():
+            tally = f" `×{row['건수']}`" if row["건수"] > 1 else ""
+            multi = " 🔥" if row["부서수"] > 1 else ""
+            st.markdown(
+                f"- **{row['원한것']}**{tally}{multi}  \n"
+                f"  <sub>{row['부서']} · 질문: {row['질문']}</sub>",
+                unsafe_allow_html=True)
+        if (grouped["부서수"] > 1).any():
+            st.caption("🔥 는 여러 부서가 같은 것에 막혔다는 뜻이다. "
+                       "특정 부서 업무가 아니라 **공통 문서가 비어 있다**는 신호다.")
 
     # --- 케이스 사전 --------------------------------------------------------
     with st.expander(f"케이스 설명 — 이 데이터에 나온 {view['case'].nunique()}종"):
@@ -383,7 +405,15 @@ def detail(row: pd.Series) -> None:
     meta[0].metric("신뢰도", CONF_LABEL.get(row["신뢰도"], row["신뢰도"]))
     meta[1].metric("충족도", row["충족도"] or "—")
     meta[2].metric("근거 활용", row["근거활용"] or "—")
-    meta[3].metric("LLM 호출", row["LLM호출"])
+    # llm_calls 는 **이번 실행에서 실제로 부른 횟수**다. 캐시가 맞으면 0 이 된다.
+    # 그대로 "LLM 호출 0" 이라 적으면 case22 처럼 LLM 이 세 번 필요한 판정도
+    # LLM 이 관여 안 한 것처럼 읽힌다. 어디까지 봤는지를 evidence 로 보여준다.
+    ran = [name for name, key in [("관측", "observation"), ("충족도", "sufficiency"),
+                                  ("근거활용", "grounding")]
+           if (row["_원본"].get("classification", {}).get("evidence") or {}).get(key)]
+    meta[3].metric("판정 단계", " · ".join(ran) if ran else "코드만",
+                   help=f"이번 실행의 LLM 호출 {row['LLM호출']}회. "
+                        "0 이면 캐시에 있었거나 코드만으로 판정된 것이다.")
 
     st.info(f"**판정 근거** — {row['판정근거']}")
     if row["부가"]:

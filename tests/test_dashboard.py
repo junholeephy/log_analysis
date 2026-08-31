@@ -172,3 +172,37 @@ def test_missing_dependency_names_the_install_command(tmp_path):
     assert "requirements-dashboard.txt" in proc.stderr, proc.stderr
     assert "분류 파이프라인" in proc.stderr, (
         "파이프라인에는 필요 없다는 것도 알려야 반입 부담을 안 늘린다")
+
+
+def test_corpus_gaps_group_by_need_not_department(result_file):
+    """같은 요구를 부서로 쪼개면 가장 강한 신호가 숨는다.
+
+    "연차 이월 예외 조건"이 세 부서에서 나왔는데 부서로 먼저 묶으면 세 줄로
+    흩어져 "여러 부서가 같은 것에 막혔다"가 안 보인다. 문서팀이 받는 것은
+    "쓸 문서 목록"이므로 요구가 축이어야 한다.
+    """
+    at = render(result_file)
+    assert not at.exception
+    body = "\n".join(m.value for m in at.markdown)
+    header = [s.value for s in at.subheader if "코퍼스 보강" in s.value]
+    assert header, "코퍼스 보강 목록 절이 없다"
+    assert "종)" in header[0], "건수가 아니라 요구 '종' 수를 세야 한다"
+    # 같은 요구가 여러 번 나왔다면 묶여서 ×N 이 붙어야 한다
+    import re
+    if re.search(r"`×\d+`", body):
+        assert "묶였다" in "\n".join(c.value for c in at.caption), (
+            "몇 건이 몇 종으로 묶였는지 알려줘야 한다")
+
+
+def test_detail_panel_does_not_claim_zero_llm_involvement(result_file):
+    """llm_calls 는 이번 실행의 호출 수다. 캐시가 맞으면 0 이 된다.
+
+    그대로 "LLM 호출 0" 이라 적으면 case22 처럼 LLM 이 세 번 필요한 판정도
+    LLM 이 관여 안 한 것처럼 읽힌다.
+    """
+    at = render(result_file)
+    labels = [m.label for m in at.metric]
+    assert "LLM 호출" not in labels, (
+        "이번 실행의 호출 수를 판정 근거처럼 보여주고 있다. "
+        "어디까지 봤는지(판정 단계)를 보여줄 것.")
+    assert "판정 단계" in labels, f"판정 단계 지표가 없다: {labels}"
