@@ -437,8 +437,51 @@ LLM 을 다시 돌리지 않아도 되게 했다.
 
 **목적** — **문서가 사용자의 요구를 담고 있었나**를 잰다. 답변의 품질이 아니다.
 
-**언제 도나** — 도메인 질문이고 내용에 대한 불만일 때만. 형식 불만에 문서 충족도를
-따지는 건 무의미하고 호출만 쓴다.
+**언제 도나** — 세 조건이 전부 맞을 때만.
+
+```
+question_domain == "domain"                          ⑤가 정한다 (LLM)
+   and complaint_target in {content_missing,          ⑤가 정한다 (LLM)
+                            content_wrong}
+   and rag_chunks 가 비어 있지 않다                    코드
+```
+
+형식·언어·길이 불만에 문서 충족도를 따지는 건 무의미하고 호출만 쓴다.
+청크가 비면 ⑦을 건너뛰고 `insufficient` 로 두는데, 그 이유는 아래에 있다.
+
+### `domain` 인지 누가 정하나 — ⑤의 LLM 이다
+
+코드가 아니라 **⑤가 관측한 `question_domain`** 이다. `rag_chunks` 유무로 정하지
+않는다 — 그러면 "도메인 질문인데 검색이 아예 안 걸린 경우"(case21)를
+"도메인 질문이 아니었다"로 읽게 된다.
+
+| 값 | 뜻 | 어디로 |
+|---|---|---|
+| `domain` | 사내 문서를 찾아야 답할 수 있다 (규정·절차·제도) | ⑦로 |
+| `general_knowledge` | 공개된 지식만으로 답할 수 있다 | case25 |
+| `calculation` | 수식·날짜·산수 | case26 |
+| `code` · `tool_usage` | SQL·Python·Excel·Spotfire | case27 |
+| `unclear` | 판별할 수 없다 | 미분류 |
+
+**`domain` 과 `general_knowledge` 의 경계는 "회사마다 답이 달라지는가"로 가른다.**
+법령·표준을 언급했더라도 "우리 회사는 어떻게 운영하나"를 묻는 것이면 `domain` 이다.
+
+```
+"근로기준법 조문상 연차 발생 요건이 뭔가요"  → general_knowledge  (법이 하나뿐)
+"우리 회사 연차는 법정 기준대로 주나요"      → domain            (회사마다 다름)
+```
+
+프롬프트는 **애매하면 `domain`** 이라고 지시한다. 공개 지식으로 답할 수 있는지가
+분명할 때만 `general_knowledge` 로 둔다. 사내 챗봇에서는 후자가 훨씬 흔하고,
+잘못 `general_knowledge` 로 빠지면 신뢰도 `low` 인 case25 로 가서 **검색·문서
+문제가 통계에서 사라진다.**
+
+### `complaint_target` 은 둘만 통과한다
+
+`content_missing`(필요한 정보가 없음)과 `content_wrong`(담긴 정보가 틀림)뿐이다.
+`tone` `format` `language` `length` `no_answer` `refusal` `inconsistency` `other`
+여덟은 ⑦을 거치지 않는다 — 그 불만들은 문서가 아니라 답변의 형태를 향하고,
+⑥의 코드 검증기가 이미 판정한다.
 
 **입력**
 

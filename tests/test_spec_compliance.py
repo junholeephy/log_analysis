@@ -681,3 +681,41 @@ def test_process_flow_routing_inputs_match_route_py():
     assert reads | skips == set(Observation.model_fields), (
         f"표에서 빠진 관측 필드: "
         f"{sorted(set(Observation.model_fields) - reads - skips)}")
+
+
+def test_process_flow_states_when_sufficiency_runs():
+    """⑦이 언제 도는지는 조건이 셋이고 하나는 코드, 둘은 관측이다.
+
+    "도메인 질문일 때만" 이라고만 적으면 도메인 여부를 누가 어떻게 정하는지
+    알 수 없다 — 실제로 그 질문을 받았다. rag_chunks 유무로 정한다고 오해하면
+    case21(검색 미수행)이 통째로 사라진다.
+    """
+    import inspect
+    import re
+    import typing
+
+    from ragdiag import classify
+    from ragdiag.schema import Observation
+
+    doc = (ROOT / "process_flow.md").read_text(encoding="utf-8")
+    section = doc.split("## ⑦")[1].split("## ⑧")[0]
+
+    # 코드의 조건을 문서가 그대로 담고 있나
+    body = inspect.getsource(classify.classify_turn)
+    assert 'obs.question_domain == "domain"' in body
+    for token in ("question_domain", "complaint_target", "rag_chunks"):
+        assert token in section, f"⑦ 절에 {token} 조건이 없다"
+    for value in classify.CONTENT_COMPLAINTS:
+        assert value in section, f"⑦ 절에 {value} 가 없다"
+
+    # question_domain 의 값이 전부 적혀 있나
+    domains = set(typing.get_args(
+        Observation.model_fields["question_domain"].annotation))
+    table = section.split("| 값 | 뜻 | 어디로 |")[1].split("\n\n")[0]
+    listed = set(re.findall(r"`(\w+)`", table))
+    assert listed == domains, (
+        f"문서에만: {sorted(listed - domains)} / 코드에만: {sorted(domains - listed)}")
+
+    assert "회사마다 답이 달라지는가" in section, (
+        "domain 과 general_knowledge 를 가르는 기준이 없다 — "
+        "프롬프트가 그 문장으로 지시하고 있다")
