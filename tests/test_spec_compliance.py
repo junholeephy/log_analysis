@@ -764,3 +764,43 @@ def test_process_flow_truth_table_matches_routing():
     table = doc.split("| `n_chunks` | `verdict` |")[1].split("\n\n")[0]
     for cid in expected:
         assert f"`{cid}`" in table, f"진리표에 {cid} 가 없다"
+
+
+@pytest.mark.parametrize("name", ["README.md", "TAXONOMY.md", "process_flow.md",
+                                  "docs/insights/TEMPLATE.md"])
+def test_markdown_renders_as_markdown(name):
+    """코드 펜스가 안 닫히면 GitHub 에서 나머지가 통째로 코드블록이 된다.
+
+    실제로 그렇게 깨뜨린 적이 있다. 치환 스크립트가 블록 경계를 잘못 잡아
+    문서의 모든 펜스를 표로 바꿔치웠고, 화면에서만 알아챌 수 있었다.
+    """
+    path = ROOT / name
+    if not path.exists():
+        pytest.skip(f"{name} 없음")
+    lines = path.read_text(encoding="utf-8").splitlines()
+
+    fences = [i + 1 for i, l in enumerate(lines) if l.startswith("```")]
+    assert len(fences) % 2 == 0, (
+        f"{name}: 코드 펜스가 홀수({len(fences)}개)라 닫히지 않았다. "
+        f"마지막 펜스는 {fences[-1]}줄.")
+
+    # 표가 코드블록 안에 갇히지도 않아야 한다
+    inside, trapped = False, []
+    for i, line in enumerate(lines, 1):
+        if line.startswith("```"):
+            inside = not inside
+        elif inside and line.startswith("|") and "---" in line:
+            trapped.append(i)
+    assert not trapped, f"{name}: 표가 코드블록 안에 있다 — {trapped[:3]}줄"
+
+
+def test_no_section_is_duplicated():
+    """같은 제목이 여러 번 나오면 치환이 잘못 퍼진 것이다."""
+    import re
+    from collections import Counter
+
+    for name in ["README.md", "TAXONOMY.md", "process_flow.md"]:
+        text = (ROOT / name).read_text(encoding="utf-8")
+        heads = Counter(re.findall(r"^#{2,4} (.+)$", text, re.M))
+        dupes = {h: n for h, n in heads.items() if n > 1}
+        assert not dupes, f"{name}: 제목이 반복된다 — {dupes}"
