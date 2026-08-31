@@ -560,3 +560,41 @@ def test_step_numbering_means_one_thing():
         text = (ROOT / path).read_text(encoding="utf-8")
         assert "Step 3  라우팅" not in text and "Step 3 · 라우팅" not in text, (
             f"{path} 가 라우팅을 Step 3 이라 부른다")
+
+
+def test_process_flow_checker_inputs_match_run_checks():
+    """검증기가 무엇을 보는지는 필드명으로 적어야 한다.
+
+    "답변"이라고만 쓰면 불만 턴의 답변인지 비판받은 답변인지 알 수 없고,
+    실제로 그 질문을 받았다. Case 의 필드명을 그대로 적고 코드와 대조한다.
+    """
+    import inspect
+    import re
+
+    from ragdiag import classify
+
+    body = inspect.getsource(classify.run_checks)
+    real: dict[str, set[str]] = {}
+    for m in re.finditer(r'"(\w+)": (check_\w+)\(([^)]*)', body):
+        real[m.group(1)] = {f for f in ("llm_ans_on_last_q", "last_query", "rag_chunks")
+                            if f in m.group(3)}
+    for m in re.finditer(r'checks\["(\w+)"\] = (check_\w+)\(\s*case\.(\w+)', body):
+        real.setdefault(m.group(1), set()).add(m.group(3))
+    assert real, "run_checks 에서 검증기를 못 찾았다"
+
+    doc = (ROOT / "process_flow.md").read_text(encoding="utf-8")
+    table = doc.split("| 검증기 | 입력 | 무엇을 |")[1].split("\n\n")[0]
+    listed = {m.group(1): m.group(2)
+              for m in re.finditer(r"\| `(\w+)` \| ([^|]+) \|", table)}
+
+    missing = set(real) - set(listed)
+    assert not missing, f"문서에 없는 검증기: {sorted(missing)}"
+
+    wrong = []
+    for name, fields in real.items():
+        shown = listed[name]
+        for field in fields:
+            alias = "pre_queries[-1]" if field == "last_query" else field
+            if alias not in shown:
+                wrong.append(f"{name}: 문서에 `{alias}` 가 없다 — '{shown.strip()}'")
+    assert not wrong, "\n".join(wrong)

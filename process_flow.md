@@ -335,25 +335,31 @@ Step 1 이 내는 것        17개 (전부 필수. 기본값이 없어 LLM 이 �
 
 **목적** — LLM 없이 되는 것은 LLM 에게 묻지 않는다. 문자열만 보면 아는 것들이다.
 
-**입력** — `Case` 의 텍스트 + ⑤가 관측한 요구값
+**입력** — `Case` 의 텍스트 + ⑤가 관측한 요구값. 표의 이름은 `Case` 의 필드명이다.
 
 | 검증기 | 입력 | 무엇을 |
 |---|---|---|
-| `service_error` | 답변 | 자원 부족 확정 문구 (case9) |
-| `truncated` | 답변 | 출력 잘림 (case8) |
-| `language` | 답변 + `requested_language` | 요구 언어 불이행 (case10) |
-| `length` | 답변 + `requested_length_*` | 요구 길이 불이행 (case11) |
-| `format` | 답변 + `requested_format` | 요구 포맷 불이행 (case12) |
-| `pii` | **직전 질문** | 개인정보 포함 (case6) |
-| `quoted_spans` | 답변 + 문서 | 답변이 제시한 인용문의 원문 대조 (case24) |
-| `python_syntax` | 답변 | 파이썬 `ast.parse` (case27) |
-| `sql_shape` | 답변 | SQL 구조 결함 (case27) |
-| `arithmetic` | 답변 | 등식 재계산 (case26) |
-| `injection` | 문서 + 답변 | 문서의 숨은 지시를 수행했나 (case29) |
+| `service_error` | `llm_ans_on_last_q` | 자원 부족 확정 문구 (case9) |
+| `truncated` | `llm_ans_on_last_q` | 출력 잘림 (case8) |
+| `language` | `llm_ans_on_last_q` + `requested_language` | 요구 언어 불이행 (case10) |
+| `length` | `llm_ans_on_last_q` + `requested_length_*` | 요구 길이 불이행 (case11) |
+| `format` | `llm_ans_on_last_q` + `requested_format` | 요구 포맷 불이행 (case12) |
+| `pii` | **`pre_queries[-1]`** | 질문에 개인정보 포함 (case6) |
+| `quoted_spans` | `llm_ans_on_last_q` + `rag_chunks` | 답변이 제시한 인용문의 원문 대조 (case24) |
+| `python_syntax` | `llm_ans_on_last_q` | 파이썬 `ast.parse` (case27) |
+| `sql_shape` | `llm_ans_on_last_q` | SQL 구조 결함 (case27) |
+| `arithmetic` | `llm_ans_on_last_q` | 등식 재계산 (case26) |
+| `injection` | `rag_chunks` + `llm_ans_on_last_q` | 문서의 숨은 지시를 수행했나 (case29) |
 
-`pii` 는 답변이 아니라 **직전 질문**을 본다 — case6 이 "질문에 개인정보가 포함된 경우"이기
-때문이다. 결과 파일에는 종류와 건수만 남기고 원본 값은 남기지 않는다. 안 그러면
-결과 파일 자체가 개인정보 사본이 된다.
+`llm_ans_on_last_q` 는 **비판받은 답변**이다 — 불만 턴(N+1)의 답변이 아니라
+그 직전 턴(N)의 답변이다. ①의 짝짓기가 그렇게 잡아 놓은 것이다.
+
+`pii` 하나만 답변이 아니라 **직전 질문**(`pre_queries[-1]`, 즉 그 답변을 부른 질문)을
+본다 — case6 이 "질문에 개인정보가 포함된 경우"이기 때문이다. 결과 파일에는 종류와
+건수만 남기고 원본 값은 남기지 않는다. 안 그러면 결과 파일 자체가 개인정보 사본이 된다.
+
+`current_query`(불만 원문)를 보는 검증기는 **하나도 없다.** 불만은 ⑤가 "무엇을
+원했나"를 읽는 데만 쓰이고, 코드 검증은 전부 답변과 문서만 본다.
 
 **출력** — 검증기마다 네 값 중 실제로 나올 수 있는 것이 다르다.
 
