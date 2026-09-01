@@ -195,6 +195,19 @@ def desc(case_id: str) -> str:
     return case.desc if case is not None else FALLBACK_DESC.get(case_id, "")
 
 
+def tooltip(case_id: str) -> str:
+    """표 머리글에 마우스를 올렸을 때 펼칠 한 덩어리.
+
+    머리글에는 case3 만 들어간다 - 이름을 다 적으면 열이 넓어져 한 화면에 안
+    들어오고, 번호만 있으면 무엇인지 알 수 없다. 이름과 "무엇이 아닌가"까지
+    여기에 담는다. 헷갈리는 쌍(case3/case15, case4/case14)이 실제로 막히는
+    지점이 거기다.
+    """
+    name = label(case_id)
+    detail = desc(case_id)
+    return f"{name}\n\n{detail}" if detail else name
+
+
 def describe(case_id: str) -> dict:
     """출력에 실을 case 메타데이터."""
     case = CASES.get(case_id)

@@ -231,6 +231,21 @@ def heat(value: float) -> str:
     return f"background-color: rgb({r},{g},{b}); color: {text}"
 
 
+def case_tooltips(columns, numeric: bool = True) -> dict:
+    """case 열 머리글에 설명을 매단다.
+
+    표에는 case3 만 찍힌다. 이름을 다 적으면 열이 넓어져 한 화면에 안 들어오고,
+    번호만 있으면 무엇인지 알 수 없다 - 머리글은 짧게 두고 마우스를 올렸을 때
+    펼친다.
+    """
+    # unclassified · out_of_taxonomy 도 붙인다. 오히려 이 둘이 제일 헷갈린다 -
+    # "분류 실패"를 "문제 없음"으로 읽으면 집계 전체를 잘못 읽는다.
+    known = set(tx.CASES) | {tx.UNCLASSIFIED, tx.OUT_OF_TAXONOMY}
+    column = st.column_config.NumberColumn if numeric else st.column_config.TextColumn
+    return {c: column(c, help=tx.tooltip(c))
+            for c in columns if isinstance(c, str) and c in known}
+
+
 def crosstab(df: pd.DataFrame, axis: str) -> pd.DataFrame:
     table = pd.crosstab(df[axis], df["case"])
     order = sorted(table.columns,
@@ -454,11 +469,14 @@ def main() -> None:
             st.caption("이 축에 붙는 분류 체계를 찾지 못해 원래 값으로 표시한다.")
 
     table = crosstab(table_source, axis)
-    st.dataframe(table, use_container_width=True)
+    st.dataframe(table, use_container_width=True,
+                 column_config=case_tooltips(table.columns))
 
     share = table.drop(columns="계").div(table["계"], axis=0)
-    st.caption("행 내 비율 — 절대 건수가 아니라 성향을 본다")
-    st.dataframe(share.style.format("{:.0%}").map(heat), use_container_width=True)
+    st.caption("행 내 비율 — 절대 건수가 아니라 성향을 본다 · "
+               "열 머리글에 마우스를 올리면 무슨 문제인지 나온다")
+    st.dataframe(share.style.format("{:.0%}").map(heat), use_container_width=True,
+                 column_config=case_tooltips(share.columns))
 
     # --- 코퍼스 보강 목록 ---------------------------------------------------
     # --- 코퍼스 보강 목록 ---------------------------------------------------
@@ -516,7 +534,13 @@ def main() -> None:
     st.caption("집계만 보고 근거를 못 보면 '왜 이 라벨이지'에서 막힌다.")
     table_view = view[["부서", "직급", "대화", "턴", "case", "case명",
                        "신뢰도", "충족도", "근거활용", "질문"]]
-    st.dataframe(table_view, use_container_width=True, height=280)
+    # case 열은 값이 case3 이라 머리글에 툴팁을 달아도 소용없다. 값마다 다르므로
+    # 옆의 case명 열이 그 역할을 하고, 아래 "케이스 설명"이 전문을 편다.
+    st.dataframe(table_view, use_container_width=True, height=280,
+                 column_config={
+                     "case명": st.column_config.TextColumn(
+                         "case명", help="무엇이 아닌가까지는 아래 '케이스 설명'에 있다"),
+                     "질문": st.column_config.TextColumn("질문", width="large")})
 
     labels = [f"{r['대화']}:{r['턴']}  {tx.label(r['case'])}  {r['질문'][:40]}"
               for _, r in view.iterrows()]

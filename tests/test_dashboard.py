@@ -460,3 +460,54 @@ def test_broken_config_does_not_stop_the_screen(result_file, tmp_path):
     assert at.metric, "설정이 깨졌다고 화면이 안 뜨면 안 된다"
     assert any("설정을 읽지 못해" in w.value for w in at.warning), (
         "조용히 기본값으로 돌면 왜 다른지 알 수 없다")
+
+
+def test_case_columns_carry_their_meaning_as_a_tooltip():
+    """표 머리글이 case3 뿐이면 무슨 문제인지 알 수 없다.
+
+    이름을 다 적으면 열이 넓어져 한 화면에 안 들어온다 - 머리글은 짧게 두고
+    마우스를 올렸을 때 펼친다.
+    """
+    from ragdiag.taxonomy import tooltip
+
+    text = tooltip("case3")
+    assert text.startswith("case3 · 복합 질문을 함")
+    # "무엇이 아닌가"까지 담아야 헷갈리는 쌍에서 갈린다.
+    assert "case15" in text, text
+
+    assert tooltip("case20").startswith("case20 · Retrieve 실패")
+    assert tooltip("unclassified"), "분류 실패에도 무언가는 나와야 한다"
+
+
+def test_heatmap_headers_get_the_tooltip(result_file):
+    """히트맵 열이 case 다. 번호만 있으면 이 표를 못 읽는다.
+
+    dashboard.py 는 streamlit 밖에서 import 하면 종료하므로(그게 맞다) 실제로
+    그려진 것을 본다. 함수를 직접 부르면 배선이 빠져도 통과한다.
+    """
+    import json
+
+    at = render(result_file)
+    assert not at.exception
+
+    tips = {}
+    for frame in at.dataframe:
+        columns = getattr(frame.proto, "columns", "") or ""
+        if not columns:
+            continue
+        for name, spec in json.loads(columns).items():
+            if spec.get("help"):
+                tips[name] = spec["help"]
+
+    # "case명" 도 case 로 시작한다. 실제 판정 라벨만 본다.
+    import re
+
+    labelled = [c for c in tips
+                if re.fullmatch(r"case\d+", c) or c in ("unclassified", "out_of_taxonomy")]
+    assert labelled, f"판정 라벨 열에 툴팁이 없다. 붙은 것: {sorted(tips)}"
+    for cid in labelled:
+        assert tips[cid].startswith(f"{cid} ·"), tips[cid]
+
+    # 제일 헷갈리는 열이다. "분류 실패"를 "문제 없음"으로 읽으면 집계를 잘못 읽는다.
+    if "unclassified" in tips:
+        assert "문제 없음" in tips["unclassified"], tips["unclassified"]
