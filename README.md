@@ -890,8 +890,8 @@ python3 -m venv venv && ./venv/bin/pip install -r requirements.txt
 pip install streamlit pandas          # 분류 파이프라인에는 불필요하다
 
 python -m streamlit run log_analysis/src/dashboard.py -- \
-    --dept-class output/class_dept.json \
-    --job-class  output/class_job.json
+    --dept-class configs/dept_class.json \
+    --job-class  configs/job_class.json
 ```
 
 `--` 가 있어야 한다. 앞은 streamlit 이 먹고 뒤가 스크립트로 넘어간다.

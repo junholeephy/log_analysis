@@ -1,6 +1,6 @@
 """조직 분류 체계 — 대분류 / 중분류 / 소분류.
 
-class_dept.json · class_job.json 의 구조:
+dept_class.json · job_class.json 의 구조:
 
     { "dept_classes": [                     루트 키는 파일마다 다르다
         { "id": 1,
@@ -17,7 +17,7 @@ class_dept.json · class_job.json 의 구조:
 있으면 그 건들이 집계에서 사라지거나 빈 칸으로 뭉친다. 어느 쪽이든 "그 조직은 문제가
 없다"로 잘못 읽힌다. coverage() 가 미매칭 값을 그대로 돌려주는 이유다.
 
-class_job 이 로그의 어느 필드에 붙는지는 파일만으로 알 수 없다 - conv_eval 에는
+job_class 가 로그의 어느 필드에 붙는지는 파일만으로 알 수 없다 - conv_eval 에는
 db_job_name(직무)과 job_grade(직급)가 둘 다 있다. detect_field() 가 값을 대조해
 판별한다. 추측해서 붙이면 매칭률이 0에 가까워도 에러가 안 나서 알아채기 어렵다.
 """
@@ -196,7 +196,7 @@ def detect_field(
 ) -> tuple[Optional[str], dict[str, Coverage]]:
     """어느 필드에 붙는 분류인지 값 대조로 판별한다.
 
-    파일 이름만으로는 알 수 없다 - class_job 이 직무(db_job_name)일 수도 직급
+    파일 이름만으로는 알 수 없다 - job_class 가 직무(db_job_name)일 수도 직급
     (job_grade)일 수도 있다. 매칭률이 가장 높은 필드를 고르되, 전부 낮으면
     None 을 돌려준다. 억지로 붙이면 집계가 통째로 (미분류)가 된다.
     """

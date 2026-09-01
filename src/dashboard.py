@@ -6,8 +6,8 @@
 조직 분류를 붙이려면:
 
   python -m streamlit run <저장소>/src/dashboard.py -- \
-      --dept-class output/class_dept.json \
-      --job-class  output/class_job.json
+      --dept-class configs/dept_class.json \
+      --job-class  configs/job_class.json
 
 **src/ 직하에 있어야 한다.** streamlit 은 스크립트가 있는 디렉터리를
 sys.path[0] 에 넣는다. src/ragdiag/ 안에 두면 그 디렉터리가 올라가고 src/ 는
@@ -183,7 +183,7 @@ def load(path: str) -> pd.DataFrame:
 def load_org(dept_path: str | None, job_path: str | None, records: list[dict]):
     """조직 분류를 읽고 어느 필드에 붙는지 판별한다.
 
-    파일 이름으로 추측하지 않는다 - class_job 이 직무일 수도 직급일 수도 있고,
+    파일 이름으로 추측하지 않는다 - job_class 가 직무일 수도 직급일 수도 있고,
     잘못 붙이면 에러 없이 전부 (미분류)가 되어 알아채기 어렵다.
     """
     from ragdiag.org import detect_field, load_classification
