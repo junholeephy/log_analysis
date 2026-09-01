@@ -229,6 +229,77 @@ def test_version_is_never_blank():
 # 1.3 — 바뀔 만한 값이 전부 설정에 있다
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# scripting.md 가 약속한 계약
+#
+# 작업 폴더 쪽에서 이걸 감싸는 스크립트를 짠다. 종료 코드와 스트림 구분이
+# 그 스크립트가 기댈 전부다 - 화면 문구는 바뀌어도 이 둘은 안 바뀌어야 한다.
+# ---------------------------------------------------------------------------
+
+def _entry(argv, cwd):
+    import sys as _sys
+
+    return subprocess.run([_sys.executable, str(ROOT / "src" / "run.py"), *argv],
+                          capture_output=True, text=True, cwd=cwd)
+
+
+def test_exit_codes_match_the_scripting_contract(tmp_path):
+    """0=정상 / 1=돌았지만 온전치 않다 / 2=시작도 못 했다.
+
+    1 과 2 를 가르는 기준은 "계산을 시작했나"다. 2 는 고치고 다시 돌리면 되고,
+    1 은 이미 돈 것이라 재시도해도 같다 - 스크립트의 분기가 여기 걸린다.
+    """
+    import json
+
+    from ragdiag.fixtures.synth import generate
+
+    log = tmp_path / "conv.json"
+    log.write_text(json.dumps(generate(n=1, seed=0), ensure_ascii=False), encoding="utf-8")
+
+    assert _entry(["--conv-data", str(log), "--dry-run"], tmp_path).returncode == 0
+
+    # 시작도 못 하는 것들
+    assert _entry(["--conv-data", str(tmp_path / "없다.json")], tmp_path).returncode == 2
+
+    # 돌았지만 볼 턴이 없다
+    turns = tmp_path / "turns.json"
+    turns.write_text("[]", encoding="utf-8")
+    got = _entry(["--conv-data", str(log), "--turns", str(turns)], tmp_path)
+    assert got.returncode == 1, got.stdout + got.stderr
+
+
+def test_run_summary_goes_to_stdout_and_progress_to_stderr(tmp_path):
+    """로그로 남길 것과 사람이 보며 판단할 것을 가른다.
+
+    RUN SUMMARY 가 stderr 로 새면 `> log.txt` 로 남긴 파일이 비어 있게 된다.
+    """
+    import json
+
+    from ragdiag.fixtures.synth import generate
+
+    log = tmp_path / "conv.json"
+    log.write_text(json.dumps(generate(n=1, seed=0), ensure_ascii=False), encoding="utf-8")
+
+    got = _entry(["--conv-data", str(log), "--dry-run"], tmp_path)
+    assert "RUN SUMMARY" in got.stdout, "요약은 stdout 이다"
+    assert "RUN SUMMARY" not in got.stderr
+    assert "실행 조건" in got.stderr, "진행 상황은 stderr 다"
+    assert "실행 조건" not in got.stdout
+
+
+def test_scripting_example_uses_only_documented_things():
+    """예시 스크립트가 문서에 없는 것을 쓰면 읽는 사람이 그걸 계약으로 오해한다."""
+    doc = (ROOT / "scripting.md").read_text(encoding="utf-8")
+    example = doc.split("#!/usr/bin/env bash")[1].split("```")[0]
+
+    assert "log_analysis/src/run.py" in example, "진입점을 그대로 보여줘야 한다"
+    assert "ls -1 output/conv_parsed_*.json" in example, "결과는 이름 규칙으로 찾는다"
+    assert "결과:" not in example.replace('echo "결과: $LATEST"', ""), (
+        "stderr 를 긁어서 경로를 얻으면 안 된다")
+    for banned in ("--upgrade", "pip install", "activate"):
+        assert banned not in example, f"예시가 {banned} 를 쓰고 있다"
+
+
 def test_readme_does_not_hand_out_a_command_that_needs_an_uncommitted_file():
     """갓 clone 한 사본에서 그대로 쳐서 실패하는 명령을 적어두지 않는다.
 
