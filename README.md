@@ -80,6 +80,16 @@ python src/run.py --legacy-regression       # 회귀 기준선
 python -m pytest tests/ -q                  # LLM 없이 도는 전부
 ```
 
+> **`paths.venv` 를 적으면 그 파이썬으로 갈아타서 실행한다.** `activate` 를 잊고
+> 시스템 파이썬으로 쳐도 알아서 넘어간다 — 갈아타기는 `src/run.py` 가 `ragdiag` 를
+> import 하기 **전에** 한다. 그러지 않으면 `pydantic` import 에서 먼저 죽어서
+> 그 뒤의 어떤 안내도 화면에 못 나온다. 경로가 틀리면 계산 전에 죽는다.
+>
+> ```
+> [venv] /usr/lib/python3.14
+>     -> /opt/shared/venv   (설정 paths.venv)
+> ```
+
 > **`configs/` 가 두 군데다.** 운영 환경에서 헷갈리기 쉬운 자리다.
 >
 > ```

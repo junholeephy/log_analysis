@@ -65,6 +65,42 @@ from ragdiag.summary import (
 DEFAULT_OUTPUT_DIR = "output"
 
 
+# 재실행 루프 방지. 갈아탄 파이썬이 또 다른 prefix 를 보고하면 무한히 돈다.
+_REEXEC_FLAG = "RAGDIAG_VENV_SWITCHED"
+
+
+def switch_to_configured_venv(config) -> None:
+    """paths.venv 에 적은 파이썬으로 갈아타고 다시 시작한다.
+
+    적어만 두고 쓰지 않으면 "설정했는데 무시된다" 가 된다. 설정 파일에 적은 값이
+    아무것도 바꾸지 않는 것은 그 자체로 결함이다 - 특히 공용 환경에서는
+    activate 를 잊었는지 확인할 방법이 화면밖에 없다.
+
+    exec 라 이 프로세스가 그대로 대체된다. 인자와 cwd 가 보존되므로 같은 명령이
+    새 파이썬으로 다시 도는 것과 같다. 계산을 시작하기 전이라 잃을 것이 없다.
+    """
+    want = config.get("paths.venv")
+    if not want or os.environ.get(_REEXEC_FLAG):
+        return
+    venv = Path(want)
+    if venv.resolve() == Path(sys.prefix).resolve():
+        return                                   # 이미 그 venv 다
+
+    for candidate in (venv / "bin" / "python", venv / "Scripts" / "python.exe"):
+        if candidate.exists():
+            break
+    else:
+        raise ConfigError(
+            f"paths.venv 에 적은 곳에 파이썬이 없습니다: {venv}\n"
+            f"  찾은 곳: {venv / 'bin' / 'python'}\n"
+            f"  경로를 확인하거나, 설정에서 paths.venv 를 비우고 그 venv 를 "
+            f"activate 한 뒤 실행하세요.")
+
+    print(f"[venv] {sys.prefix}\n    -> {venv}  (설정 paths.venv)", file=sys.stderr)
+    os.environ[_REEXEC_FLAG] = "1"
+    os.execv(str(candidate), [str(candidate), *sys.argv])
+
+
 def make_backend(args, config=None, trace=None):
     """CLI 인자 > 설정 > 환경변수 순으로 고른다.
 
@@ -471,6 +507,13 @@ def main(argv=None, backend=None) -> int:
     except ConfigError as e:
         print(e, file=sys.stderr)
         return 2
+    # 설정한 venv 로 갈아탄다. 계산을 시작하기 전이라야 한다.
+    try:
+        switch_to_configured_venv(config)
+    except ConfigError as e:
+        print(e, file=sys.stderr)
+        return 2
+
     changed = apply_config(config)
     if changed:
         print(f"설정 {config.source} 적용: {', '.join(changed)}", file=sys.stderr)
@@ -544,18 +587,13 @@ def main(argv=None, backend=None) -> int:
     # 비어 있어서 "venv 밖"으로 잘못 찍힌다 - prefix 로 본다.
     in_venv = sys.prefix != sys.base_prefix
     want_venv = config.get("paths.venv")
-    if want_venv and Path(want_venv).resolve() != Path(sys.prefix).resolve():
-        # 활성화까지는 못 한다. 다르다는 사실만 알린다 - 공용 환경에서
-        # activate 를 잊으면 다른 패키지 버전으로 돌면서 결과만 조용히 달라진다.
-        conditions.add("파이썬", sys.executable, "설정과 다름",
-                       f"설정은 {want_venv} — activate 를 잊었을 수 있다")
-        summary.notes.append(
-            f"설정의 venv 가 아니다. 설정 {want_venv} / 지금 {sys.prefix}")
-    else:
-        conditions.add("파이썬", sys.executable,
-                       "설정 paths.venv 와 일치" if want_venv else
-                       (f"venv {Path(sys.prefix).name}" if in_venv else "시스템 파이썬"),
-                       "" if (in_venv or want_venv) else "공용 환경을 건드리고 있을 수 있다")
+    switched = bool(os.environ.get(_REEXEC_FLAG))
+    conditions.add(
+        "파이썬", sys.executable,
+        "설정 paths.venv 로 갈아탐" if switched else
+        ("설정 paths.venv" if want_venv else
+         (f"venv {Path(sys.prefix).name}" if in_venv else "시스템 파이썬")),
+        "" if (in_venv or want_venv) else "공용 환경을 건드리고 있을 수 있다")
     conditions.add("설정", config.source,
                    note=(f"{len(changed)}개 값을 덮어씀" if changed else "덮어쓴 값 없음"))
     conditions.add("로그", str(conv_data) if conv_data else "(합성 데이터)",

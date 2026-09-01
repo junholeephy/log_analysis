@@ -34,8 +34,9 @@ class ConfigError(Exception):
 # 오타를 통과시키면 조용히 기본값으로 돈다. 운영 환경에서 임계값을 바꿨는데 안 바뀐
 # 채로 30분이 지나가는 것이 가장 나쁜 결과다.
 SPEC: dict[str, tuple[type | tuple, bool]] = {
-    # 여기 적은 venv 로 도는지 프로그램이 대조한다. 활성화까지는 못 한다 -
-    # 이미 돌고 있는 파이썬 안에서 venv 를 바꿀 수는 없다.
+    # 여기 적은 파이썬으로 갈아타서 실행한다 (src/run.py 의 switch_venv).
+    # 갈아타기는 ragdiag 를 import 하기 전에 일어나야 한다 - activate 를 잊으면
+    # pydantic import 에서 먼저 죽어서 그 뒤의 어떤 안내도 화면에 못 나온다.
     "paths.venv": (str, False),
     "paths.conv_data": (str, False),
     "paths.filter_data": (str, False),

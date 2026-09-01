@@ -371,43 +371,107 @@ def test_must_fill_keys_are_marked_in_the_example():
     assert marked == ["venv", "url", "key", "model"], marked
 
 
-def test_configured_venv_is_compared_with_the_running_one(tmp_path, capsys):
-    """활성화는 못 한다. 다르다는 사실만 알린다.
+# ---------------------------------------------------------------------------
+# paths.venv — 적어둔 값이 실제로 쓰여야 한다
+#
+# 확인만 하고 쓰지 않으면 "설정했는데 무시된다" 가 된다. 설정 파일의 값이
+# 아무것도 바꾸지 않는 것은 그 자체로 결함이다.
+# ---------------------------------------------------------------------------
 
-    공용 환경에서 activate 를 잊으면 다른 패키지 버전으로 돌면서 **결과만
-    조용히 달라진다** - 에러가 안 나는 것이 문제다.
-    """
+def _run_entry(argv, cwd, python=None):
     import subprocess
-    import sys
-    from pathlib import Path as _Path
+    import sys as _sys
 
-    root = _Path(__file__).resolve().parents[1]
+    return subprocess.run([str(python or _sys.executable),
+                           str(ROOT / "src" / "run.py"), *argv],
+                          capture_output=True, text=True, cwd=cwd)
+
+
+def test_configured_venv_is_switched_into(tmp_path):
+    """activate 를 잊고 다른 파이썬으로 쳐도 설정한 venv 로 넘어가야 한다.
+
+    **ragdiag 를 import 하기 전에** 일어나야 한다 - 의존이 없는 파이썬으로
+    실행하면 pydantic import 에서 먼저 죽어서 어떤 안내도 화면에 못 나온다.
+    """
+    import sys as _sys
+
+    from ragdiag.fixtures.synth import generate
+
+    other = Path(_sys.base_prefix) / "bin" / "python3"
+    if not other.exists() or _sys.prefix == _sys.base_prefix:
+        pytest.skip("이 장비에서는 venv 밖 파이썬을 특정할 수 없다")
+
+    log = tmp_path / "conv.json"
+    log.write_text(json.dumps(generate(n=1, seed=0), ensure_ascii=False), encoding="utf-8")
+    cfg = tmp_path / "env.yaml"
+    cfg.write_text(f"paths:\n  venv: {_sys.prefix}\n", encoding="utf-8")
+
+    proc = _run_entry(["--conv-data", str(log), "--config", str(cfg), "--dry-run"],
+                      cwd=tmp_path, python=other)
+    assert proc.returncode == 0, proc.stderr[-800:]
+    assert "[venv]" in proc.stderr, "갈아탄 사실을 알려야 한다\n" + proc.stderr[-400:]
+    assert "갈아탐" in proc.stderr, "실행 조건에도 남아야 한다"
+    assert "ModuleNotFoundError" not in proc.stderr
+
+
+def test_no_switch_when_already_in_the_configured_venv(tmp_path):
+    import sys as _sys
+
     from ragdiag.fixtures.synth import generate
 
     log = tmp_path / "conv.json"
     log.write_text(json.dumps(generate(n=1, seed=0), ensure_ascii=False), encoding="utf-8")
-    cfg = tmp_path / "c.yaml"
-    cfg.write_text("paths:\n  venv: /어딘가/없는/venv\n", encoding="utf-8")
+    cfg = tmp_path / "env.yaml"
+    cfg.write_text(f"paths:\n  venv: {_sys.prefix}\n", encoding="utf-8")
 
-    proc = subprocess.run(
-        [sys.executable, str(root / "src" / "run.py"), "--conv-data", str(log),
-         "--config", str(cfg), "--dry-run"],
-        capture_output=True, text=True, cwd=tmp_path)
-    assert "설정과 다름" in proc.stderr, proc.stderr[-600:]
-    assert "activate" in proc.stderr, "무엇을 하라는지 적어야 한다"
-    assert "venv 가 아니다" in proc.stdout + proc.stderr, "RUN SUMMARY 에도 남겨야 한다"
+    proc = _run_entry(["--conv-data", str(log), "--config", str(cfg), "--dry-run"],
+                      cwd=tmp_path)
+    assert proc.returncode == 0, proc.stderr[-500:]
+    assert "[venv]" not in proc.stderr, "이미 그 venv 인데 갈아탔다 (루프 위험)"
+
+
+def test_bad_venv_path_dies_before_computing(tmp_path):
+    cfg = tmp_path / "env.yaml"
+    cfg.write_text("paths:\n  venv: /어디에도/없는/venv\n", encoding="utf-8")
+    proc = _run_entry(["--config", str(cfg), "--dry-run"], cwd=tmp_path)
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "파이썬이 없습니다" in proc.stderr
+    assert "activate" in proc.stderr, "다른 방법도 알려줘야 한다"
+
+
+def test_venv_peek_works_without_pyyaml(tmp_path):
+    """갈아타기 전에는 PyYAML 도 없을 수 있다. 그때도 이 한 키는 읽어야 한다."""
+    import builtins
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_entry", ROOT / "src" / "run.py")
+    entry = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(entry)
+
+    cfg = tmp_path / "env.yaml"
+    cfg.write_text("# 주석\nllm:\n  url: http://x\npaths:\n  venv: /opt/some/venv\n",
+                   encoding="utf-8")
+
+    real = builtins.__import__
+
+    def blocked(name, *a, **k):
+        if name.split(".")[0] == "yaml":
+            raise ModuleNotFoundError("no yaml", name="yaml")
+        return real(name, *a, **k)
+
+    builtins.__import__ = blocked
+    try:
+        assert entry._peek_venv(str(cfg)) == "/opt/some/venv"
+    finally:
+        builtins.__import__ = real
 
 
 # ---------------------------------------------------------------------------
 # 사본 안에 둔 설정 — 조용히 지워지는 자리
 #
 # {AA}/{BB} 는 sync 때마다 rm -rf 로 통째 교체된다. 거기에 env.yaml 을 만들면
-# 채워 넣은 값이 사라지는데, 화면에는 "configs/env.yaml exists — kept" 가 찍힌다.
-# 그건 {AA}/configs 쪽 이야기인데 자기 파일이 지켜진 줄 알게 된다.
-#
-# configs/ 가 두 군데 있어서 생기는 일이다:
-#   {AA}/configs/env.yaml              ← 실값. 살아남는다
-#   {AA}/{BB}/configs/env.example.yaml ← 템플릿. 사본과 함께 교체된다
+# 채워 넣은 값이 사라지는데, 화면에는 "그대로 둡니다" 가 찍힌다 - 그건
+# {AA}/configs 쪽 이야기인데 자기 파일이 지켜진 줄 알게 된다.
 # ---------------------------------------------------------------------------
 
 def _fake_copy(tmp_path):
@@ -425,7 +489,6 @@ def test_config_missing_inside_a_copy_points_at_the_work_folder(tmp_path):
 
     work, copy = _fake_copy(tmp_path)
     assert synced_copy_root(copy / "configs" / "env.yaml", root=copy) == copy
-    # 작업 폴더 쪽은 사본 밖이므로 잡히지 않는다.
     assert synced_copy_root(work / "configs" / "env.yaml", root=copy) is None
 
 
@@ -439,10 +502,7 @@ def test_dev_repo_is_not_treated_as_a_copy(tmp_path):
 
 
 def test_config_inside_a_copy_is_refused(tmp_path, monkeypatch):
-    """설정은 언제나 {AA} 에 둔다. 경고로 끝내면 이번 실행은 돌고 다음에 사라진다.
-
-    그 사이에 {AA} 쪽 값과 갈라져도 드러나지 않는다 - 계산을 시작하기 전에 죽는다.
-    """
+    """설정은 언제나 {AA} 에 둔다. 경고로 끝내면 이번 실행은 돌고 다음에 사라진다."""
     import ragdiag.config as mod
 
     work, copy = _fake_copy(tmp_path)
