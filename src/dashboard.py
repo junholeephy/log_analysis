@@ -79,15 +79,49 @@ CONF_LABEL = {"high": "높음 (코드 검증)", "medium": "중간 (LLM+인용)",
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--config", help="설정 YAML. 생략하면 configs/env.yaml")
     parser.add_argument("--result", help="분류 결과 JSON. 생략하면 --output-dir 의 최신 것")
-    parser.add_argument("--output-dir", default="output",
+    parser.add_argument("--output-dir",
                         help="여기서 가장 최근 conv_parsed_*.json 을 고른다")
     parser.add_argument("--dept-class", help="부서 분류 체계 JSON")
     parser.add_argument("--job-class", help="직급 분류 체계 JSON")
     known, _ = parser.parse_known_args(sys.argv[1:])
+
+    # 설정 파일도 읽는다. 여기 적어둔 값이 무시되면 "설정했는데 안 먹는다"가
+    # 되고, 대시보드는 매번 인자를 붙여야 하는 도구가 된다 - 화면을 열 때마다
+    # 조직 분류 경로를 다시 치게 만들 이유가 없다.
+    # 우선순위는 파이프라인과 같다: CLI > 설정 > 기본값.
+    config = _load_config(known.config)
+    known.output_dir = (known.output_dir or config.get("paths.output_dir")
+                        or DEFAULT_OUTPUT_DIR)
+    known.dept_class = known.dept_class or config.get("paths.dept_class")
+    known.job_class = known.job_class or config.get("paths.job_class")
+    known.config_source = config.source
+
     if not known.result:
         known.result = newest_result(known.output_dir)
     return known
+
+
+DEFAULT_OUTPUT_DIR = "output"
+
+
+def _load_config(path: str | None):
+    """설정을 읽는다. 못 읽어도 대시보드는 떠야 한다 - 화면을 보는 도구다.
+
+    파이프라인은 설정이 깨지면 계산 전에 죽는 것이 맞지만, 여기서 죽으면
+    결과를 볼 방법 자체가 사라진다. 무엇이 잘못됐는지는 화면에 남긴다.
+    """
+    from ragdiag.config import Config, ConfigError, load
+
+    target = path or ("configs/env.yaml" if Path("configs/env.yaml").exists() else None)
+    if not target:
+        return Config()
+    try:
+        return load(target)
+    except ConfigError as e:
+        st.warning(f"설정을 읽지 못해 기본값으로 띄웁니다.\n\n{e}")
+        return Config()
 
 
 def newest_result(out_dir: str) -> str:
@@ -230,7 +264,8 @@ def main() -> None:
     st.title("대화 로그 실패 분류")
     others = len(sorted(Path(args.output_dir).glob("conv_parsed_*.json"))) - 1
     stamp = f"  ·  다른 실행 {others}건 더 있음" if others > 0 else ""
-    st.caption(f"{path}  ·  {len(df)}건{stamp}")
+    source = getattr(args, "config_source", "(기본값)")
+    st.caption(f"{path}  ·  {len(df)}건{stamp}  ·  설정 {source}")
 
     # --- 필터 ---------------------------------------------------------------
     def _keep_valid(chosen: list[str], options: list[str]) -> list[str]:

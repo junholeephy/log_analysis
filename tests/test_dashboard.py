@@ -374,3 +374,89 @@ def test_sidebar_stays_flat_without_a_classification(result_file):
     keys = {w.key for w in at.sidebar.multiselect}
     assert "부서" in labels, labels
     assert "부서:대분류" not in keys
+
+
+# ---------------------------------------------------------------------------
+# 설정 파일 — 적어둔 값이 실제로 쓰여야 한다
+#
+# configs/env.yaml 에 paths.dept_class 를 두고도 대시보드가 CLI 인자만 읽었다.
+# 설정 파일의 값이 아무것도 바꾸지 않는 것은 그 자체로 결함이다.
+# ---------------------------------------------------------------------------
+
+def _run_in(cwd, argv):
+    import os
+    import sys
+
+    import streamlit as st
+
+    saved_dir, saved_argv = os.getcwd(), sys.argv
+    os.chdir(cwd)
+    sys.argv = ["dashboard.py", *argv]
+    try:
+        st.cache_data.clear()
+        at = AppTest.from_file(str(DASHBOARD), default_timeout=120)
+        at.run()
+        return at
+    finally:
+        os.chdir(saved_dir)
+        sys.argv = saved_argv
+
+
+def _work_folder(tmp_path, result_file, **paths):
+    """{AA} 를 흉내낸다 - output/ 과 configs/env.yaml 이 있는 실행 위치."""
+    import json
+    import shutil
+
+    (tmp_path / "output").mkdir()
+    shutil.copy(result_file, tmp_path / "output" / "conv_parsed_20260101-000000.json")
+    (tmp_path / "configs").mkdir()
+
+    payload = json.loads(result_file.read_text(encoding="utf-8"))
+    depts = [d for d in {u.get("db_dept_name", "") for u in payload["analysis_results"]} if d]
+    (tmp_path / "configs" / "dept.json").write_text(json.dumps({"dept_classes": [
+        {"id": 1, "name": "본부A", "subclasses": [{"name": "중A", "items": depts}]}]},
+        ensure_ascii=False), encoding="utf-8")
+
+    lines = ["paths:"] + [f"  {k}: {v}" for k, v in paths.items()]
+    (tmp_path / "configs" / "env.yaml").write_text("\n".join(lines) + "\n",
+                                                   encoding="utf-8")
+    return tmp_path
+
+
+def test_classification_path_can_come_from_the_config(result_file, tmp_path):
+    """화면을 열 때마다 조직 분류 경로를 다시 치게 만들 이유가 없다."""
+    work = _work_folder(tmp_path, result_file, dept_class="configs/dept.json")
+    at = _run_in(work, [])
+
+    assert not at.exception, [f"{e.type}: {e.message}" for e in at.exception]
+    keys = {w.key for w in at.sidebar.multiselect}
+    assert "부서:대분류" in keys, f"설정의 dept_class 가 무시됐다: {keys}"
+
+
+def test_cli_beats_the_config(result_file, tmp_path):
+    """우선순위는 파이프라인과 같다 — CLI > 설정 > 기본값."""
+    import json
+
+    work = _work_folder(tmp_path, result_file, dept_class="configs/dept.json")
+    # 아무 것에도 안 붙는 체계를 CLI 로 준다. 그게 이기면 계층이 안 뜬다.
+    (work / "configs" / "none.json").write_text(
+        json.dumps({"dept_classes": [{"id": 1, "name": "X", "subclasses": [
+            {"name": "y", "items": ["어디에도없는팀"]}]}]}, ensure_ascii=False),
+        encoding="utf-8")
+
+    at = _run_in(work, ["--dept-class", "configs/none.json"])
+    keys = {w.key for w in at.sidebar.multiselect}
+    assert "부서:대분류" not in keys, "CLI 가 설정을 못 이겼다"
+
+
+def test_broken_config_does_not_stop_the_screen(result_file, tmp_path):
+    """파이프라인은 설정이 깨지면 죽는 것이 맞지만, 여기서 죽으면 결과를 볼
+    방법 자체가 사라진다. 무엇이 잘못됐는지는 화면에 남긴다."""
+    work = _work_folder(tmp_path, result_file)
+    (work / "configs" / "env.yaml").write_text("paths:\n  없는키: 1\n", encoding="utf-8")
+
+    at = _run_in(work, [])
+    assert not at.exception, [f"{e.type}: {e.message}" for e in at.exception]
+    assert at.metric, "설정이 깨졌다고 화면이 안 뜨면 안 된다"
+    assert any("설정을 읽지 못해" in w.value for w in at.warning), (
+        "조용히 기본값으로 돌면 왜 다른지 알 수 없다")

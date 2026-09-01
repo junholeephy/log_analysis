@@ -726,6 +726,8 @@ python log_analysis/src/run.py --config configs/env.yaml \
 python -m pip install -r log_analysis/requirements-dashboard.txt
 python -m streamlit run log_analysis/src/dashboard.py
 #   --result 를 안 주면 ./output 의 가장 최근 결과를 고른다.
+#   조직 분류 JSON 은 configs/env.yaml 의 paths.dept_class / paths.job_class 에
+#   적어두면 매번 인자로 주지 않아도 된다.
 ```
 <!-- END 운영 환경 순서 -->
 
