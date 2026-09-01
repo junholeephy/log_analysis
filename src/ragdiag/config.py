@@ -1,10 +1,10 @@
 """설정 읽기와 검증.
 
-사내에서는 코드를 한 줄도 못 고친다. 바뀔 만한 값이 코드에 박혀 있으면 그 사이클은
+운영 환경에서는 코드를 한 줄도 못 고친다. 바뀔 만한 값이 코드에 박혀 있으면 그 사이클은
 거기서 끝난다 - 고칠 수 없고, 고치면 규칙을 깬 것이다. 그래서 값은 YAML 로 받는다.
 
 **검증은 시작 즉시 하고 계산 전에 죽는다.** 30분 돌린 뒤에 키 하나 때문에 죽으면
-사이클 하나를 버린다. 사내 실험은 왕복이 비싸다.
+사이클 하나를 버린다. 운영 실험은 왕복이 비싸다.
 
 에러 메시지는 사람이 그대로 옮겨 적을 수 있게 쓴다. 결과 파일을 반출할 수 없으므로
 화면에 찍히는 문장이 유일한 회수 채널이다.
@@ -31,11 +31,12 @@ class ConfigError(Exception):
 
 # 키 → (기대 타입, 필수인가). 여기 없는 키는 오타로 본다.
 #
-# 오타를 통과시키면 조용히 기본값으로 돈다. 사내에서 임계값을 바꿨는데 안 바뀐
+# 오타를 통과시키면 조용히 기본값으로 돈다. 운영 환경에서 임계값을 바꿨는데 안 바뀐
 # 채로 30분이 지나가는 것이 가장 나쁜 결과다.
 SPEC: dict[str, tuple[type | tuple, bool]] = {
     "paths.conv_data": (str, False),
     "paths.filter_data": (str, False),
+    "paths.turns": (str, False),
     "paths.output_dir": (str, False),
     "paths.out": (str, False),
     "paths.cache": (str, False),
@@ -64,7 +65,7 @@ SPEC: dict[str, tuple[type | tuple, bool]] = {
     "service_error.markers": (list, False),
     "service_error.max_chars": (int, False),
 
-    # 라벨 실값 파일 경로. 사내 코드값이라 저장소에 두지 않는다 (§1.1 · C3).
+    # 라벨 실값 파일 경로. 운영 코드값이라 저장소에 두지 않는다 (§1.1 · C3).
     "labels.query": (str, False),
     "labels.emotion": (str, False),
 
@@ -221,7 +222,7 @@ def _install_labels(config: "Config") -> list[str]:
         if not file.exists():
             raise ConfigError(
                 f"{key}: 라벨 파일이 없습니다: {file}\n"
-                f"  사내 taxonomy 문서를 그 자리에 두세요 (형식: `A. 이름 -> 점수`).\n"
+                f"  운영 taxonomy 문서를 그 자리에 두세요 (형식: `A. 이름 -> 점수`).\n"
                 f"  이 파일은 저장소에 올라가지 않습니다.")
         table = label_mod.load_markdown_table(file)
         if not table:

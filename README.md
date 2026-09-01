@@ -1,6 +1,6 @@
 # 대화 로그 실패 분류기
 
-사내 지식 챗봇의 대화 로그에서 **사용자가 직전 답변에 불만을 표한 턴**을 골라,
+업무 지식 챗봇의 대화 로그에서 **사용자가 직전 답변에 불만을 표한 턴**을 골라,
 그 실패가 taxonomy 29개 케이스 중 어디에 해당하는지 분류한다.
 실패가 아닌 턴은 `case0`(정상)으로 따로 뺀다 — 필터가 넓게 잡아 들어온 것들이다.
 
@@ -19,33 +19,34 @@
 
 ## 두 장비로 나뉜다
 
-**기능 개발은 이 저장소에서, 검증은 사내 머신에서.** 실데이터가 밖으로 나올 수
-없고 사내에서는 코드를 고칠 수 없다. 그 분리가 구조에 박혀 있다 —
+**기능 개발은 이 저장소에서, 검증은 운영 장비에서.** 실데이터가 밖으로 나올 수
+없고 운영 환경에서는 코드를 고칠 수 없다. 그 분리가 구조에 박혀 있다 —
 `IMPLEMENTATION_SPEC.md` 규격을 따른다.
 
 ```
-[이 저장소] 구현 ──이식──▶ [사내] 실험 ──인사이트──▶ [이 저장소] 개선 ──▶ …
+[이 저장소] 구현 ──이식──▶ [운영 환경] 실험 ──인사이트──▶ [이 저장소] 개선 ──▶ …
 ```
 
 | | 무엇 |
 |---|---|
-| `src/ragdiag/contracts.py` | **입력 계약.** 사내에서 회수한 포맷 정보가 도착하는 유일한 지점 |
-| `configs/example.yaml` | **모든 설정 키.** 사내 실값은 `AA/configs/local.yaml` |
+| `src/ragdiag/contracts.py` | **입력 계약.** 운영 환경에서 회수한 포맷 정보가 도착하는 유일한 지점 |
+| `configs/example.yaml` | **모든 설정 키.** 운영 실값은 `AA/configs/local.yaml` |
 | `src/ragdiag/fixtures/synth.py` | **가짜 데이터는 파일이 아니라 코드.** `generate(n, seed)` 가 런타임에 만든다 |
 | `scripts/sync.sh` | 이식. `.git` 도 데이터도 넘기지 않는다 (규격 부록 A 전문) |
-| `docs/insights/` | 사내에서 본 것을 적어 오는 자리 |
+| `docs/insights/` | 운영 환경에서 본 것을 적어 오는 자리 |
+| **[`filter.md`](filter.md)** | **필터 규격.** 필터를 직접 구현할 때 무엇을 내놓아야 하는지 |
 | `src/ragdiag/labels.py` | **자리표시자만.** 실제 라벨 이름·점수는 설정으로 온다 (아래) |
 
 ### 라벨 실값은 저장소에 없다
 
-`llm_eval_result` · `llm_emotion_result` 의 **라벨 이름과 점수는 사내 코드값**이라
+`llm_eval_result` · `llm_emotion_result` 의 **라벨 이름과 점수는 운영 코드값**이라
 올리지 않는다 (규격 §1.1 · C3 — "식별 가능한 코드값 목록은 적지 않는다").
-이 저장소는 public 이고, 라벨 집합은 그 자체로 사내 분류 체계를 드러낸다.
+이 저장소는 public 이고, 라벨 집합은 그 자체로 운영 환경 분류 체계를 드러낸다.
 
 저장소에 있는 것은 **구조뿐**이다 — 글자 `A`~`R` / `A`~`I` 와 개수. 파서가
 `llm_alternatives` 의 글자를 읽어야 하고 그건 값이 아니라 형식이다.
 
-실값은 설정으로 가리킨다. 사내 taxonomy 문서를 **형식 그대로** 쓰면 된다:
+실값은 설정으로 가리킨다. 운영 taxonomy 문서를 **형식 그대로** 쓰면 된다:
 
 ```yaml
 labels:
@@ -53,9 +54,9 @@ labels:
   emotion: configs/emotion_taxonomy.md
 ```
 
-두 파일은 `.gitignore` 에 있다. 사내에서는 `{AA}/configs/` 에 두고 `local.yaml` 이
+두 파일은 `.gitignore` 에 있다. 운영 환경에서는 `{AA}/configs/` 에 두고 `local.yaml` 이
 가리키게 한다 — `sync.sh` 가 `{AA}/{BB}` 를 통째로 지웠다 다시 만들기 때문에
-**사내 자산은 `{AA}/{BB}` 밖에 둬야 한다.**
+**운영 자산은 `{AA}/{BB}` 밖에 둬야 한다.**
 
 > **실값 없이 라벨·점수 조건을 건 필터를 주면 계산 전에 죽는다.** 자리표시자
 > "질의유형 K" 는 로그의 실제 라벨과 절대 안 맞아서, 막지 않으면 필터가 **에러 없이
@@ -80,11 +81,11 @@ python src/run.py --legacy-regression                     # 회귀 기준선
 python -m pytest tests/ -q                                # LLM 없이 도는 전부
 ```
 
-## 사내 머신에서
+## 운영 장비에서
 
 ```bash
 # 최초 1회. clone 위치는 .staging/<저장소이름> 이어야 한다.
-cd <사내작업폴더> && git clone <이 저장소> .staging/log_analysis
+cd <운영 환경작업폴더> && git clone <이 저장소> .staging/log_analysis
 
 # 매번. 멱등하다 — 최초든 갱신이든 같은 명령이다.
 bash .staging/log_analysis/scripts/sync.sh <태그>   # 예: v0.11
@@ -135,7 +136,7 @@ output/run_summary_20260831-153708.txt     RUN SUMMARY 사본
 ```
 
 같은 데이터를 여러 번 돌리거나 설정을 바꿔 다시 돌렸을 때 **어느 것이 언제
-것인지 파일 이름만 보고 알 수 있어야 한다** — 사내에서는 결과를 반출할 수 없어
+것인지 파일 이름만 보고 알 수 있어야 한다** — 운영 환경에서는 결과를 반출할 수 없어
 이 파일들이 그 자리에 계속 쌓인다. 덮어쓰지 않는다.
 
 경로를 고정해야 하는 자동화가 있으면 `--out` 으로 직접 준다. 그때는 시각
@@ -160,7 +161,7 @@ PYTHONPATH=log_analysis/src python -m ragdiag --config configs/local.yaml
 
 ### ⚠ 작업 폴더의 `.gitignore` 를 먼저 손볼 것
 
-`sync.sh` 는 `.staging/` 만 무시 목록에 넣는다. 나머지는 그대로 두면 사내 git 에
+`sync.sh` 는 `.staging/` 만 무시 목록에 넣는다. 나머지는 그대로 두면 운영 git 에
 커밋된다. 실행하면 작업 폴더에 이런 것들이 생긴다.
 
 | | 무엇 | 커밋해도 되나 |
@@ -168,21 +169,21 @@ PYTHONPATH=log_analysis/src python -m ragdiag --config configs/local.yaml
 | `.cache/` | **LLM 판정 응답.** 실데이터에서 뽑은 관측·인용이 그대로 들어 있다 | 판단 필요 |
 | `data/` | 실데이터 | 대개 아니다 |
 | `output/` | 분류 결과 · RUN SUMMARY (파일명에 시각) | 남기고 싶을 수 있다 |
-| `configs/local.yaml` | 사내 실값 (경로·주소) | 판단 필요 |
+| `configs/local.yaml` | 운영 실값 (경로·주소) | 판단 필요 |
 
 `AA/log_analysis` 사본이 커밋되는 것은 목적이지만 — "어떤 코드로 돌렸는지"가
 남는 유일한 형태다 — 나머지는 의도한 것만 남기는 편이 낫다. 특히 `.cache/` 는
 분류를 다시 돌리면 재생성되는 파생물이고, 대화 내용이 그대로 들어 있다.
 
 ```bash
-cd <사내작업폴더>
+cd <운영 환경작업폴더>
 cat >> .gitignore <<'EOF'
 .cache/
 data/
 EOF
 ```
 
-**태그 없이 실행하지 않는다.** 결과 파일이 반출되지 않으므로 사내에 남은 사본이
+**태그 없이 실행하지 않는다.** 결과 파일이 반출되지 않으므로 운영 환경에 남은 사본이
 "어떤 코드로 돌렸는지"를 알려주는 유일한 형태다.
 
 `sync.sh` 가 지키는 것 — `configs/local.yaml` 은 있으면 **절대 건드리지 않고**
@@ -217,7 +218,7 @@ status    : PARTIAL
          └ 그쪽 것 ┘   └──── 가져갈 것 ────┘
 ```
 
-로그를 읽고 필터를 거는 부분은 사내 머신에 이미 있다. 이 저장소의 `conv.py` ·
+로그를 읽고 필터를 거는 부분은 운영 장비에 이미 있다. 이 저장소의 `conv.py` ·
 `filters.py` 는 여기서 검증할 때만 쓴다. **`Case` 를 만들어 넣을 수만 있으면**
 나머지는 그대로 돈다.
 
@@ -227,7 +228,7 @@ src/ragdiag/settings.py    배포마다 바뀌는 값 — 여기부터 열 것
 src/ragdiag/schema.py      Case + Step 1·2·3 출력 (Pydantic, 필드 순서에 의미 있음)
 src/ragdiag/taxonomy.py    case 30개 메타데이터와 설명 (case0 은 우리가 더한 것)
 src/ragdiag/prompts.py     판정 프롬프트 (단계별로 뺄 정보가 여기에 명시됨)
-src/ragdiag/backends.py    로컬 LLM (OpenAI 호환 HTTP) — 사내에서 도는 유일한 경로
+src/ragdiag/backends.py    로컬 LLM (OpenAI 호환 HTTP) — 운영 환경에서 도는 유일한 경로
 src/ragdiag/judge.py       LLM 호출, 디스크 캐시, 케이스 단위 병렬
 src/ragdiag/decide.py      구 진리표 (judge 가 참조)
 src/ragdiag/verify.py      인용 대조 (사전지식 오염 차단)
@@ -241,7 +242,7 @@ src/ragdiag/pipeline.py    단계별 함수
 
 이 목록은 `tests/test_boundary.py` 가 **실제로 import 해서** 확인한다. 코어 모듈
 하나가 입력 계층을 끌어오면 테스트가 깨진다. 문서로만 적어두면 누가 import 하나를
-추가하는 순간 조용히 무너지고, 알아채는 건 사내 머신에서 `ImportError` 가 났을
+추가하는 순간 조용히 무너지고, 알아채는 건 운영 장비에서 `ImportError` 가 났을
 때다.
 
 #### 붙이는 법
@@ -473,7 +474,7 @@ case22  Retrieve 성공, 생성 실패    (TYPE5 / category_2, 신뢰도 medium)
 ### 인용 강제가 knowledge leakage를 막는다
 
 판정자가 "문서에 답이 있다"고 말할 때, 문서를 읽어서인지 자기가 이미 알던 지식 때문인지
-프롬프트로는 구분할 수 없다. 사내 코퍼스는 일반 상식과 상당히 겹치므로 이건 실제 위험이다.
+프롬프트로는 구분할 수 없다. 운영 환경 코퍼스는 일반 상식과 상당히 겹치므로 이건 실제 위험이다.
 leakage가 일어나면 **검색 실패가 '근거 미활용'으로 오분류되어 통계에서 사라진다.**
 
 그래서 판정자에게 청크에서 글자 그대로 인용을 뽑게 하고 `verify.py`가 원문과 대조한다.
@@ -523,7 +524,7 @@ taxonomy 를 바꿀 때 LLM을 다시 돌리지 않아도 되며, "왜 이 라�
 `src/ragdiag/fixtures/synthetic.py` 는 **정확도 측정용이 아니라 회귀 테스트용**이다.
 
 1. 데이터와 판정 프롬프트를 같은 사람이 만들면 편향을 공유한다. 여기서 나온 일치율은 실전보다 후하다.
-2. 합성 문서는 지어낸 사내 규정이라 판정자가 사전지식으로 알 리가 없다. `leakage_probe`
+2. 합성 문서는 지어낸 업무 규정이라 판정자가 사전지식으로 알 리가 없다. `leakage_probe`
    케이스(상식으로 답 가능한 질문 + 그 답이 없는 문서)가 그 틈을 일부 메우지만 완전히는 못 메운다.
 
 **이 셋은 이제 독립적인 측정 도구가 아니다.** 판정 실패를 보고 프롬프트를 여섯 차례 고치는 데
@@ -575,7 +576,7 @@ taxonomy 를 바꿀 때 LLM을 다시 돌리지 않아도 되며, "왜 이 라�
 
 ## 판정 백엔드
 
-**`src/run.py` 가 아는 백엔드는 하나다.** 규격 §1.4 · C8 — 사내에서 실패할 호출은
+**`src/run.py` 가 아는 백엔드는 하나다.** 규격 §1.4 · C8 — 운영 환경에서 실패할 호출은
 `src/` 에 두지 않는다. claude CLI 와 Anthropic API 백엔드는 `tools/` 에 있고,
 `.gitattributes` 의 export-ignore 로 archive 에서 빠진다.
 
@@ -586,11 +587,11 @@ taxonomy 를 바꿀 때 LLM을 다시 돌리지 않아도 되며, "왜 이 라�
 | 연결 | OpenAI 호환 HTTP (표준 라이브러리) | CLI 서브프로세스 · Anthropic SDK |
 | 인증 | `LLM_API_URL` + `LLM_API_KEY` | 불필요 · `ANTHROPIC_API_KEY` |
 | 스키마 강제 | 서버 능력에 따라 자동 협상 | 없음 (프롬프트 계약) · 서버가 강제 |
-| 사내에 도착하나 | **그렇다** | 아니다 (export-ignore) |
+| 운영 환경에 도착하나 | **그렇다** | 아니다 (export-ignore) |
 
 `tools/dev_run.py` 는 **같은 코드 경로를 돈다.** 백엔드만 만들어 `main()` 에 넣으므로
 인자도 출력도 `src/run.py` 와 같다 — 검증하는 코드와 배포되는 코드가 갈라지면
-여기서 통과한 것이 사내에서 통과한다는 보장이 사라진다.
+여기서 통과한 것이 운영 환경에서 통과한다는 보장이 사라진다.
 
 ```bash
 python tools/dev_run.py --conv-data data/conv_eval.json   # claude 로 판정
@@ -625,7 +626,7 @@ python tools/dev_run.py --backend api --legacy-regression
 `anthropic`·`openai` import 를 실제로 잡으므로 다시 새어 들어가면 태그를 내기 전에
 걸린다.
 
-<!-- BEGIN 사내 순서 -->
+<!-- BEGIN 운영 환경 순서 -->
 ```bash
 # ── 0. 최초 1회만 ────────────────────────────────────────────────────────
 cd {AA}
@@ -647,8 +648,8 @@ python -m pip install -r log_analysis/requirements.txt
 export LLM_API_URL=http://<서버>:8000
 export LLM_API_KEY=<키>
 
-# ── 3. 사내 실값 (v0.26 부터 필요) ───────────────────────────────────────
-#   {AA}/configs/ 에 사내 taxonomy 문서 두 개를 둔다. log_analysis/ 안이 아니다 —
+# ── 3. 운영 실값 (v0.26 부터 필요) ───────────────────────────────────────
+#   {AA}/configs/ 에 운영 taxonomy 문서 두 개를 둔다. log_analysis/ 안이 아니다 —
 #   그 디렉터리는 sync 때마다 지워진다.
 #     {AA}/configs/query_taxonomy.md      형식: A. 이름 -> 점수
 #     {AA}/configs/emotion_taxonomy.md
@@ -669,12 +670,14 @@ python log_analysis/src/run.py --dry-run
 
 # ── 5. 실데이터 ──────────────────────────────────────────────────────────
 python log_analysis/src/run.py --config configs/local.yaml \
-    --conv-data <실데이터> --filter-data <필터> --limit 50
+    --conv-data <실데이터> --turns <고른_턴_목록> --limit 50
+#   --turns 는 필터를 그쪽에 두고 고른 턴만 받는 경로다 (filter.md).
+#   이 저장소의 필터를 쓸 거면 --filter-data <필터> 로 바꾼다.
 #   RUN SUMMARY 의 contract 줄이 첫 사이클의 실제 수확이다.
 #   계약이 깨끗해진 뒤에 전체로 간다 — 틀린 계약 위의 숫자는 믿을 수 없다.
 
 python log_analysis/src/run.py --config configs/local.yaml \
-    --conv-data <실데이터> --filter-data <필터>
+    --conv-data <실데이터> --turns <고른_턴_목록>
 #   결과는 ./output 에 끝난 시각이 붙어 쌓인다.
 
 # ── 6. 화면으로 보기 (선택) ──────────────────────────────────────────────
@@ -682,9 +685,9 @@ python -m pip install -r log_analysis/requirements-dashboard.txt
 python -m streamlit run log_analysis/src/dashboard.py
 #   --result 를 안 주면 ./output 의 가장 최근 결과를 고른다.
 ```
-<!-- END 사내 순서 -->
+<!-- END 운영 환경 순서 -->
 
-**`tools/` 는 반입본에 없다.** 위 명령에 `tools/` 가 등장하면 그건 사내에서 안 도는
+**`tools/` 는 반입본에 없다.** 위 명령에 `tools/` 가 등장하면 그건 운영 환경에서 안 도는
 명령이다 (`tests/test_spec_compliance.py` 가 이 블록을 검사한다).
 
 `--model` 은 서버가 여러 모델을 서빙하고 첫 번째가 아닌 걸 쓰고 싶을 때만 필요하다.
@@ -872,11 +875,11 @@ src/
   ragdiag/         (반입 목록은 위 참고)
     settings.py    배포마다 바뀌는 값을 한 곳에
     config.py      YAML 설정 읽기 · 시작 즉시 검증
-    contracts.py   입력 계약 — 사내에서 회수한 포맷이 도착하는 지점
+    contracts.py   입력 계약 — 운영 환경에서 회수한 포맷이 도착하는 지점
     pipeline.py    단계별 함수 — 노트북·다른 스크립트에서 부를 수 있게
     summary.py     RUN SUMMARY
 
-    ── 여기 전용 (사내 머신에는 그쪽 구현이 있다) ──
+    ── 여기 전용 (운영 장비에는 그쪽 구현이 있다) ──
     conv.py        conv_eval 파싱, 턴 짝짓기 (N+1 불만 ↔ N 답변·문서)
     filters.py     필터 적용, 점수 재계산, 단계별 탈락 기록
     labels.py      llm_eval / llm_emotion 라벨 테이블과 점수
@@ -897,7 +900,7 @@ scripts/
   legacy_run.py    구 파이프라인 (회귀 기준선)
 
 configs/example.yaml   모든 설정 키
-docs/insights/         사내에서 본 것을 적어 오는 자리
+docs/insights/         운영 환경에서 본 것을 적어 오는 자리
 ```
 
 `load.py` · `decide.py` · `report.py` 는 구 파이프라인 전용이다. 새 코드에서 쓰지 말 것 —

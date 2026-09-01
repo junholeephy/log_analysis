@@ -13,7 +13,7 @@
 결과는 pre_data_format 형태로 나온다. 원본 필드는 그대로 두고 분류 결과는
 `classification` 아래에 모은다.
 
-설정은 --config 로 준다. 사내에서는 코드를 못 고치므로 바뀔 값은 전부 거기 있다.
+설정은 --config 로 준다. 운영 환경에서는 코드를 못 고치므로 바뀔 값은 전부 거기 있다.
 CLI 플래그는 설정을 덮어쓴다 - 한 번만 다르게 돌려볼 때 쓴다.
 
 설정 없이 돌리려면 환경변수 두 개면 된다:
@@ -49,6 +49,7 @@ from ragdiag.pipeline import (
     build_outcome,
     judge_cases,
     load_and_select,
+    select_turns,
     make_judge,
 )
 from ragdiag.summary import (
@@ -59,7 +60,7 @@ from ragdiag.summary import (
     version,
 )
 
-# --output-dir 도 설정도 없을 때. 실행 위치 기준이라 사내에서는
+# --output-dir 도 설정도 없을 때. 실행 위치 기준이라 운영 환경에서는
 # 작업 폴더 아래에 생긴다.
 DEFAULT_OUTPUT_DIR = "output"
 
@@ -68,7 +69,7 @@ def make_backend(args, config=None, trace=None):
     """CLI 인자 > 설정 > 환경변수 순으로 고른다.
 
     trace(Conditions)를 주면 각 값이 **어디서 왔는지** 함께 적는다. 값만 찍으면
-    "왜 저 값이지"를 못 푼다 - 사내에는 .bashrc 의 환경변수, AA/configs/local.yaml,
+    "왜 저 값이지"를 못 푼다 - 운영 환경에는 .bashrc 의 환경변수, AA/configs/local.yaml,
     CLI 플래그가 겹쳐 있고 셋 다 화면에 안 보인다. 어느 쪽이 이겼는지가 안 보이면
     설정을 고쳐도 안 먹는 이유를 알 수 없다.
     """
@@ -121,15 +122,15 @@ def make_backend(args, config=None, trace=None):
         return built
 
     if backend != "local":
-        # 이 진입점은 사내에서 도는 경로만 안다. claude CLI 와 Anthropic API 는
-        # 사내에서 호출이 전부 실패하므로 tools/ 에 있고, src/ 는 tools/ 를
+        # 이 진입점은 운영 환경에서 도는 경로만 안다. claude CLI 와 Anthropic API 는
+        # 운영 환경에서 호출이 전부 실패하므로 tools/ 에 있고, src/ 는 tools/ 를
         # import 하지 않는다 (규격 §1.4).
         raise JudgeError(
             f"--backend {backend} 는 이 진입점에 없습니다.\n"
-            "  사내에서 실패할 호출은 src/ 에 두지 않습니다 (규격 §1.4 · C8).\n"
+            "  운영 환경에서 실패할 호출은 src/ 에 두지 않습니다 (규격 §1.4 · C8).\n"
             "  개발 장비에서 그 백엔드로 돌리려면:\n"
             "    python tools/dev_run.py --backend " + backend + " ...\n"
-            "  사내·서버 경로는 --backend local 입니다."
+            "  운영 환경·서버 경로는 --backend local 입니다."
         )
 
     url = pick(args.base_url, "llm.url", flag_name="--base-url")
@@ -429,6 +430,9 @@ def main(argv=None, backend=None) -> int:
                    help="Step 1 관측 골든셋을 돌려 필드별 일치율을 잰다")
     p.add_argument("--legacy-regression", action="store_true",
                    help="구 회귀셋 23건을 새 파이프라인으로 돌려 대조한다")
+    p.add_argument("--turns", metavar="FILE",
+                   help="운영 필터가 고른 턴 목록 (conversation_id + turn). "
+                        "주면 여기 필터를 걸지 않는다 — 라벨 실값도 필요 없다")
     p.add_argument("--filter-data", "--filter", dest="filter_data",
                    help="필터 JSON. 없으면 진단 가능한 후속 턴 전부")
     p.add_argument("--output-dir", dest="output_dir",
@@ -439,7 +443,7 @@ def main(argv=None, backend=None) -> int:
     # argparse 기본값을 넣으면 "사용자가 준 것"과 "기본값"을 못 가린다.
     p.add_argument("--check-llm", action="store_true",
                    help="로컬 LLM 서버 점검 — 모델·강제방식·1회 소요시간. "
-                        "사내에서 전체를 돌리기 전에 먼저 돌린다")
+                        "운영 환경에서 전체를 돌리기 전에 먼저 돌린다")
     p.add_argument("--backend", choices=["local", "cli", "api"],
                    help="local: OpenAI 호환 서버 / cli: claude -p "
                         "(개발 장비 전용 — 저장소에 없다) / api: Anthropic SDK")
@@ -494,13 +498,20 @@ def main(argv=None, backend=None) -> int:
         return 2
 
     filter_path = args.filter_data or config.get("paths.filter_data")
+    turns_path = args.turns or config.get("paths.turns")
+    if turns_path and filter_path:
+        # 둘 다 "어느 턴을 볼지"를 정한다. 같이 주면 어느 쪽이 이겼는지 안 보인다.
+        print("--turns 와 --filter-data 는 같이 쓸 수 없습니다. 둘 다 어느 턴을 "
+              "볼지 정하는 것이라, 같이 주면 무엇이 적용됐는지 알 수 없습니다.",
+              file=sys.stderr)
+        return 2
 
     # --out(파일)이 --output-dir(디렉터리)보다 우선한다. 둘 다 없으면 현재 위치.
     out_dir = args.output_dir or config.get("paths.output_dir") or DEFAULT_OUTPUT_DIR
     out_path = args.out or config.get("paths.out")
     # 끝난 시각을 파일 이름에 박는다. 같은 데이터를 여러 번 돌리거나 설정을 바꿔
     # 다시 돌렸을 때 어느 것이 언제 것인지 파일 이름만 보고 알 수 있어야 한다 —
-    # 사내에서는 결과를 반출할 수 없어 이 파일들이 그 자리에 계속 쌓인다.
+    # 운영 환경에서는 결과를 반출할 수 없어 이 파일들이 그 자리에 계속 쌓인다.
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     if not out_path:
         out_path = str(Path(out_dir) / f"conv_parsed_{stamp}.json")
@@ -530,14 +541,19 @@ def main(argv=None, backend=None) -> int:
                    note=(f"{len(changed)}개 값을 덮어씀" if changed else "덮어쓴 값 없음"))
     conditions.add("로그", str(conv_data) if conv_data else "(합성 데이터)",
                    origin(args.conv_data, "paths.conv_data", "--conv-data"))
-    conditions.add("필터", str(filter_path) if filter_path else "(없음)",
-                   origin(args.filter_data, "paths.filter_data", "--filter-data"),
-                   "" if filter_path else "진단 가능한 후속 턴 전부")
+    if turns_path:
+        conditions.add("턴 목록", str(turns_path),
+                       origin(args.turns, "paths.turns", "--turns"),
+                       "운영 필터가 고른 것 — 여기 필터는 안 돈다")
+    else:
+        conditions.add("필터", str(filter_path) if filter_path else "(없음)",
+                       origin(args.filter_data, "paths.filter_data", "--filter-data"),
+                       "" if filter_path else "진단 가능한 후속 턴 전부")
     conditions.add("출력", out_path,
                    origin(args.out or args.output_dir, "paths.output_dir", "--output-dir"))
 
     # --- 계약 대조. 분류 전에 한다 -------------------------------------------
-    # 여기서 나온 줄들이 사내에서 이쪽으로 돌아오는 포맷 정보의 전부다.
+    # 여기서 나온 줄들이 운영 환경에서 이쪽으로 돌아오는 포맷 정보의 전부다.
     if synthetic:
         from ragdiag.fixtures.synth import generate
 
@@ -560,7 +576,7 @@ def main(argv=None, backend=None) -> int:
         print()
         print(text)
         # 화면이 유일한 출력이지만, 손으로 옮겨 적을 때 스크롤을 거슬러 올라가는
-        # 것보다 파일을 여는 편이 낫다. 사내 밖으로 나가는 것은 아니다.
+        # 것보다 파일을 여는 편이 낫다. 운영 환경 밖으로 나가는 것은 아니다.
         if out_dir:
             try:
                 (Path(out_dir) / f"run_summary_{stamp}.txt").write_text(
@@ -570,10 +586,14 @@ def main(argv=None, backend=None) -> int:
         return code
 
     try:
-        selection = load_and_select(conv_data, filter_path,
-                                    history_turns=history, limit=limit)
+        if turns_path:
+            selection = select_turns(conv_data, turns_path,
+                                     history_turns=history, limit=limit)
+        else:
+            selection = load_and_select(conv_data, filter_path,
+                                        history_turns=history, limit=limit)
     except LabelTableMissing as e:
-        # 트레이스백을 그대로 던지면 사내에서 사이클 하나를 먹는다. 화면에
+        # 트레이스백을 그대로 던지면 운영 환경에서 사이클 하나를 먹는다. 화면에
         # 적힌 것이 전부인 환경이라 무엇을 하라는지가 그대로 보여야 한다.
         print(f"\n{e}\n", file=sys.stderr)
         summary.notes.append("라벨 실값이 없어 필터를 걸 수 없다. "
@@ -587,7 +607,15 @@ def main(argv=None, backend=None) -> int:
     summary.metrics.append(("selected", f"{len(selection):,} turns"))
 
     if not selection.cases:
-        summary.notes.append("필터를 통과한 턴이 없다. 조건을 확인할 것.")
+        # 첫 단계에서 다 빠졌으면 원인이 필터 조건이 아니라 로그 모양이다.
+        # 앞 턴이 곧 "비판받은 답변"이라, 고른 턴만 남기면 판정할 대상이 없다.
+        first = selection.steps[0] if selection.steps else None
+        if first is not None and first.remaining == 0 and first.dropped:
+            summary.notes.append(
+                f"후속 턴 {first.dropped}건에 직전 턴이 없다. 고른 턴만 남기지 말고 "
+                f"그 앞 턴도 함께 넘길 것 — 앞 턴이 판정 대상인 답변이다.")
+        else:
+            summary.notes.append("필터를 통과한 턴이 없다. 조건을 확인할 것.")
         return finish("NO DATA", 1)
 
     if args.dry_run:
@@ -655,7 +683,7 @@ def main(argv=None, backend=None) -> int:
             f"추론이 답에 도달 못 해 {len(saved)}건을 조건을 바꿔 다시 물었다. "
             f"--thinking off 로 다시 돌릴 것.")
     # case0 은 챗봇 지표가 아니라 **필터 지표**다. 필터가 재현율 쪽으로 넓게
-    # 잡아서 들어온 정상 턴이고, 필터는 사내 머신에 있어 여기서 못 고친다.
+    # 잡아서 들어온 정상 턴이고, 필터는 운영 장비에 있어 여기서 못 고친다.
     # 어떤 eval 라벨에 몰리는지가 그쪽으로 돌아가는 유일한 피드백이다.
     #
     # 0 건이라고 좋은 게 아니다. 필터가 너무 좁아 놓치고 있다는 뜻일 수도 있어서,
@@ -688,7 +716,7 @@ def _write_temp(payload: dict) -> str:
     """합성 데이터를 임시 파일로. 파서가 경로를 받게 되어 있어서다.
 
     저장소에도 작업 폴더에도 남기지 않는다 - 가짜 데이터가 파일로 남으면
-    사내 저장소로 흘러갈 길이 생긴다.
+    운영 저장소로 흘러갈 길이 생긴다.
     """
     import tempfile
 

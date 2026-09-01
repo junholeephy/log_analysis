@@ -1,11 +1,11 @@
 """개발 장비 전용 판정 백엔드 — Anthropic API.
 
-**규격 §1.4 · C8.** 사내에서는 이 호출이 전부 실패한다. 그래서 `src/` 에 두지
+**규격 §1.4 · C8.** 운영 환경에서는 이 호출이 전부 실패한다. 그래서 `src/` 에 두지
 않는다 - `src/` 안에 있으면 sync.sh 의 이식 표면 점검이 `anthropic` import 를
 잡아 preflight 가 FAILED 로 끝난다.
 
 `.gitattributes` 의 export-ignore 로 archive 결과에서 빠지므로 저장소에는 있지만
-사내에는 도착하지 않는다. import 방향은 한쪽이다 — tools/ 는 src/ 를 import 하지만
+운영 환경에는 도착하지 않는다. import 방향은 한쪽이다 — tools/ 는 src/ 를 import 하지만
 src/ 는 tools/ 를 import 하지 않는다.
 """
 

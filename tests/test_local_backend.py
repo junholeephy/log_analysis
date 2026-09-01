@@ -322,7 +322,7 @@ def test_giving_up_says_what_was_tried():
 def test_the_error_does_not_prescribe_the_wrong_knob():
     """한도에 걸린 게 아니면 max_tokens 를 늘려도 소용없다.
 
-    예전 문구는 어느 경우든 "max_tokens를 늘리거나"라고 했다. 사내에서는 그 한 줄이
+    예전 문구는 어느 경우든 "max_tokens를 늘리거나"라고 했다. 운영 환경에서는 그 한 줄이
     사이클 하나다 - 늘려서 다시 돌리고, 똑같이 실패하는 데 몇 시간이 간다.
     """
     with _Stub(accepts=["json_schema"]) as stub:

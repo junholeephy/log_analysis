@@ -33,7 +33,7 @@ from pathlib import Path
 def _bail(message: str) -> None:
     """무엇을 하라는지까지 적고 멈춘다.
 
-    사내에서는 맨 트레이스백 하나가 사이클을 먹는다. 인터넷도 없고 물어볼
+    운영 환경에서는 맨 트레이스백 하나가 사이클을 먹는다. 인터넷도 없고 물어볼
     곳도 없어서, 화면에 적힌 것이 전부다.
     """
     print(f"\n{message}\n", file=sys.stderr)

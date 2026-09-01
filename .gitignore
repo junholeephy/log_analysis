@@ -22,7 +22,7 @@ logs/
 !package.json
 taxonomy*.txt
 
-# 사내 실값
+# 운영 실값
 configs/local.yaml
 configs/local.example.yaml
 .env
@@ -55,7 +55,7 @@ dist/
 # claude CLI 판정 백엔드는 개발 장비 전용이다. 저장소에 올리지 않는다.
 tools/backend_cli.py
 
-# 라벨 실값 — 사내 코드값이라 저장소에 두지 않는다 (규격 §1.1 · C3).
+# 라벨 실값 — 운영 코드값이라 저장소에 두지 않는다 (규격 §1.1 · C3).
 # 저장소에는 labels.py 의 자리표시자만 있고, 실값은 --config 로 가리킨다.
 query_taxonomy.md
 emotion_taxonomy.md

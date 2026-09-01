@@ -1,6 +1,6 @@
 """RUN SUMMARY — 화면이 유일한 출력이다.
 
-결과 파일도 플롯도 로그도 반출할 수 없다. 사내 실험에서 이쪽으로 돌아오는 것은
+결과 파일도 플롯도 로그도 반출할 수 없다. 운영 실험에서 이쪽으로 돌아오는 것은
 사람이 화면을 보고 옮겨 적은 것뿐이다. 그래서 이 블록은 **성공·실패 무관하게**
 마지막에 찍고, 한 줄에 한 항목, 옮겨 적기 쉽게 짧게 쓴다.
 
@@ -54,7 +54,7 @@ def _clip(text: str, width: int) -> str:
 def version() -> str:
     """BB/VERSION(이식본) 또는 git(개발 중)에서 읽는다.
 
-    "어떤 코드로 돌렸는지"는 결과 파일이 반출되지 않는 상황에서 사내에 남는
+    "어떤 코드로 돌렸는지"는 결과 파일이 반출되지 않는 상황에서 운영 환경에 남는
     유일한 단서다. 알 수 없으면 그렇다고 적는다 - 빈칸으로 두면 옮겨 적을 때
     빠진다.
     """
@@ -79,7 +79,7 @@ def peak_memory_gb() -> Optional[float]:
 
         peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         # 단위가 플랫폼마다 다르다 - 리눅스는 KB, macOS 는 바이트.
-        # 사내는 리눅스지만 여기서 시험하면서 40GB 로 찍히면 못 믿게 된다.
+        # 운영 환경는 리눅스지만 여기서 시험하면서 40GB 로 찍히면 못 믿게 된다.
         divisor = 1024 ** 3 if sys.platform == "darwin" else 1024 ** 2
         return peak / divisor
     except (ImportError, OSError):
@@ -90,7 +90,7 @@ def peak_memory_gb() -> Optional[float]:
 class Source:
     """값 하나와 **그 값이 어디서 왔는지**.
 
-    값만 찍으면 "왜 저게 저 값이지"를 못 푼다. 사내에서는 .bashrc 의 환경변수,
+    값만 찍으면 "왜 저게 저 값이지"를 못 푼다. 운영 환경에서는 .bashrc 의 환경변수,
     AA/configs/local.yaml, CLI 플래그가 겹쳐 있고 셋 다 안 보인다. 어느 쪽이
     이겼는지가 안 보이면 설정을 고쳐도 안 먹는 이유를 알 수 없다.
     """

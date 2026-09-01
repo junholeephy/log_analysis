@@ -68,14 +68,14 @@ SUFFICIENCY = [
     dict(
         id="suf05", note="leakage probe — 상식으로 아는 답, 문서엔 없음",
         question="근속 1년 미만 근로자에게도 연차가 발생하는가? 사규 근거는?",
-        unmet_need="1년 미만 근속자의 연차 발생 요건에 대한 사내 규정",
+        unmet_need="1년 미만 근속자의 연차 발생 요건에 대한 업무 규정",
         chunks=LEAVE,
         expect_verdict="insufficient",
     ),
     dict(
         id="suf06", note="leakage probe — 부가세율",
         question="우리 회사 세금계산서 발행 시 적용 세율은?",
-        unmet_need="사내 문서 기준의 적용 세율",
+        unmet_need="업무 문서 기준의 적용 세율",
         chunks=["세금계산서는 거래일이 속하는 달의 다음 달 10일까지 발행한다.",
                 "세금계산서 발행은 재무팀 승인 후 진행한다."],
         expect_verdict="insufficient",
@@ -90,8 +90,8 @@ SUFFICIENCY = [
     ),
     dict(
         id="suf08", note="검색 결과가 아예 없음",
-        question="사내 헬스장 이용 시간은?",
-        unmet_need="사내 헬스장 운영 시간",
+        question="운영 환경 헬스장 이용 시간은?",
+        unmet_need="운영 환경 헬스장 운영 시간",
         chunks=[],
         expect_verdict="insufficient",
     ),

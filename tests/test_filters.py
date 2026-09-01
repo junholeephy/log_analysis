@@ -39,9 +39,9 @@ ROOT = Path(__file__).resolve().parents[1]
 # ---------------------------------------------------------------------------
 
 def test_shipped_table_carries_no_real_label_values():
-    """실값은 사내 코드값이라 저장소에 없다 (규격 §1.1 · C3).
+    """실값은 운영 코드값이라 저장소에 없다 (규격 §1.1 · C3).
 
-    이 저장소는 public 이고, 라벨 집합은 그 자체로 사내 분류 체계를 드러낸다.
+    이 저장소는 public 이고, 라벨 집합은 그 자체로 운영 환경 분류 체계를 드러낸다.
     전에는 labels.py 와 query_taxonomy.md 양쪽에 실값이 박혀 있었다.
     """
     import re as _re
@@ -419,3 +419,125 @@ def test_single_turn_conversations_are_excluded():
     selected, steps = apply_filter(convs, FilterSpec())
     assert selected == []
     assert "2턴 이상" in steps[0].name
+
+
+# ---------------------------------------------------------------------------
+# --turns — 필터를 운영 환경에 두고 고른 턴만 받는다
+#
+# 필터 로직은 운영 환경 것을 쓴다. 그런데 턴을 Case 로 엮는 일(후속 턴 ↔ 직전 턴의
+# 답변 ↔ 그 답변을 만든 청크)은 짝을 틀리면 **조용히 엉뚱한 답변을 판정한다.**
+# 그래서 그 부분만은 검증된 이쪽 코드가 한다.
+# ---------------------------------------------------------------------------
+
+def _two_turn_log():
+    return {"users": [{
+        "user_id": "u1", "db_login_id": "l1", "job_grade": "사원",
+        "db_dept_name": "인사팀", "db_job_name": "인사", "db_position_name": "팀원",
+        "conversations": [{"conversation_id": "C-1", "turns": [
+            {"turn": 1, "user_question": "연차 며칠인가요?", "llm_response": "규정에 따릅니다.",
+             "retrieved_data": json.dumps(["연차는 15일이다."])},
+            {"turn": 2, "user_question": "그래서 며칠이요?", "llm_response": "15일입니다.",
+             "retrieved_data": json.dumps(["연차는 15일이다."])},
+        ]}]}]}
+
+
+def _write(tmp_path, log, turns, name="turns.json"):
+    log_path = tmp_path / "conv.json"
+    log_path.write_text(json.dumps(log, ensure_ascii=False), encoding="utf-8")
+    turns_path = tmp_path / name
+    if isinstance(turns, str):
+        turns_path.write_text(turns, encoding="utf-8")
+    else:
+        turns_path.write_text(json.dumps(turns, ensure_ascii=False), encoding="utf-8")
+    return log_path, turns_path
+
+
+def test_turns_list_selects_exactly_what_was_asked(tmp_path):
+    from ragdiag.pipeline import select_turns
+
+    log, turns = _write(tmp_path, _two_turn_log(),
+                        [{"conversation_id": "C-1", "turn": 2}])
+    selection = select_turns(log, turns)
+    assert len(selection.cases) == 1
+    case = selection.cases[0]
+    assert case.turn == 2
+    # 짝짓기가 요점이다 - 판정 대상은 **직전 턴의** 답변이어야 한다.
+    assert case.llm_ans_on_last_q == "규정에 따릅니다."
+    assert case.current_query == "그래서 며칠이요?"
+    assert case.rag_chunks == ["연차는 15일이다."]
+
+
+def test_turns_list_accepts_jsonl(tmp_path):
+    """파이프라인이 JSONL 을 뱉는 경우가 흔하다. 변환 스크립트를 하나 더 짜게
+    만들 이유가 없다 - 운영 환경에서는 코드를 못 고친다 (C2)."""
+    from ragdiag.pipeline import select_turns
+
+    log, turns = _write(tmp_path, _two_turn_log(),
+                        '{"conversation_id": "C-1", "turn": 2}\n', name="t.jsonl")
+    assert len(select_turns(log, turns).cases) == 1
+
+
+def test_turns_not_in_the_log_are_counted_not_swallowed(tmp_path):
+    from ragdiag.pipeline import select_turns
+
+    log, turns = _write(tmp_path, _two_turn_log(), [
+        {"conversation_id": "C-1", "turn": 2},
+        {"conversation_id": "없는대화", "turn": 2},
+    ])
+    selection = select_turns(log, turns)
+    assert len(selection.cases) == 1
+    assert any("로그에 없는" in st.name and st.dropped == 1 for st in selection.steps), \
+        [(st.name, st.dropped) for st in selection.steps]
+
+
+def test_first_turn_cannot_be_judged_and_says_so(tmp_path):
+    """직전 턴이 판정 대상인 답변이다. 1턴을 지목하면 판정할 것이 없다."""
+    from ragdiag.pipeline import select_turns
+
+    log, turns = _write(tmp_path, _two_turn_log(),
+                        [{"conversation_id": "C-1", "turn": 1}])
+    selection = select_turns(log, turns)
+    assert not selection.cases
+    assert any("직전 턴" in st.name and st.dropped == 1 for st in selection.steps), \
+        [(st.name, st.dropped) for st in selection.steps]
+
+
+def test_ambiguous_conversation_id_is_refused(tmp_path):
+    """대화 id 가 사용자마다 겹칠 수 있다. 아무거나 고르면 남의 대화를 판정한다."""
+    from ragdiag.pipeline import select_turns
+
+    log = _two_turn_log()
+    second = json.loads(json.dumps(log["users"][0]))
+    second["user_id"] = "u2"
+    log["users"].append(second)
+
+    path, turns = _write(tmp_path, log, [{"conversation_id": "C-1", "turn": 2}])
+    with pytest.raises(ValueError, match="user_id"):
+        select_turns(path, turns)
+
+    _, with_user = _write(tmp_path, log,
+                          [{"user_id": "u2", "conversation_id": "C-1", "turn": 2}],
+                          name="ok.json")
+    assert len(select_turns(path, with_user).cases) == 1
+
+
+def test_turn_list_needs_no_label_values(tmp_path, placeholder_labels):
+    """무엇을 볼지는 이미 정해져서 왔다. 라벨 실값을 요구할 이유가 없다."""
+    from ragdiag.pipeline import select_turns
+
+    log, turns = _write(tmp_path, _two_turn_log(),
+                        [{"conversation_id": "C-1", "turn": 2}])
+    assert len(select_turns(log, turns).cases) == 1
+
+
+def test_bad_turn_list_says_which_line(tmp_path):
+    from ragdiag.pipeline import read_turn_list
+
+    path = tmp_path / "t.jsonl"
+    path.write_text('{"conversation_id": "C-1", "turn": 2}\n{망가진\n', encoding="utf-8")
+    with pytest.raises(ValueError, match=":2"):
+        read_turn_list(path)
+
+    path.write_text(json.dumps([{"turn": 2}]), encoding="utf-8")
+    with pytest.raises(ValueError, match="conversation_id"):
+        read_turn_list(path)

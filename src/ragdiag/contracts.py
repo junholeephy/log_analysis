@@ -1,14 +1,14 @@
-"""입력 데이터 계약 — 사내에서 회수한 포맷 정보가 도착하는 유일한 지점.
+"""입력 데이터 계약 — 운영 환경에서 회수한 포맷 정보가 도착하는 유일한 지점.
 
-실데이터는 밖으로 나오지 않는다. 사내 실험에서 이쪽으로 돌아오는 것은 **포맷**과
+실데이터는 밖으로 나오지 않는다. 운영 실험에서 이쪽으로 돌아오는 것은 **포맷**과
 **사람의 인사이트** 둘뿐이고, 포맷이 여러 파일에 흩어져 있으면 반영할 때마다
 어디를 고쳐야 하는지부터 찾아야 한다. 그래서 여기 한 곳에 둔다.
 
 **구조만 적는다.** 실제 값·분포·식별 가능한 코드값 목록은 적지 않는다. 부서명이나
-직급 코드의 실제 목록은 그 자체가 사내 정보다. allowed 에 적는 것은 파서가 의미를
+직급 코드의 실제 목록은 그 자체가 운영 환경 정보다. allowed 에 적는 것은 파서가 의미를
 갖고 분기하는 값(true/false 표기 같은 것)뿐이다.
 
-`note` 는 사내에서 확인된 사실을 적는 자리다. "실제로는 null 이 온다", "이 필드는
+`note` 는 운영 환경에서 확인된 사실을 적는 자리다. "실제로는 null 이 온다", "이 필드는
 turn 1 에만 비어 있다" 같은 것. 다음 사이클의 코드가 그걸 근거로 바뀐다.
 
 validate() 는 계약 위반을 **사람이 그대로 옮겨 적을 수 있는 문장**으로 돌려준다.
@@ -27,12 +27,12 @@ class Field:
     name: str
     dtype: str                      # int | float | str | bool | list | dict | datetime
     nullable: bool
-    allowed: Optional[tuple] = None  # 파서가 분기하는 값만. 사내 코드값 목록은 적지 않는다
+    allowed: Optional[tuple] = None  # 파서가 분기하는 값만. 운영 코드값 목록은 적지 않는다
     rng: Optional[tuple] = None      # (min, max)
-    note: str = ""                   # 사내에서 확인된 사실을 적는 자리
+    note: str = ""                   # 운영 환경에서 확인된 사실을 적는 자리
     # 파이프라인이 읽지 않는 필드. 어긋나도 결과가 달라지지 않으므로 MISMATCH 로
     # 세지 않는다 - 계약 위반 줄은 "판정이 틀렸을 수 있다"는 뜻이어야 하고,
-    # 거기 잡음이 섞이면 사내에서 그 줄을 안 보게 된다.
+    # 거기 잡음이 섞이면 운영 환경에서 그 줄을 안 보게 된다.
     unused: bool = False
 
     def describe(self) -> str:
@@ -82,7 +82,7 @@ TURN_SCHEMA = (
                "파서가 쪼갠다. 비어 있으면 검색 결과 0건이고, 서비스가 "
                "'검색 없이 답할 수 있다'고 판단한 경우도 여기 해당한다 (case21)"),
     Field("prev_question", "str|list", True, unused=True,
-          note="사내 로그에서 list 로 관측됨 (2026-09-01, 16,141건). 파이프라인은 "
+          note="운영 환경 로그에서 list 로 관측됨 (2026-09-01, 16,141건). 파이프라인은 "
                "읽지 않는다 - pre_queries 를 turn 순서로 직접 만든다. "
                "다만 이게 서비스가 모델에 실제로 넘긴 히스토리라면 우리가 재구성한 "
                "것과 다를 수 있다. case14 판정의 전제가 걸려 있으니 내용 확인 필요"),
@@ -91,7 +91,7 @@ TURN_SCHEMA = (
                "2턴 이상 대화라는 뜻이지만 선언값과 실제 턴 수가 어긋난 로그를 본 적 있다"),
     Field("llm_eval_result", "str", True,
           note="직전 턴과의 관계 분류. turn 1 에서는 비어 있다. "
-               "실제 라벨 목록은 사내 query_taxonomy 에 있다"),
+               "실제 라벨 목록은 운영 taxonomy 에 있다"),
     Field("llm_eval_score", "float", True, rng=(0, 100)),
     Field("llm_eval_score_top1", "float", True, rng=(0, 100),
           note="1순위 라벨의 점수. llm_eval_score 는 확률가중 기대점수일 수 있다"),
@@ -159,7 +159,7 @@ def _sample_values(rows: list[dict], name: str, limit: int = 4) -> str:
 def validate(rows: list[dict], schema: tuple[Field, ...], layer: str) -> list[Mismatch]:
     """한 층의 레코드들을 계약과 대조한다.
 
-    개별 값을 찍지 않는다 - 타입 이름과 건수만 남긴다. 사내 실데이터가 화면을
+    개별 값을 찍지 않는다 - 타입 이름과 건수만 남긴다. 실데이터가 화면을
     거쳐 밖으로 나가는 경로를 만들지 않기 위해서다.
     """
     found: dict[tuple, Mismatch] = {}
@@ -250,7 +250,7 @@ class ContractReport:
 def check_log(payload: dict) -> ContractReport:
     """conv_eval 페이로드 전체를 계약과 대조한다.
 
-    분류를 돌리기 전에 부른다. 여기서 나온 줄들이 사내에서 이쪽으로 돌아오는
+    분류를 돌리기 전에 부른다. 여기서 나온 줄들이 운영 환경에서 이쪽으로 돌아오는
     포맷 정보의 전부다.
     """
     users: list[dict] = []

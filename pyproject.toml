@@ -21,6 +21,6 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 # src 배치라 패키지를 설치하지 않고도 테스트가 돈다.
-# 사내에서는 PYTHONPATH=BB/src 로 같은 일을 한다 - 공용 venv 를 건드리지 않는다.
+# 운영 환경에서는 PYTHONPATH=BB/src 로 같은 일을 한다 - 공용 venv 를 건드리지 않는다.
 pythonpath = ["src"]
 testpaths = ["tests"]

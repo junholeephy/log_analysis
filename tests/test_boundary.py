@@ -1,11 +1,11 @@
 """반입 경계를 실제 import 로 확인한다.
 
-사내 머신에는 로그 파서와 필터가 이미 있다. 이 저장소에서 가져갈 것은 판정과
+운영 장비에는 로그 파서와 필터가 이미 있다. 이 저장소에서 가져갈 것은 판정과
 출력, 즉 **Case 를 받아 case_id 를 붙이는 부분**이다. 그 부분이 입력 계층을
 붙들고 있으면 "필요한 것만 복사"가 성립하지 않는다.
 
 문서로만 적어 두면 썩는다. 누가 output.py 에 conv 를 하나 import 하는 순간
-경계는 조용히 무너지고, 그걸 알아채는 건 사내 머신에서 ImportError 가 났을
+경계는 조용히 무너지고, 그걸 알아채는 건 운영 장비에서 ImportError 가 났을
 때다. 그래서 여기서 정적 분석이 아니라 **실제로 import 해서 sys.modules 를**
 본다 - TYPE_CHECKING 블록이나 함수 안 import 는 런타임 의존이 아니고,
 정적 분석은 그 둘을 가려내지 못한다.
@@ -20,7 +20,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
-# 사내 머신으로 가져갈 모듈. 이 목록이 README 의 복사 목록과 같아야 한다.
+# 운영 장비으로 가져갈 모듈. 이 목록이 README 의 복사 목록과 같아야 한다.
 CORE = [
     "ragdiag.settings",     # 배포마다 바뀌는 값
     "ragdiag.schema",       # Case · 판정 결과 모델
@@ -37,7 +37,7 @@ CORE = [
     "ragdiag.pipeline",     # 단계별 함수
 ]
 
-# 여기 남는 것. 사내 머신에는 그쪽 구현이 있다.
+# 여기 남는 것. 운영 장비에는 그쪽 구현이 있다.
 LOCAL_ONLY = [
     "ragdiag.load",         # conv_eval 파일 읽기
     "ragdiag.conv",         # conv_eval → Case
@@ -56,7 +56,7 @@ def imported_modules(module: str) -> set[str]:
         "print(json.dumps(sorted(m for m in sys.modules "
         "if m.startswith('ragdiag.'))))"
     )
-    # 사내에서 붙이는 방식과 같게 한다 - PYTHONPATH=BB/src 로만 붙이고
+    # 운영 환경에서 붙이는 방식과 같게 한다 - PYTHONPATH=BB/src 로만 붙이고
     # 패키지를 venv 에 설치하지 않는다.
     env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
     proc = subprocess.run([sys.executable, "-c", code], cwd=ROOT,
@@ -73,7 +73,7 @@ def test_core_does_not_pull_in_the_input_layer(module):
     leaked = pulled & set(LOCAL_ONLY)
     assert not leaked, (
         f"{module} 이 입력 계층을 끌어온다: {sorted(leaked)}\n"
-        "반입 목록이 늘어나거나, 사내 머신에서 ImportError 가 난다.\n"
+        "반입 목록이 늘어나거나, 운영 장비에서 ImportError 가 난다.\n"
         "타입 주석용이면 TYPE_CHECKING 블록으로, 일부 경로에서만 쓰면 "
         "함수 안으로 옮길 것."
     )
@@ -121,7 +121,7 @@ def test_readme_copy_list_matches_this_test():
 # ---------------------------------------------------------------------------
 
 def test_core_accepts_a_foreign_conversation_object():
-    """사내 머신의 파서가 만든 객체로도 출력이 조립돼야 한다.
+    """운영 장비의 파서가 만든 객체로도 출력이 조립돼야 한다.
 
     build_output 은 conversation_id 와 user 두 속성만 읽는다. 그 계약이 깨지면
     반입한 쪽에서 AttributeError 가 나고, 여기서는 conv.Conversation 을 쓰고

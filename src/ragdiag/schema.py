@@ -118,7 +118,7 @@ ComplaintTarget = Literal[
 ]
 
 QuestionDomain = Literal[
-    "domain",            # 사내 문서를 찾아야 답할 수 있는 질문
+    "domain",            # 업무 문서를 찾아야 답할 수 있는 질문
     "general_knowledge", # 상식                            -> case25
     "calculation",       # 수식·날짜·산수                  -> case26
     "code",              # SQL/Python 등                   -> case27

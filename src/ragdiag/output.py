@@ -16,7 +16,7 @@ from typing import Optional
 
 from ragdiag.classify import TurnResult
 if TYPE_CHECKING:                      # 런타임 의존을 만들지 않는다.
-    # 쓰는 것은 .user 와 .conversation_id 두 개뿐이다. 사내 머신에서는 그쪽
+    # 쓰는 것은 .user 와 .conversation_id 두 개뿐이다. 운영 장비에서는 그쪽
     # 파서가 만든 객체가 들어올 수 있으므로 런타임에 conv 를 붙들지 않는다.
     from ragdiag.conv import Conversation
 

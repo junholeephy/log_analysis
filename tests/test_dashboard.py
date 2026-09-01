@@ -41,7 +41,7 @@ def result_file(tmp_path_factory):
 
     selection = load_and_select(log)
     # 개발 장비 전용 백엔드에 묶어두면 깨끗한 사본에서 이 테스트가 통째로
-    # 건너뛰어진다. 대시보드는 사내에서 쓰는 화면이라 그러면 안 된다.
+    # 건너뛰어진다. 대시보드는 운영 환경에서 쓰는 화면이라 그러면 안 된다.
     with StubLLM() as stub:
         backend = OpenAICompatBackend(base_url=stub.url, model="stub-model",
                                       api_key="stub", timeout=30)
@@ -123,7 +123,7 @@ def test_dashboard_does_not_need_matplotlib(result_file):
 
 
 def test_dashboard_works_without_org_classification(result_file):
-    """조직 분류 JSON 을 안 줘도 돌아야 한다. 사내에 그 파일이 없을 수 있다."""
+    """조직 분류 JSON 을 안 줘도 돌아야 한다. 운영 환경에 그 파일이 없을 수 있다."""
     at = render(result_file)
     assert not at.exception, [f"{e.type}: {e.message}" for e in at.exception]
 
@@ -131,7 +131,7 @@ def test_dashboard_works_without_org_classification(result_file):
 # ---------------------------------------------------------------------------
 # 잘못 실행했을 때 무엇을 하라고 하는가
 #
-# 사내에서는 맨 트레이스백 하나가 사이클을 먹는다. 인터넷도 없고 물어볼 곳도
+# 운영 환경에서는 맨 트레이스백 하나가 사이클을 먹는다. 인터넷도 없고 물어볼 곳도
 # 없어서 화면에 적힌 것이 전부다.
 # ---------------------------------------------------------------------------
 

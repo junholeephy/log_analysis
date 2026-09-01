@@ -15,7 +15,7 @@ expect 에는 그 케이스에서 **확실한 필드만** 적는다. 적지 않�
 프롬프트를 이 셋에 맞춰 고치면 점수가 과대평가된다. 실데이터 골든셋을 대체하지 않는다.
 """
 
-# 사내 문서 청크 - 여러 케이스에서 재사용
+# 업무 문서 청크 - 여러 케이스에서 재사용
 RULES = [
     "국내 출장 식비는 1일 3만원을 상한으로 한다.",
     "국내 출장 숙박비는 1박 8만원을 상한으로 한다.",
@@ -52,7 +52,7 @@ CASES = [
     dict(
         id="none03", note="새 질문처럼 보이지만 앞 답이 부족했다는 지적이다",
         pre_queries=["국내 출장비 상한을 알려주세요."],
-        answer="출장비는 사내 규정에 따라 지급됩니다.",
+        answer="출장비는 업무 규정에 따라 지급됩니다.",
         complaint="그래서 얼마라는 건가요?",
         chunks=RULES,
         expect=dict(complaint_target="content_missing", question_domain="domain"),
@@ -181,7 +181,7 @@ CASES = [
 
     # ---------- question_domain ----------
     dict(
-        id="dom01", note="사내 규정 질문",
+        id="dom01", note="업무 규정 질문",
         pre_queries=["경조사비 지원 기준이 어떻게 되나요?"],
         answer="경조사비는 사규에 따라 지원됩니다.",
         complaint="구체적인 금액을 알려주세요.",
@@ -262,7 +262,7 @@ CASES = [
     ),
     dict(
         id="ctx02", note="대상 명사 생략",
-        pre_queries=["사내 GPU 서버 사용 신청 어떻게 하나요?",
+        pre_queries=["운영 환경 GPU 서버 사용 신청 어떻게 하나요?",
                      "신청하면 얼마나 쓸 수 있어요?"],
         answer="GPU 서버는 신청 후 승인을 받아 사용하실 수 있습니다.",
         complaint="사용 가능 시간을 물었습니다.",
@@ -340,7 +340,7 @@ CASES = [
     dict(
         id="unsup01", note="외부 링크 요구",
         pre_queries=["출장비 규정 원문 PDF 다운로드 링크를 주세요."],
-        answer="사내 포털의 규정 메뉴에서 확인하실 수 있습니다.",
+        answer="운영 환경 포털의 규정 메뉴에서 확인하실 수 있습니다.",
         complaint="링크를 달라니까요.",
         chunks=RULES,
         expect=dict(requests_unsupported_output=True),

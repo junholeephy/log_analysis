@@ -180,8 +180,8 @@ def load_filter(path: str | Path) -> FilterSpec:
         raise LabelTableMissing(
             f"{path} 가 라벨·점수 조건을 쓰는데 라벨 실값이 없습니다.\n"
             "  이 저장소에는 자리표시자만 있습니다 — 실제 라벨 이름과 점수는\n"
-            "  사내 코드값이라 올리지 않습니다 (규격 §1.1 · C3).\n"
-            "  설정에 사내 taxonomy 문서를 가리키세요:\n"
+            "  운영 코드값이라 올리지 않습니다 (규격 §1.1 · C3).\n"
+            "  설정에 운영 taxonomy 문서를 가리키세요:\n"
             "    labels:\n"
             "      query:   configs/query_taxonomy.md\n"
             "      emotion: configs/emotion_taxonomy.md\n"
@@ -243,7 +243,12 @@ def apply_filter(
         # 있어야 "비판받은 답변"이 존재한다. 1턴짜리 대화는 여기서 전부 빠진다.
         if turn.is_followup and conv.turn_at(turn.turn - 1) is not None
     ]
-    steps = [Step("진단 가능 후속 턴 (2턴 이상 대화)", len(candidates), 0)]
+    # 직전 턴이 없어 빠진 것을 센다. 운영 필터가 고른 턴만 남기고 앞 턴을 버린
+    # 로그를 넘기면 전부 여기서 빠지는데, 그때 "필터 조건을 확인하라"고 하면
+    # 정반대 방향을 보게 된다 - 앞 턴이 곧 "비판받은 답변"이다.
+    no_prior = sum(1 for conv in conversations for turn in conv.turns
+                   if turn.is_followup and conv.turn_at(turn.turn - 1) is None)
+    steps = [Step("진단 가능 후속 턴 (2턴 이상 대화)", len(candidates), no_prior)]
 
     def narrow(name: str, active: bool, keep: Callable[[Selected], bool]) -> None:
         nonlocal candidates
@@ -301,14 +306,16 @@ def to_cases(selected: list[Selected], history_turns: int = 0) -> list[Case]:
     return [c for c in cases if c is not None]
 
 
-def render_steps(spec: FilterSpec, steps: list[Step]) -> str:
+def render_steps(spec: Optional[FilterSpec], steps: list[Step]) -> str:
+    """spec 이 None 이면 운영 필터가 고른 턴을 받은 경우다 (여기서 건 조건이 없다)."""
     from ragdiag.report import _pad
 
-    lines = ["=" * 78, f"필터 적용: {spec.name}", "=" * 78, ""]
+    title = f"필터 적용: {spec.name}" if spec else "운영 필터가 고른 턴을 받음"
+    lines = ["=" * 78, title, "=" * 78, ""]
     for step in steps:
         suffix = f"   (-{step.dropped})" if step.dropped else ""
         lines.append(f"  {_pad(step.name, 36)}{step.remaining:>6}{suffix}")
-    if spec.unknown_labels:
+    if spec and spec.unknown_labels:
         lines += [
             "",
             f"  [!] 해석하지 못한 라벨 {len(spec.unknown_labels)}개: "

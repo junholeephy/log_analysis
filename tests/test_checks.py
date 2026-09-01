@@ -35,7 +35,7 @@ CHUNKS = [
 # ---------------------------------------------------------------------------
 
 def test_korean_with_english_terms_is_still_korean():
-    # 사내 답변에는 영문 용어가 흔히 섞인다. 다수결로 세면 영어로 오판한다.
+    # 운영 환경 답변에는 영문 용어가 흔히 섞인다. 다수결로 세면 영어로 오판한다.
     text = "VPN 접속 시 MFA 인증이 필요하며, IT Helpdesk portal에서 재등록하십시오."
     assert detect_language(text) == "ko"
 
@@ -233,7 +233,7 @@ def test_pii_detected(text, kind):
     "제 3-1-2 조를 참고하세요.",
 ])
 def test_ordinary_numbers_are_not_flagged_as_pii(text):
-    # 숫자 나열을 전부 의심하면 사내 규정 문장이 죄다 걸린다.
+    # 숫자 나열을 전부 의심하면 업무 규정 문장이 죄다 걸린다.
     assert find_pii(text) == []
 
 

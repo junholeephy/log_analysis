@@ -8,7 +8,7 @@ org.py, 환경변수 이름은 backends.py 에 흩어져 있었다. 옮기는 �
 여기 없는 것도 바뀔 수 있다. 크기가 커서 원래 자리에 둔 것들이다:
     ragdiag/prompts.py    LLM 시스템 프롬프트 4종
     ragdiag/taxonomy.py   케이스 29개와 설명
-    ragdiag/labels.py     query · emotion 라벨표 (사내 머신에는 그쪽 것이 있다)
+    ragdiag/labels.py     query · emotion 라벨표 (운영 장비에는 그쪽 것이 있다)
 
 **여기 값을 바꾸면 골든셋·회귀셋을 다시 돌릴 것.** 임계값 하나가 판정 전체를
 움직인다. 특히 MATCH_THRESHOLD 를 낮추면 지어낸 인용이 통과하기 시작한다.
@@ -87,7 +87,7 @@ ORG_CANDIDATE_FIELDS = ("db_dept_name", "db_job_name", "job_grade", "db_position
 # ---------------------------------------------------------------------------
 # LLM 접속
 #
-# 앞에 있는 이름부터 찾는다. 사내 머신의 .bashrc 에 LLM_API_URL / LLM_API_KEY 가
+# 앞에 있는 이름부터 찾는다. 운영 장비의 .bashrc 에 LLM_API_URL / LLM_API_KEY 가
 # 있으면 인자를 하나도 주지 않아도 붙는다.
 # ---------------------------------------------------------------------------
 

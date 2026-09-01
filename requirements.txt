@@ -1,4 +1,4 @@
-# 사내 반입용. 공용 venv 를 쓰므로 --upgrade / --force-reinstall 금지.
+# 반입용. 공용 venv 를 쓰므로 --upgrade / --force-reinstall 금지.
 # 충돌이 나면 고치지 말고 메시지를 인사이트로 가지고 나와 본 머신에서 여기를 고친다.
 #
 #   pip install --dry-run -r BB/requirements.txt && pip check   # 먼저 확인
