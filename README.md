@@ -8,10 +8,10 @@
 알아내는 것이다. 그래서 라벨은 증상이 아니라 **조치 주체**로 나뉜다 — 같은 증상도
 문서팀이 고칠 일과 프롬프트 담당이 고칠 일은 다르다.
 
-🔀 **[처리 흐름](process_flow.md)** — conv-data · filter-data 가 들어와 case 가 붙기까지,
+🔀 **[처리 흐름](docs/process_flow.md)** — conv-data · filter-data 가 들어와 case 가 붙기까지,
 각 단계가 무엇을 쓰고 **무엇을 일부러 안 쓰는지**.
 
-📋 **[실패 분류 체계](TAXONOMY.md)** — 29개 케이스 + `case0` 중 무엇이 이 로그로 판정 가능하고
+📋 **[실패 분류 체계](docs/taxonomy.md)** — 29개 케이스 + `case0` 중 무엇이 이 로그로 판정 가능하고
 무엇이 아닌지, 그 판단 근거.
 
 📊 **[파이프라인 흐름도](https://claude.ai/code/artifact/180f8cc5-d5fb-41e0-9084-8be60c271d5f)**
@@ -34,8 +34,9 @@
 | `src/ragdiag/fixtures/synth.py` | **가짜 데이터는 파일이 아니라 코드.** `generate(n, seed)` 가 런타임에 만든다 |
 | `scripts/sync.sh` | 이식. `.git` 도 데이터도 넘기지 않는다 (규격 부록 A 전문) |
 | `docs/insights/` | 운영 환경에서 본 것을 적어 오는 자리 |
-| **[`filter.md`](filter.md)** | **필터 규격.** 필터를 직접 구현할 때 무엇을 내놓아야 하는지 |
-| **[`scripting.md`](scripting.md)** | **실행 규격.** 작업 폴더에서 감싸는 스크립트를 짤 때 — 종료 코드·스트림·결과 파일 |
+| **[`TODO.md`](TODO.md)** | **작업 폴더에서 만들어야 하는 것.** 실행 전에 여기부터 |
+| `todo/` | 그것들의 규격 — 필터(이 프로젝트의 사정) · 실행 스크립트(어느 프로젝트나) |
+| `docs/` | 이 프로그램이 어떻게 도는지 — 처리 흐름 · 분류 체계 |
 | `src/ragdiag/labels.py` | **자리표시자만.** 실제 라벨 이름·점수는 설정으로 온다 (아래) |
 
 ### 라벨 실값은 저장소에 없다
@@ -126,7 +127,7 @@ python src/run.py --config configs/env.yaml --dry-run
 
 ```bash
 # 최초 1회. clone 위치는 .staging/<저장소이름> 이어야 한다.
-cd <운영 환경작업폴더> && git clone <이 저장소> .staging/log_analysis
+cd <작업 폴더> && git clone <이 저장소> .staging/log_analysis
 
 # 매번. 멱등하다 — 최초든 갱신이든 같은 명령이다.
 bash .staging/log_analysis/scripts/sync.sh <태그>   # 예: v0.11
@@ -217,7 +218,7 @@ PYTHONPATH=log_analysis/src python -m ragdiag --config configs/env.yaml
 분류를 다시 돌리면 재생성되는 파생물이고, 대화 내용이 그대로 들어 있다.
 
 ```bash
-cd <운영 환경작업폴더>
+cd <작업 폴더>
 cat >> .gitignore <<'EOF'
 .cache/
 data/
@@ -349,7 +350,7 @@ category 에 속하므로 case 만 정하면 나머지는 계산이다.
 **판정의 절반 이상이 코드다** — 언어·길이·포맷·잘림·개인정보·인용 대조·문법·계산.
 LLM 에 맡기면 비용도 들지만 무엇보다 같은 입력에 다른 답이 나온다.
 
-단계별로 무엇을 주고 무엇을 감추는지는 **[처리 흐름](process_flow.md)** 에 자세히 있다.
+단계별로 무엇을 주고 무엇을 감추는지는 **[처리 흐름](docs/process_flow.md)** 에 자세히 있다.
 
 ## 한 건을 끝까지 따라가기
 
@@ -510,7 +511,7 @@ case22  Retrieve 성공, 생성 실패    (TYPE5 / category_2, 신뢰도 medium)
 | Step 3 근거 활용 | 답변, 청크 | **질문 · 불만** | 질문을 주면 "질문에 잘 답했나"라는 다른 판단이 섞인다. 그건 Step 2 가 이미 봤고, 여기서 또 보면 같은 방향으로 쏠린 두 번째 표가 된다 |
 | 라우팅 | 관측 + 검증 전부 | **LLM 자체** | 결론을 먼저 정하고 사실을 끼워 맞추는 것을 막는다 |
 
-단계별 상세는 **[처리 흐름](process_flow.md)** 에 목적·입력·출력으로 정리돼 있다.
+단계별 상세는 **[처리 흐름](docs/process_flow.md)** 에 목적·입력·출력으로 정리돼 있다.
 
 ### 인용 강제가 knowledge leakage를 막는다
 
@@ -529,7 +530,7 @@ leakage가 일어나면 **검색 실패가 '근거 미활용'으로 오분류되
 taxonomy 를 바꿀 때 LLM을 다시 돌리지 않아도 되며, "왜 이 라벨이 붙었나"에 항상 답할 수 있다.
 
 도메인 질문의 내용 불만이 갈리는 지점만 추리면 이렇다. 전체 순서는
-[처리 흐름](process_flow.md) 의 ⑩에 있다.
+[처리 흐름](docs/process_flow.md) 의 ⑩에 있다.
 
 | 청크 | verdict | used_rag | case | 고칠 곳 |
 |---|---|---|---|---|
@@ -709,10 +710,10 @@ python -m pytest log_analysis/tests -q
 python log_analysis/src/run.py --dry-run
 #   합성 데이터로 끝까지. 여기서 깨지면 환경 문제이지 데이터 문제가 아니다.
 
-# ── 5. 실데이터 ──────────────────────────────────────────────────────────
+# ── 5. 실데이터 — 작업 폴더의 실행 스크립트로 (todo/scripting.md) ────────
 python log_analysis/src/run.py --config configs/env.yaml \
     --conv-data <실데이터> --turns <고른_턴_목록> --limit 50
-#   --turns 는 필터를 그쪽에 두고 고른 턴만 받는 경로다 (filter.md).
+#   --turns 는 필터를 그쪽에 두고 고른 턴만 받는 경로다 (todo/filter.md).
 #   이 저장소의 필터를 쓸 거면 --filter-data <필터> 로 바꾼다.
 #   RUN SUMMARY 의 contract 줄이 첫 사이클의 실제 수확이다.
 #   계약이 깨끗해진 뒤에 전체로 간다 — 틀린 계약 위의 숫자는 믿을 수 없다.
@@ -872,7 +873,7 @@ python3 -m venv venv && ./venv/bin/pip install -r requirements.txt
 프롬프트는 둘이 공유하므로 그 둘은 그대로 읽어도 된다.
 
 분류 자체는 `src/run.py` 로 한다. 단계별로 무엇을 주고 무엇을 감추는지는
-**[처리 흐름](process_flow.md)** 에 있다.
+**[처리 흐름](docs/process_flow.md)** 에 있다.
 
 ## 개인정보
 

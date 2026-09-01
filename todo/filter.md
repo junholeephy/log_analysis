@@ -1,5 +1,9 @@
 # 필터 규격 — 무엇을 골라 어떤 모양으로 넘기나
 
+> **이건 이 프로젝트의 사정이다.** 필터 로직이 운영 쪽에 이미 있고 그걸 쓰기로 했다.
+> 다른 배포라면 이 저장소의 `src/ragdiag/filters.py` 를 그대로 써도 되고, 그러면
+> 이 문서는 필요 없다 — `--filter-data` 로 필터 JSON 을 주면 끝이다.
+
 필터는 **운영 환경 쪽에서 구현한다.** 이 저장소의 `src/ragdiag/filters.py` 는 여기서
 검증할 때 쓰는 것이고, 실제 선별은 그쪽 로직을 쓴다.
 
@@ -178,5 +182,5 @@ output/run_summary_20260901-120138.txt     RUN SUMMARY 사본
 결과 JSON 은 입력 로그와 같은 `users → conversations → turns` 모양을 유지하고, 판정한
 턴에 `classification` 이 붙는다. 원본 로그 옆에 두고 조인할 수 있다.
 
-무엇이 어떤 case 로 갔고 왜 그렇게 됐는지는 [`process_flow.md`](process_flow.md) 에
+무엇이 어떤 case 로 갔고 왜 그렇게 됐는지는 [`docs/process_flow.md`](../docs/process_flow.md) 에
 있다.

@@ -117,7 +117,7 @@ def test_run_summary_lines_fit_eighty_columns():
 
 
 def test_prev_question_accepts_the_shape_the_real_log_uses():
-    """운영 환경 로그의 prev_question 은 list 다 (2026-09-01, 16,141건).
+    """운영 환경로그의 prev_question 은 list 다 (2026-09-01, 16,141건).
 
     계약이 str 만 받으면 매 실행마다 MISMATCH 한 줄이 뜨는데, 파이프라인은 이
     필드를 읽지 않으므로 판정은 멀쩡하다. 계약 위반 줄은 "판정이 틀렸을 수 있다"는
@@ -289,7 +289,7 @@ def test_run_summary_goes_to_stdout_and_progress_to_stderr(tmp_path):
 
 def test_scripting_example_uses_only_documented_things():
     """예시 스크립트가 문서에 없는 것을 쓰면 읽는 사람이 그걸 계약으로 오해한다."""
-    doc = (ROOT / "scripting.md").read_text(encoding="utf-8")
+    doc = (ROOT / "todo/scripting.md").read_text(encoding="utf-8")
     example = doc.split("#!/usr/bin/env bash")[1].split("```")[0]
 
     assert "log_analysis/src/run.py" in example, "진입점을 그대로 보여줘야 한다"
@@ -298,6 +298,55 @@ def test_scripting_example_uses_only_documented_things():
         "stderr 를 긁어서 경로를 얻으면 안 된다")
     for banned in ("--upgrade", "pip install", "activate"):
         assert banned not in example, f"예시가 {banned} 를 쓰고 있다"
+
+
+def test_docs_are_grouped_and_still_shipped():
+    """참조 문서는 docs/ 에 모으되 반입은 되어야 한다.
+
+    docs/insights/ 만 export-ignore 다. 규칙을 docs/ 로 넓히면 운영 환경에서
+    filter.md · scripting.md 를 못 보게 된다 - 거기서 봐야 하는 문서다.
+    """
+    # 성격이 다르다 - todo/ 는 저쪽에서 **만들 것**의 규격이고,
+    # docs/ 는 이 프로그램이 **어떻게 도는지**의 참고다.
+    for where, names in (("todo", ("filter.md", "scripting.md")),
+                         ("docs", ("process_flow.md", "taxonomy.md"))):
+        for name in names:
+            assert (ROOT / where / name).exists(), f"{where}/{name} 가 없다"
+            assert not (ROOT / name).exists(), f"{name} 이 루트에 남아 있다"
+
+    for folder in ("docs/", "todo/"):
+        ignored = subprocess.run(["git", "check-attr", "export-ignore", "--", folder],
+                                 capture_output=True, text=True, cwd=ROOT)
+        assert not ignored.stdout.strip().endswith(": set"), (
+            f"{folder} 를 통째로 뺐다. 운영 환경에서 봐야 하는 문서다.")
+
+
+def test_root_keeps_only_what_has_to_be_there():
+    """루트는 도구·관례가 찾는 것과 첫 화면만. 나머지는 docs/ 다."""
+    allowed = {"README.md", "TODO.md"}
+    at_root = {f for f in tracked() if f.endswith(".md") and "/" not in f}
+    assert at_root == allowed, f"루트의 문서: {sorted(at_root)}"
+
+
+def test_todo_says_which_items_are_this_project_only():
+    """어느 것이 이 프로젝트의 사정이고 어느 것이 일반인지 갈라 적는다.
+
+    다음 프로젝트에서 이 저장소를 본보기로 쓸 때, 필터를 저쪽에 두는 것이
+    규격이 요구하는 것인지 이 프로젝트의 사정인지 구분되지 않으면 안 해도 될
+    일을 하게 된다.
+    """
+    todo = (ROOT / "TODO.md").read_text(encoding="utf-8")
+    assert "이 프로젝트의 사정" in todo
+    assert "어느 프로젝트나" in todo
+
+
+def test_todo_points_at_the_specs_instead_of_repeating_them():
+    """할 일 목록이 규격을 베끼면 둘이 갈라진다. 가리키기만 한다."""
+    todo = (ROOT / "TODO.md").read_text(encoding="utf-8")
+    for spec in ("todo/filter.md", "todo/scripting.md"):
+        assert spec in todo, f"{spec} 를 가리켜야 한다"
+    assert len(todo.splitlines()) < 220, (
+        "TODO 가 규격을 베끼고 있다. 무엇이 남았나만 세고 방법은 docs/ 에 둔다.")
 
 
 def test_readme_does_not_hand_out_a_command_that_needs_an_uncommitted_file():
@@ -587,7 +636,7 @@ def test_sync_keeps_local_yaml_and_names_the_new_keys(tmp_path):
     subprocess.run(["git", "-C", str(bb), "tag", "v1"], check=True)
     aa = _fresh_aa(tmp_path, bb)
     _sync(aa, bb, "v1")
-    (aa / "configs" / "env.yaml").write_text("a: 운영 환경실값\n", encoding="utf-8")
+    (aa / "configs" / "env.yaml").write_text("a: 운영 환경 실값\n", encoding="utf-8")
 
     (bb / "configs" / "env.example.yaml").write_text("a: 1\nb: 2\n", encoding="utf-8")
     for a in (["add", "-A"], ["commit", "-q", "-m", "key"], ["tag", "v2"]):
@@ -595,7 +644,7 @@ def test_sync_keeps_local_yaml_and_names_the_new_keys(tmp_path):
 
     out = _sync(aa, bb, "v2")
     assert out.returncode == 0, out.stderr
-    assert (aa / "configs" / "env.yaml").read_text(encoding="utf-8") == "a: 운영 환경실값\n"
+    assert (aa / "configs" / "env.yaml").read_text(encoding="utf-8") == "a: 운영 환경 실값\n"
     assert "b" in out.stderr, "example 에만 있는 키를 알려줘야 한다\n" + out.stderr
 
 
@@ -636,7 +685,7 @@ def test_process_flow_case_names_match_the_taxonomy():
 
     from ragdiag import taxonomy as tx
 
-    doc = (ROOT / "process_flow.md").read_text(encoding="utf-8")
+    doc = (ROOT / "docs/process_flow.md").read_text(encoding="utf-8")
     unknown = [c for c in set(re.findall(r"case(\d+)", doc)) if not tx.get(f"case{c}")]
     assert not unknown, f"없는 케이스를 참조한다: {sorted(unknown)}"
 
@@ -702,7 +751,7 @@ def _flow_tables():
     """
     import re
 
-    doc = (ROOT / "process_flow.md").read_text(encoding="utf-8")
+    doc = (ROOT / "docs/process_flow.md").read_text(encoding="utf-8")
     row = re.compile(r"\|\s*(✗?)\s*\| `(case\d+)` \| ([^|]+?) \| (?:\*\*)?(high|medium|low)(?:\*\*)? \|")
     overview = doc.split("## 전체 그림")[0]
     routing = doc.split("**출력** — case 26개")[1]
@@ -767,7 +816,7 @@ def test_process_flow_lists_every_observation_field():
     """관측 필드가 늘면 문서에도 늘어야 한다. 안 적힌 필드는 없는 것과 같다."""
     from ragdiag.schema import Observation
 
-    doc = (ROOT / "process_flow.md").read_text(encoding="utf-8")
+    doc = (ROOT / "docs/process_flow.md").read_text(encoding="utf-8")
     missing = [n for n in Observation.model_fields if f"`{n}`" not in doc]
     assert not missing, f"process_flow.md 에 없는 관측 필드: {missing}"
 
@@ -788,7 +837,7 @@ def test_process_flow_names_the_fields_that_reach_the_output_file():
     shipped = set(re.findall(r'"(\w+)": obs\.', block))
     assert shipped, "output.py 에서 observation 필드를 못 찾았다"
 
-    doc = (ROOT / "process_flow.md").read_text(encoding="utf-8")
+    doc = (ROOT / "docs/process_flow.md").read_text(encoding="utf-8")
     section = doc.split("실리는 8개")[1].split("나머지")[0]
     listed = set(re.findall(r"`(\w+)`", section))
     assert listed == shipped, (
@@ -834,7 +883,7 @@ def test_step_numbering_means_one_thing():
     assert not re.search(r"Step 3\s*—.*case 로 바꾼다", routing), (
         "route.py 가 자기를 Step 3 이라 부른다. 근거 활용이 Step 3 이다.")
 
-    for path in ["README.md", "process_flow.md", "src/ragdiag/classify.py"]:
+    for path in ["README.md", "docs/process_flow.md", "src/ragdiag/classify.py"]:
         text = (ROOT / path).read_text(encoding="utf-8")
         assert "Step 3  라우팅" not in text and "Step 3 · 라우팅" not in text, (
             f"{path} 가 라우팅을 Step 3 이라 부른다")
@@ -860,7 +909,7 @@ def test_process_flow_checker_inputs_match_run_checks():
         real.setdefault(m.group(1), set()).add(m.group(3))
     assert real, "run_checks 에서 검증기를 못 찾았다"
 
-    doc = (ROOT / "process_flow.md").read_text(encoding="utf-8")
+    doc = (ROOT / "docs/process_flow.md").read_text(encoding="utf-8")
     table = doc.split("| 검증기 | 입력 | 무엇을 |")[1].split("\n\n")[0]
     listed = {m.group(1): m.group(2)
               for m in re.finditer(r"\| `(\w+)` \| ([^|]+) \|", table)}
@@ -893,7 +942,7 @@ def test_process_flow_input_tables_name_real_fields():
              | {"llm_eval_*", "llm_emotion_*", "timestamp", "verdict",
                 "pre_queries[-1]", "requested_*", "requested_length_*"})
 
-    doc = (ROOT / "process_flow.md").read_text(encoding="utf-8")
+    doc = (ROOT / "docs/process_flow.md").read_text(encoding="utf-8")
     unknown = []
     for step in ["## ⑤", "## ⑦", "## ⑨"]:
         # "주는 것 / 안 주는 것" 표만 본다. 같은 절의 다른 표(question_domain 의
@@ -925,7 +974,7 @@ def test_process_flow_documents_every_checker_verdict_rule():
     real = (set(re.findall(r'"(\w+)":\s*check_', body))
             | set(re.findall(r'checks\["(\w+)"\]', body)))
 
-    doc = (ROOT / "process_flow.md").read_text(encoding="utf-8")
+    doc = (ROOT / "docs/process_flow.md").read_text(encoding="utf-8")
     assert "### verdict 를 어떻게 만드나" in doc, "판정 규칙 절이 없다"
     table = doc.split("| 검증기 | `not_applicable` |")[1].split("\n\n")[0]
     listed = set(re.findall(r"\| `(\w+)` \|", table))
@@ -948,7 +997,7 @@ def test_process_flow_routing_inputs_match_route_py():
     real = {f for f in Observation.model_fields if re.search(rf"obs\.{f}\b", route)}
     assert real, "route.py 에서 관측 필드 참조를 못 찾았다"
 
-    doc = (ROOT / "process_flow.md").read_text(encoding="utf-8")
+    doc = (ROOT / "docs/process_flow.md").read_text(encoding="utf-8")
     table = doc.split("| 어디서 | 라우팅이 읽는 것 | 안 읽는 것 |")[1].split("\n\n")[0]
     rows = [l for l in table.splitlines() if l.startswith("| ⑤")]
     assert rows, "⑩ 입력 표에 관측 행이 없다"
@@ -978,7 +1027,7 @@ def test_process_flow_states_when_sufficiency_runs():
     from ragdiag import classify
     from ragdiag.schema import Observation
 
-    doc = (ROOT / "process_flow.md").read_text(encoding="utf-8")
+    doc = (ROOT / "docs/process_flow.md").read_text(encoding="utf-8")
     section = doc.split("## ⑦")[1].split("## ⑧")[0]
 
     # 코드의 조건을 문서가 그대로 담고 있나
@@ -1037,14 +1086,14 @@ def test_process_flow_truth_table_matches_routing():
     # 인용이 하나도 안 남으면 sufficient 여도 강등된다
     assert run(3, "sufficient", 0) == "case20", "인용 검증 실패 강등이 안 걸린다"
 
-    doc = (ROOT / "process_flow.md").read_text(encoding="utf-8")
+    doc = (ROOT / "docs/process_flow.md").read_text(encoding="utf-8")
     assert "### 진리표" in doc, "진리표 절이 없다"
     table = doc.split("| `n_chunks` | `verdict` |")[1].split("\n\n")[0]
     for cid in expected:
         assert f"`{cid}`" in table, f"진리표에 {cid} 가 없다"
 
 
-@pytest.mark.parametrize("name", ["README.md", "TAXONOMY.md", "process_flow.md",
+@pytest.mark.parametrize("name", ["README.md", "docs/taxonomy.md", "docs/process_flow.md",
                                   "docs/insights/TEMPLATE.md"])
 def test_markdown_renders_as_markdown(name):
     """코드 펜스가 안 닫히면 GitHub 에서 나머지가 통째로 코드블록이 된다.
@@ -1077,7 +1126,7 @@ def test_no_section_is_duplicated():
     import re
     from collections import Counter
 
-    for name in ["README.md", "TAXONOMY.md", "process_flow.md"]:
+    for name in ["README.md", "docs/taxonomy.md", "docs/process_flow.md"]:
         text = (ROOT / name).read_text(encoding="utf-8")
         heads = Counter(re.findall(r"^#{2,4} (.+)$", text, re.M))
         dupes = {h: n for h, n in heads.items() if n > 1}

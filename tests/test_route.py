@@ -435,7 +435,7 @@ def test_taxonomy_doc_matches_the_reachable_cases():
     import re
     from pathlib import Path
 
-    path = Path(__file__).resolve().parents[1] / "TAXONOMY.md"
+    path = Path(__file__).resolve().parents[1] / "docs/taxonomy.md"
     if not path.exists():
         pytest.skip("TAXONOMY.md 없음")
     text = path.read_text(encoding="utf-8")
