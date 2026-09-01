@@ -80,6 +80,19 @@ python src/run.py --legacy-regression       # 회귀 기준선
 python -m pytest tests/ -q                  # LLM 없이 도는 전부
 ```
 
+> **`configs/` 가 두 군데다.** 운영 환경에서 헷갈리기 쉬운 자리다.
+>
+> ```
+> {AA}/configs/env.yaml                 ← 실값. 살아남는다
+> {AA}/{BB}/configs/env.example.yaml    ← 템플릿. sync 때 사본과 함께 교체된다
+> ```
+>
+> `{AA}/{BB}` 는 sync 때마다 통째로 지워지고 다시 만들어진다. 거기에 `env.yaml` 을
+> 만들면 **채운 값이 조용히 사라지고**, 화면에는 `configs/env.yaml exists — kept`
+> 가 찍힌다 — 그건 `{AA}/configs` 쪽 이야기인데 자기 파일이 지켜진 줄 알게 된다.
+> 그래서 사본 안의 설정을 읽으면 프로그램이 경고하고, 없을 때는 작업 폴더 경로를
+> 알려준다. **`cd {AA}` 에서 실행하는 것이 기준이다.**
+
 **설정 파일은 저장소에 없다.** `configs/env.yaml` 은 커밋되지 않으므로
 (`.gitignore`) 갓 clone 한 사본에는 예시만 있다. 매번 인자를 치기 싫으면 복사해서
 쓴다 — 개발 장비에서는 선택이고, 운영 환경에서는 `sync.sh` 가 알아서 만들어 준다.
@@ -177,7 +190,7 @@ PYTHONPATH=log_analysis/src python -m ragdiag --config configs/env.yaml
 | `.cache/` | **LLM 판정 응답.** 실데이터에서 뽑은 관측·인용이 그대로 들어 있다 | 판단 필요 |
 | `data/` | 실데이터 | 대개 아니다 |
 | `output/` | 분류 결과 · RUN SUMMARY (파일명에 시각) | 남기고 싶을 수 있다 |
-| `configs/env.yaml` | 운영 실값 (경로·주소) | 판단 필요 |
+| `{AA}/configs/env.yaml` | 운영 실값 (경로·주소) | 판단 필요 |
 
 `AA/log_analysis` 사본이 커밋되는 것은 목적이지만 — "어떤 코드로 돌렸는지"가
 남는 유일한 형태다 — 나머지는 의도한 것만 남기는 편이 낫다. 특히 `.cache/` 는

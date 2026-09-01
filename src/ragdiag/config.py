@@ -116,6 +116,8 @@ def flatten(tree: dict, prefix: str = "") -> dict[str, Any]:
 class Config:
     values: dict[str, Any] = field(default_factory=dict)
     source: str = "(기본값)"
+    # 죽을 정도는 아니지만 알려야 하는 것. 호출자가 화면에 찍는다.
+    warnings: list[str] = field(default_factory=list)
 
     def get(self, key: str, default: Any = None) -> Any:
         value = self.values.get(key)
@@ -171,6 +173,26 @@ def validate(values: dict[str, Any]) -> list[str]:
     return problems
 
 
+def synced_copy_root(path: Path, root: Optional[Path] = None) -> Optional[Path]:
+    """이 경로가 sync 로 만들어진 사본 안에 있나. 있으면 사본 루트를 돌려준다.
+
+    사본({AA}/{BB})은 다음 sync 때 `rm -rf` 로 통째 교체된다. 거기에 설정을 두면
+    채워 넣은 값이 **조용히 사라지고**, 화면에는 "configs/env.yaml exists — kept"
+    가 찍힌다 - 그건 {AA}/configs 쪽 이야기인데 지켜진 줄 알게 된다.
+
+    사본에는 sync.sh 가 VERSION 을 남긴다. 개발 저장소에는 그게 없으므로,
+    거기서 configs/env.yaml 을 만드는 것은 정상이고 경고하지 않는다.
+    """
+    root = root or Path(__file__).resolve().parents[2]
+    if not (root / "VERSION").exists():
+        return None
+    try:
+        path.resolve().relative_to(root)
+    except ValueError:
+        return None
+    return root
+
+
 def load(path: Optional[str | Path]) -> Config:
     """설정을 읽고 검증한다. 문제가 있으면 계산을 시작하기 전에 던진다."""
     if path is None:
@@ -178,6 +200,16 @@ def load(path: Optional[str | Path]) -> Config:
 
     file = Path(path)
     if not file.exists():
+        copy = synced_copy_root(file)
+        if copy is not None:
+            # 사본 안을 가리키고 있다. 여기에 만들라고 하면 다음 sync 때 지워진다.
+            raise ConfigError(
+                f"설정 파일이 없습니다: {file}\n"
+                f"  여기는 sync 로 만들어진 사본 안이라 다음 교체 때 지워집니다.\n"
+                f"  설정은 작업 폴더에 둡니다: {copy.parent / 'configs' / file.name}\n"
+                f"  거기서 실행하세요:\n"
+                f"    cd {copy.parent}\n"
+                f"    python {copy.name}/src/run.py --config configs/{file.name} ...")
         raise ConfigError(
             f"설정 파일이 없습니다: {file}\n"
             f"  configs/env.example.yaml 을 복사해 쓰세요.")
@@ -205,7 +237,14 @@ def load(path: Optional[str | Path]) -> Config:
             "계산을 시작하지 않았습니다.\n"
             + "\n".join(f"  - {p}" for p in problems))
 
-    return Config(values=values, source=str(file))
+    config = Config(values=values, source=str(file))
+    copy = synced_copy_root(file)
+    if copy is not None:
+        config.warnings.append(
+            f"이 설정은 사본 안에 있습니다 ({file}).\n"
+            f"    다음 sync 때 사본이 통째로 교체되면서 **지워집니다.**\n"
+            f"    작업 폴더로 옮기세요: {copy.parent / 'configs' / file.name}")
+    return config
 
 
 def _install_labels(config: "Config") -> list[str]:

@@ -398,6 +398,66 @@ def test_configured_venv_is_compared_with_the_running_one(tmp_path, capsys):
     assert "venv 가 아니다" in proc.stdout + proc.stderr, "RUN SUMMARY 에도 남겨야 한다"
 
 
+# ---------------------------------------------------------------------------
+# 사본 안에 둔 설정 — 조용히 지워지는 자리
+#
+# {AA}/{BB} 는 sync 때마다 rm -rf 로 통째 교체된다. 거기에 env.yaml 을 만들면
+# 채워 넣은 값이 사라지는데, 화면에는 "configs/env.yaml exists — kept" 가 찍힌다.
+# 그건 {AA}/configs 쪽 이야기인데 자기 파일이 지켜진 줄 알게 된다.
+#
+# configs/ 가 두 군데 있어서 생기는 일이다:
+#   {AA}/configs/env.yaml              ← 실값. 살아남는다
+#   {AA}/{BB}/configs/env.example.yaml ← 템플릿. 사본과 함께 교체된다
+# ---------------------------------------------------------------------------
+
+def _fake_copy(tmp_path):
+    """sync 로 만들어진 사본을 흉내낸다. 표식은 VERSION 파일이다."""
+    work = tmp_path / "work"
+    copy = work / "log_analysis"
+    (copy / "configs").mkdir(parents=True)
+    (copy / "VERSION").write_text("v9.9 abc1234\n", encoding="utf-8")
+    (work / "configs").mkdir()
+    return work, copy
+
+
+def test_config_missing_inside_a_copy_points_at_the_work_folder(tmp_path):
+    from ragdiag.config import synced_copy_root
+
+    work, copy = _fake_copy(tmp_path)
+    assert synced_copy_root(copy / "configs" / "env.yaml", root=copy) == copy
+    # 작업 폴더 쪽은 사본 밖이므로 잡히지 않는다.
+    assert synced_copy_root(work / "configs" / "env.yaml", root=copy) is None
+
+
+def test_dev_repo_is_not_treated_as_a_copy(tmp_path):
+    """개발 저장소에 configs/env.yaml 을 만드는 것은 정상이다. 표식은 VERSION 이다."""
+    from ragdiag.config import synced_copy_root
+
+    repo = tmp_path / "repo"
+    (repo / "configs").mkdir(parents=True)
+    assert synced_copy_root(repo / "configs" / "env.yaml", root=repo) is None
+
+
+def test_config_inside_a_copy_warns_but_still_loads(tmp_path, monkeypatch):
+    """죽이지는 않는다. 이번 실행은 멀쩡히 돌고, 다음 sync 때 사라진다는 것만 알린다."""
+    import ragdiag.config as mod
+
+    work, copy = _fake_copy(tmp_path)
+    cfg = copy / "configs" / "env.yaml"
+    cfg.write_text("run:\n  workers: 2\n", encoding="utf-8")
+
+    real = mod.synced_copy_root
+    monkeypatch.setattr(mod, "synced_copy_root",
+                        lambda path, root=None: real(path, root=copy))
+
+    config = mod.load(cfg)
+    assert config.get("run.workers") == 2, "이번 실행은 돌아야 한다"
+    assert config.warnings, "지워진다는 것을 알려야 한다"
+    assert "지워집니다" in config.warnings[0]
+    assert str(work / "configs" / "env.yaml") in config.warnings[0], (
+        "어디로 옮기라는지까지 적어야 한다\n" + config.warnings[0])
+
+
 def test_no_config_means_defaults():
     config = load(None)
     assert config.values == {}

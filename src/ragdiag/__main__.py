@@ -471,6 +471,8 @@ def main(argv=None, backend=None) -> int:
     except ConfigError as e:
         print(e, file=sys.stderr)
         return 2
+    for note in config.warnings:
+        print(f"\n[!] {note}\n", file=sys.stderr)
     changed = apply_config(config)
     if changed:
         print(f"설정 {config.source} 적용: {', '.join(changed)}", file=sys.stderr)
