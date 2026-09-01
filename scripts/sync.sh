@@ -2,10 +2,10 @@
 #
 # {BB} → {AA} 이식 스크립트. 실행 위치에 따라 두 모드로 동작한다.
 #
-#   본 머신 ({BB} 저장소 루트에서)   bash scripts/sync.sh <tag>
+#   개발 ({BB} 저장소 루트에서)   bash scripts/sync.sh <tag>
 #       → 태그의 archive 를 임시로 풀어 점검만 한다. push 전에 돌린다
 #
-#   운영     ({AA} 루트에서)           bash .staging/{BB}/scripts/sync.sh <tag>
+#   운영 ({AA} 루트에서)           bash .staging/{BB}/scripts/sync.sh <tag>
 #       → 이식(교체·VERSION·디렉터리)을 하고 같은 점검을 한 번 더 한다
 #
 # {AA}·{BB} 의 실제 이름은 프로젝트마다 다르다. {BB} 는 이 스크립트의 위치에서 유도하고
@@ -109,7 +109,7 @@ require_tag() {
   fi
 }
 
-# 본 머신 — archive 결과를 임시로 풀어 점검만 한다
+# 개발 장비 — archive 결과를 임시로 풀어 점검만 한다
 preflight() {
   local tag="$1"
   require_tag "$REPO_DIR" "$tag"
@@ -173,7 +173,7 @@ sync_into_aa() {
 
   if ! inspect_tree "$DEST"; then
     rm -rf "$DEST"   # 실수로 커밋되는 것을 막기 위해 사본을 남기지 않는다
-    die "점검 FAILED — $DEST 를 제거했습니다. 본 머신에서 고치고 새 태그를 내세요"
+    die "점검 FAILED — $DEST 를 제거했습니다. 개발 장비에서 고치고 새 태그를 내세요"
   fi
   log "점검: OK"
 
@@ -203,8 +203,8 @@ main() {
     sync_into_aa "$tag"
   else
     die "실행 위치가 맞지 않습니다. 둘 중 하나여야 합니다:
-       본 머신:  cd <{BB} 저장소> && bash scripts/sync.sh <tag>
-       운영:     cd <{AA}>        && bash .staging/$NAME/scripts/sync.sh <tag>
+       개발: cd <{BB} 저장소> && bash scripts/sync.sh <tag>
+       운영: cd <{AA}>        && bash .staging/$NAME/scripts/sync.sh <tag>
      현재 cwd: $cwd"
   fi
 }
