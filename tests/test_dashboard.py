@@ -817,6 +817,38 @@ def test_only_one_row_is_checked(result_file):
         assert len(_checked_row(at)) == 1, _checked_row(at)
 
 
+def test_a_long_answer_is_boxed_and_scrolls(result_file, tmp_path):
+    """셋 중 답변만 길이가 안 잡힌다.
+
+    질문과 불만은 사람이 친 것이라 짧지만 답변은 모델이 낸 것이라 문단 몇 개가
+    그냥 나온다. 그대로 두면 답변 하나가 세로로 늘어나 아래 Step 1·2·3 이 화면
+    밖으로 밀린다 - 판정 경로를 보려고 연 패널인데 정작 경로가 안 보인다.
+
+    streamlit 에 max-height 가 없어서(고정이거나 내용에 맞추거나 둘뿐) 넘칠
+    때만 상자를 씌운다. 그래서 양쪽을 다 재야 한다 - 짧은 답변까지 고정 높이로
+    두면 상자 아래가 비어서 더 읽기 나쁘다.
+    """
+    def scroll_hint(at):
+        return [c.value for c in at.tabs[3].caption if "스크롤" in str(c.value)]
+
+    payload = json.loads(result_file.read_text(encoding="utf-8"))
+    turns = [t for u in payload["analysis_results"]
+             for c in u["conversations"] for t in c["turns"]]
+
+    assert not scroll_hint(render(result_file)), (
+        "짧은 답변에까지 상자를 씌웠다. 아래가 비어서 더 읽기 나쁘다")
+
+    for turn in turns:
+        turn["llm_ans_on_last_q"] = "가나다라마바사아자차카타파하 " * 120
+    long_file = tmp_path / "long_answer.json"
+    long_file.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    hint = scroll_hint(render(long_file))
+    assert hint, "긴 답변인데 상자에 담기지 않았다"
+    # 잘린 상자에 아무 표시가 없으면 "답변이 여기서 끝났나"로 읽힌다.
+    assert "1,800자" in hint[0], hint
+
+
 def test_the_judged_answer_gets_the_widest_column(result_file):
     """셋 중 답변이 제일 길고 판정 대상이기도 하다.
 

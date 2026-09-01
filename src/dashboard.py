@@ -673,6 +673,14 @@ def _navigate(state, total: int, where: str) -> bool:
     return moved
 
 
+# 판정 대상 답변 상자. 넘치면 이 높이 안에서 스크롤한다.
+ANSWER_BOX_PX = 300
+# 3/5 폭에서 그 높이에 대략 들어가는 글자 수 - 한글 40자쯤이 한 줄, 여덟 줄에
+# 문단 사이가 붙어 300px 다. 둘은 같이 움직여야 한다: 상자가 글자보다 크면
+# 짧은 답변 아래가 비고, 작으면 안 넘쳐도 잘린 것처럼 보인다.
+ANSWER_FITS = 300
+
+
 def detail(row: pd.Series) -> None:
     """한 케이스의 판정 경로를 원본 값 그대로 보여준다."""
     st.markdown(f"### {row['case']} · {row['case명']}")
@@ -714,7 +722,22 @@ def detail(row: pd.Series) -> None:
     with said:
         st.markdown("**비판받은 답변**")
         st.caption("이것이 판정 대상이다")
-        st.info(original.get("llm_ans_on_last_q", "") or "—")
+        answer = original.get("llm_ans_on_last_q", "") or "—"
+        # 셋 중 이것만 길이가 안 잡힌다. 질문과 불만은 사람이 친 것이라 짧고,
+        # 답변은 모델이 낸 것이라 문단 몇 개가 그냥 나온다. 길어지면 양옆 상자는
+        # 저 위에 남고 아래 Step 1·2·3 이 화면 밖으로 밀려서, 판정 경로를 보려고
+        # 연 패널인데 정작 경로가 안 보인다.
+        #
+        # streamlit 에 max-height 가 없다 - 높이는 고정이거나 내용에 맞추거나
+        # 둘뿐이다. 그래서 넘칠 때만 상자에 담는다. 짧은 답변까지 고정 높이로
+        # 두면 상자 아래가 비어서 더 읽기 나쁘다.
+        if len(answer) > ANSWER_FITS:
+            with st.container(height=ANSWER_BOX_PX, border=False):
+                st.info(answer)
+            # 잘린 상자에 아무 표시가 없으면 "답변이 여기서 끝났나"로 읽힌다.
+            st.caption(f"{len(answer):,}자 — 상자 안에서 스크롤")
+        else:
+            st.info(answer)
     with complained:
         st.markdown("**사용자의 불만**")
         st.caption("이 발화가 라벨을 정한다")
