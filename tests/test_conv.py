@@ -58,17 +58,17 @@ RAW = {
                         "retrieved_data": json.dumps(["다른 문서 A", "다른 문서 B"]),
                         "llm_response": "지역별로 다릅니다.", "user_question": "상한 금액을 물었는데요",
                         "trace_matched": "True",
-                        "llm_eval_result": "조건 변경", "llm_eval_score": 45.57,
+                        "llm_eval_result": "질의 폭스", "llm_eval_score": 45.57,
                         "llm_eval_score_top1": 45,
                         "llm_alternatives": [
-                            {"label": "F", "name": "조건 변경", " probability": 0.9},
+                            {"label": "F", "name": "질의 폭스", " probability": 0.9},
                             {"label": "B", "name": "맥락 추가", "probability": 0.095},
                         ],
-                        "llm_emotion_result": "긍정적 중립", "llm_emotion_score": 61.69,
+                        "llm_emotion_result": "감정 델타", "llm_emotion_score": 61.69,
                         "llm_emotion_score_top1": 62.5,
                         "llm_emotion_alternatives": [
-                            {"lable": "D", "name": "긍정적 중립", "probability": 0.931},
-                            {"label": "E", "name": "중립", "probability": 0.067},
+                            {"lable": "D", "name": "감정 델타", "probability": 0.931},
+                            {"label": "E", "name": "감정 에코", "probability": 0.067},
                         ],
                     },
                 ],
@@ -158,9 +158,9 @@ def test_null_eval_fields_become_empty_not_none():
 def test_followup_turn_carries_eval_labels():
     second = _convs()[1].turns[1]
     assert second.is_followup is True
-    assert second.eval_result == "조건 변경"
+    assert second.eval_result == "질의 폭스"
     assert second.eval_score == pytest.approx(45.57)
-    assert second.emotion_result == "긍정적 중립"
+    assert second.emotion_result == "감정 델타"
 
 
 # ---------------------------------------------------------------------------
@@ -179,7 +179,7 @@ def test_leading_space_in_probability_key_is_fixed():
 def test_lable_typo_is_fixed():
     alts = _convs()[1].turns[1].emotion_alternatives
     assert alts[0]["label"] == "D"
-    assert alts[0]["name"] == "긍정적 중립"
+    assert alts[0]["name"] == "감정 델타"
 
 
 def test_alternatives_always_have_the_three_keys():
@@ -254,7 +254,7 @@ def test_missing_optional_fields_do_not_crash():
 def _long_conv(n=8):
     turns = [{"turn": i, "user_question": f"질문{i}", "llm_response": f"답변{i}",
               "retrieved_data": json.dumps([f"청크{i}"]),
-              "llm_eval_result": None if i == 1 else "조건 변경"}
+              "llm_eval_result": None if i == 1 else "질의 폭스"}
              for i in range(1, n + 1)]
     return parse_conversations({"users": [{"user_id": "u", "conversations": [
         {"conversation_id": "c", "turns": turns}]}]})[0]

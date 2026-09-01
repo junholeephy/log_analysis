@@ -104,6 +104,7 @@ class GroundingCheck(BaseModel):
 # ---------------------------------------------------------------------------
 
 ComplaintTarget = Literal[
+    "none",              # 불만이 아니다 — 새 질문이거나 수긍   -> case0
     "tone",              # 말투·어조·용어가 마음에 안 듦    -> case16
     "format",            # 형식·구성이 마음에 안 듦        -> case12
     "language",          # 요구한 언어가 아님              -> case10
@@ -158,6 +159,12 @@ class Observation(BaseModel):
 
     # --- 불만의 성격 ---
     complaint_target: ComplaintTarget
+    complaint_quote: str = Field(
+        default="",
+        description="후속 발화에서 그대로 따온 구절. complaint_target 을 그렇게 읽은 근거다. "
+                    "특히 'none' 일 때 필수 — 그게 가장 쉬운 답이라 근거 없이 통과시키면 "
+                    "애매한 턴이 전부 그리로 샌다. 원문 그대로여야 하고 지어내면 검증에서 걸린다",
+    )
     question_domain: QuestionDomain
 
     # --- 질문 쪽 관측 ---

@@ -288,8 +288,14 @@ def main() -> None:
     # 섞어 두면 "챗봇이 나쁘다"로 읽히는데 실제로는 인프라가 모자랐던 것이다.
     service = int((view["case"] == "case9").sum())
 
-    cols = st.columns(5)
-    cols[0].metric("분류된 턴", len(view))
+    # case0 은 실패가 아니다. 필터가 넓게 잡아 들어온 정상 턴이라 실패율 분모에서
+    # 빼야 하고, 이 숫자가 가리키는 것은 챗봇이 아니라 필터다.
+    normal = int((view["case"] == "case0").sum())
+
+    cols = st.columns(6)
+    cols[0].metric("분류된 턴", len(view),
+                   delta=f"-{normal} 정상" if normal else None, delta_color="off",
+                   help="case0(정상)을 빼면 실제 실패 건수가 된다.")
     cols[1].metric("지어낸 인용", dropped,
                    help="판정자가 제시한 인용이 원문과 대조되지 않은 건수. "
                         "크면 사전지식 오염을 의심해야 한다.")
@@ -300,6 +306,14 @@ def main() -> None:
     cols[4].metric("서비스 오류", service,
                    help="case9 — 모델 자원 부족으로 서비스가 안내 문구를 낸 턴. "
                         "검색·생성 품질과 무관하므로 아래 분포를 읽을 때 빼고 봐야 한다.")
+    cols[5].metric("정상", normal,
+                   help="case0 — 후속 발화가 앞 답변을 문제 삼지 않은 턴. "
+                        "필터가 넓게 잡아 들어온 것이라 챗봇이 아니라 필터를 가리킨다.")
+    if normal:
+        st.info(f"필터가 고른 {len(view)}건 중 {normal}건({normal/len(view):.0%})은 "
+                "불만이 아니었다. 실패율에서 빼고 읽고, 이 비율이 크면 필터를 "
+                "좁힐 신호다 — 다만 0 이라고 좋은 것은 아니다. 너무 좁아서 놓치고 "
+                "있을 수도 있어 필터 리포트와 짝으로 봐야 한다.", icon="✅")
     if service:
         st.info(f"서비스 자원 부족 응답이 {service}건이다 "
                 f"(전체의 {service/len(view):.0%}). 모델이 답을 만든 적이 없는 턴이라 "

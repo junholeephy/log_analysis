@@ -9,7 +9,7 @@ from ragdiag import taxonomy
 from ragdiag.checks import Check
 from ragdiag.route import route, secondary_from, service_unavailable
 from ragdiag.schema import Evidence, GroundingCheck, Observation, SufficiencyJudgment
-from ragdiag.verify import CitationCheck, VerifiedEvidence
+from ragdiag.verify import CitationCheck, QuoteCheck, VerifiedEvidence
 
 
 def obs(**kw) -> Observation:
@@ -355,11 +355,75 @@ def reachable_cases() -> set[str]:
         )
         produced.add(result.primary_case)
         produced.update(result.secondary_cases)
+    # complaint_target="none" 은 라우팅 첫머리에서 갈리므로 위의 큰 조합을 다 돌
+    # 필요가 없다. 대신 인용 검증의 세 상태를 여기서 다 밟는다 - 검증을 통과해야만
+    # case0 이고, 못 대면 통과시키지 않는다.
+    for ck in variants:
+        for comp in (None, QuoteCheck("q" * 12, 1.0, True), QuoteCheck("", 0.0, False)):
+            result = route(obs(complaint_target="none"), ck, complaint=comp)
+            produced.add(result.primary_case)
+            produced.update(result.secondary_cases)
+
     # case9 는 route() 가 아니라 service_unavailable() 이 만든다. 관측을 거치지
     # 않는 유일한 경로라 여기서 빠지면 "도달 불가"로 잘못 집계된다.
     produced.add(service_unavailable(
         Check("service_error", "violated", "확정 문구 일치")).primary_case)
     return {c for c in produced if c.startswith("case")}
+
+
+# ---------------------------------------------------------------------------
+# case0 — 실패가 아닌 턴
+#
+# 필터는 재현율 쪽으로 넓게 잡는다. 낼 자리가 없으면 정상 후속 질문이
+# content_missing 으로 읽혀 case20 을 부풀리고, 그 숫자가 코퍼스 보강 목록이 되어
+# 문서팀이 쓸 필요 없는 문서를 쓴다. 다만 "문제 없음"은 판정자가 낼 수 있는 가장
+# 쉬운 답이라, 열어두기만 하면 애매한 턴이 전부 그리로 샌다.
+# ---------------------------------------------------------------------------
+
+def test_no_complaint_with_a_verified_quote_is_case0():
+    result = route(obs(complaint_target="none"), checks(),
+                   complaint=QuoteCheck("그럼 반차는 어떻게 되나요", 1.0, True))
+    assert result.primary_case == "case0"
+    assert any("분모" in n for n in result.notes), result.notes
+
+
+def test_no_complaint_without_a_verified_quote_does_not_pass():
+    """근거를 못 대면 통과시키지 않는다. 인용 강제가 여기서 값을 한다."""
+    result = route(obs(complaint_target="none"), checks(),
+                   complaint=QuoteCheck("지어낸 구절", 0.2, False))
+    assert result.primary_case == taxonomy.UNCLASSIFIED
+    assert result.confidence == "low"
+
+
+def test_no_complaint_but_a_code_violation_does_not_pass():
+    """불만이 없다고 결함이 없는 건 아니다. 사용자가 지적하지 않았을 뿐이다."""
+    result = route(obs(complaint_target="none"),
+                   checks(truncated=Check("truncated", "violated", "문장 중간에서 끊김")),
+                   complaint=QuoteCheck("그럼 반차는", 1.0, True))
+    assert result.primary_case == taxonomy.UNCLASSIFIED
+    assert "truncated" in result.reason
+
+
+def test_refusal_and_injection_beat_case0():
+    """거절·인젝션은 사용자가 지적했든 아니든 확인된 사실이다."""
+    verified = QuoteCheck("그럼 반차는", 1.0, True)
+    assert route(obs(complaint_target="none", answer_refused=True),
+                 checks(), complaint=verified).primary_case == "case28"
+    assert route(obs(complaint_target="none"),
+                 checks(injection=Check("injection", "violated", "지시 수행")),
+                 complaint=verified).primary_case == "case29"
+
+
+def test_case0_beats_question_side_problems():
+    """사용자가 만족했다면 그 모호함은 실제로 문제가 되지 않았다.
+
+    신호는 secondary 로 남는다 - 지워버리면 되묻기 유도를 고칠 근거가 사라진다.
+    """
+    result = route(obs(complaint_target="none", question_answerable_as_asked=False,
+                       question_self_contained=False, question_multi_intent=True),
+                   checks(), complaint=QuoteCheck("그럼 반차는", 1.0, True))
+    assert result.primary_case == "case0"
+    assert "case4" in result.secondary_cases and "case3" in result.secondary_cases
 
 
 def test_taxonomy_doc_matches_the_reachable_cases():

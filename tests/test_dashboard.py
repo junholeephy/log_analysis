@@ -26,7 +26,12 @@ AppTest = pytest.importorskip(
 @pytest.fixture(scope="module")
 def result_file(tmp_path_factory):
     """합성 데이터를 분류한 결과. 파일로 저장소에 두지 않는다."""
-    from ragdiag.backends import ClaudeCodeBackend
+    import sys
+
+    sys.path.insert(0, str(ROOT / "tests"))
+    from stub_llm import StubLLM
+
+    from ragdiag.backends import OpenAICompatBackend
     from ragdiag.pipeline import build_outcome, judge_cases, load_and_select, make_judge
     from ragdiag.fixtures.synth import generate
 
@@ -35,7 +40,12 @@ def result_file(tmp_path_factory):
     log.write_text(json.dumps(generate(n=4, seed=0), ensure_ascii=False), encoding="utf-8")
 
     selection = load_and_select(log)
-    results = judge_cases(selection.cases[:8], make_judge(ClaudeCodeBackend()), workers=2)
+    # 개발 장비 전용 백엔드에 묶어두면 깨끗한 사본에서 이 테스트가 통째로
+    # 건너뛰어진다. 대시보드는 사내에서 쓰는 화면이라 그러면 안 된다.
+    with StubLLM() as stub:
+        backend = OpenAICompatBackend(base_url=stub.url, model="stub-model",
+                                      api_key="stub", timeout=30)
+        results = judge_cases(selection.cases[:8], make_judge(backend), workers=2)
     outcome = build_outcome(selection.owners[:8], results)
     out = tmp / "conv_parsed.json"
     outcome.save(out)

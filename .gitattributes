@@ -1,0 +1,32 @@
+# 이식 표면 — 저장소에는 두되 archive 결과에서 뺀다.
+#
+# .gitignore 와 역할이 다르다. 저쪽은 "저장소에 애초에 들어오지 못하게" 하고
+# (데이터·산출물·로컬 설정), 여기는 "저장소에는 있지만 사내에는 안 보내는" 것이다.
+#
+# **줄 끝 주석을 쓰지 마라.** git 은 .gitattributes 에서 그걸 지원하지 않는다.
+# 패턴 뒤의 모든 토큰을 속성 이름으로 읽어서, `tools/ export-ignore  # 설명` 은
+# "# 은 올바른 속성 이름이 아니다" 경고만 내고 그 줄이 통째로 무시된다.
+# 무시된 줄은 조용히 무시되므로, 실제로 archive 를 풀어보기 전에는 알 수 없다.
+#
+# 아직 없는 파일도 미리 적어둔다. 나중에 하나 생겼을 때 이 줄이 없으면 조용히
+# 사내로 넘어가고, 그건 사본을 지우고 태그를 다시 내야 하는 사고다.
+# scripts/sync.sh 가 양쪽 모드에서 이 목록을 검사한다.
+
+# 개발 장비 전용 도구 (LLM·외부 API 를 쓴다)
+tools/                 export-ignore
+requirements-dev.txt   export-ignore
+
+# 사내에서 가져온 인사이트 기록
+docs/insights/         export-ignore
+
+# AI 도구 설정
+.claude/               export-ignore
+.cursor/               export-ignore
+.mcp.json              export-ignore
+CLAUDE.md              export-ignore
+AGENTS.md              export-ignore
+.github/               export-ignore
+
+# 자기 자신도 뺀다. 이 파일이 사내에 남으면 "무언가를 제외했다"는 사실이
+# 목록째 드러난다.
+.gitattributes         export-ignore

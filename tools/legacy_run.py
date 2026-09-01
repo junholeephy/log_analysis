@@ -19,17 +19,17 @@ import os
 import sys
 from pathlib import Path
 
-# src/ 가 아니라 scripts/ 에 있어서 파이썬이 src/ 를 sys.path 에 넣어주지 않는다.
+# src/ 가 아니라 tools/ 에 있어서 파이썬이 src/ 를 sys.path 에 넣어주지 않는다.
 # src/run.py 는 이 두 줄이 필요 없다 - 자기가 src/ 안에 있기 때문이다.
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(_ROOT / "src"))
+sys.path.insert(0, str(_ROOT))   # tools.backend_cli / tools.backend_api 용
 
 from ragdiag import prompts
 from ragdiag.backends import (
     KEY_VARS,
     MODEL_VAR,
     URL_VARS,
-    ApiBackend,
-    ClaudeCodeBackend,
     JudgeError,
     OpenAICompatBackend,
     env_first,
@@ -315,9 +315,14 @@ def build_backend(args) -> object:
             thinking=args.thinking, max_tokens=args.max_tokens,
         )
     if args.backend == "cli":
-        return ClaudeCodeBackend(model=args.model or DEFAULT_MODEL,
-                                 cli_path=args.cli_path, timeout=args.timeout)
+        from tools.backend_cli import ClaudeCodeBackend
+
+        return ClaudeCodeBackend(
+            model=args.model or DEFAULT_MODEL,
+            cli_path=args.cli_path, timeout=args.timeout)
     import anthropic
+
+    from tools.backend_api import ApiBackend
 
     client = anthropic.Anthropic()
     if not (client.api_key or client.auth_token):

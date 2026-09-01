@@ -14,8 +14,11 @@
 """
 
 import textwrap
+from pathlib import Path
 
 import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
 
 from ragdiag import settings
 from ragdiag.backends import env_first
@@ -199,7 +202,9 @@ def test_no_default_argument_binds_a_settings_value():
         if path.name == "settings.py":
             continue
         for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if re.search(r"=\s*settings\.[A-Z_]+\s*[,)]", line):
+            # 비교·복합대입 연산자를 기본 인자로 오인하지 않게 한다.
+            # `ratio >= settings.MATCH_THRESHOLD)` 는 런타임 읽기라 옳은 코드다.
+            if re.search(r"(?<![<>!=+\-*/%&|^])=\s*settings\.[A-Z_]+\s*[,)]", line):
                 offenders.append(f"{path.name}:{n}  {line.strip()}")
     assert not offenders, (
         "기본 인자에 settings 값이 박혀 있다. def 시점에 굳어 설정이 안 먹는다:\n"
@@ -292,35 +297,168 @@ def test_env_first_falls_back(monkeypatch):
     assert env_first(KEY_VARS, "EMPTY") == "EMPTY"
 
 
+def test_label_file_from_config_replaces_the_placeholder(tmp_path, placeholder_labels):
+    """사내 taxonomy 문서를 그대로 가리키면 된다. 형식은 `A. 이름 -> 점수`."""
+    from ragdiag import labels as mod
+
+    doc = tmp_path / "q.md"
+    doc.write_text("# 그룹\nA. 어떤 라벨 -> 80\nB. 다른 라벨 -> 20\n", encoding="utf-8")
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text(f"labels:\n  query: {doc}\n", encoding="utf-8")
+
+    changed = apply(load(cfg))
+    assert any("labels.query" in c for c in changed), changed
+    assert mod.QUERY_LABELS["A"].name == "어떤 라벨"
+    assert mod.DEFAULT_QUERY_SCORES["A"] == 80
+    assert not mod.is_placeholder()
+
+
+def test_missing_label_file_dies_before_computing(tmp_path):
+    """조용히 자리표시자로 도는 것이 최악이다 - 필터가 에러 없이 0건을 돌려준다."""
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text(f"labels:\n  query: {tmp_path}/없는파일.md\n", encoding="utf-8")
+    with pytest.raises(ConfigError) as e:
+        apply(load(cfg))
+    assert "라벨 파일이 없습니다" in str(e.value)
+
+
+def test_unparseable_label_file_is_rejected(tmp_path):
+    cfg = tmp_path / "c.yaml"
+    doc = tmp_path / "q.md"
+    doc.write_text("이건 라벨 형식이 아니다\n", encoding="utf-8")
+    cfg.write_text(f"labels:\n  query: {doc}\n", encoding="utf-8")
+    with pytest.raises(ConfigError) as e:
+        apply(load(cfg))
+    assert "하나도 읽지 못했습니다" in str(e.value)
+
+
+def test_filter_with_labels_refuses_to_run_on_placeholders(tmp_path, placeholder_labels):
+    """가장 위험한 실패는 에러가 아니라 조용한 0건이다."""
+    import json
+
+    from ragdiag.filters import LabelTableMissing, load_filter
+
+    path = tmp_path / "f.json"
+    path.write_text(json.dumps(
+        {"state": {"emotion_labels": ["I. 어떤라벨"], "eval_range": [0, 60]}}),
+        encoding="utf-8")
+    with pytest.raises(LabelTableMissing) as e:
+        load_filter(path)
+    assert "labels:" in str(e.value), "무엇을 채우라는지 적어야 한다"
+
+
+def test_filter_without_labels_runs_on_placeholders(tmp_path, placeholder_labels):
+    """라벨을 안 쓰는 필터는 실값 없이도 돈다. 필요 이상으로 막지 않는다."""
+    import json
+
+    from ragdiag.filters import load_filter
+
+    path = tmp_path / "f.json"
+    path.write_text(json.dumps({"state": {"turn": "2-"}}), encoding="utf-8")
+    assert load_filter(path).turn_buckets, "턴 조건만 쓰는 필터는 통과해야 한다"
+
+
 def test_no_config_means_defaults():
     config = load(None)
     assert config.values == {}
     assert apply(config) == []
 
 
-def test_backend_falls_back_to_the_environment(monkeypatch):
-    """--backend 도 설정도 없으면 환경으로 고른다.
-
-    argparse 기본값을 None 으로 바꾸면서 이 자동 선택이 사라진 적이 있다.
-    그러면 LLM_API_URL 이 없는 장비에서 --golden 이 안 돈다.
-    """
+def _bare_args(**kw):
     import argparse
 
+    base = dict(backend=None, model=None, timeout=None, base_url=None,
+                api_key=None, json_mode=None, thinking=None, max_tokens=None)
+    base.update(kw)
+    return argparse.Namespace(**base)
+
+
+def test_entry_point_knows_only_the_local_backend(monkeypatch):
+    """규격 §1.4 · C8 — 사내에서 실패할 호출은 src/ 에 없다.
+
+    예전에는 LLM_API_URL 이 없으면 claude CLI 로 떨어졌다. 그 경로가 tools/ 로
+    나가면서 자동 선택도 없앴다. 주소가 없으면 무엇을 export 하라고 알려주는
+    쪽이 맞다 - 사내에는 claude CLI 자체가 없어서 폴백이 성립하지 않는다.
+    """
     from ragdiag.__main__ import make_backend
+    from ragdiag.backends import JudgeError
 
     for name in URL_VARS:
         monkeypatch.delenv(name, raising=False)
-    args = argparse.Namespace(backend=None, model=None, timeout=None,
-                              base_url=None, api_key=None, json_mode=None,
-                              thinking=None, max_tokens=None)
-    backend = make_backend(args, Config())
-    assert type(backend).__name__ == "ClaudeCodeBackend", (
-        "환경변수가 없으면 CLI 백엔드로 떨어져야 한다")
+
+    with pytest.raises(JudgeError) as e:
+        make_backend(_bare_args(), Config())
+    assert "LLM_API_URL" in str(e.value), str(e.value)
+
+
+@pytest.mark.parametrize("kind", ["cli", "api"])
+def test_dev_backends_point_at_the_tools_runner(kind, monkeypatch):
+    """트레이스백 하나가 사이클을 먹는다. 어디로 가라는지까지 적어야 한다."""
+    from ragdiag.__main__ import make_backend
+    from ragdiag.backends import JudgeError
+
+    for name in URL_VARS:
+        monkeypatch.delenv(name, raising=False)
+
+    with pytest.raises(JudgeError) as e:
+        make_backend(_bare_args(backend=kind), Config())
+    assert "tools/dev_run.py" in str(e.value), str(e.value)
+    assert "--backend local" in str(e.value), str(e.value)
+
+
+def test_src_does_not_import_tools():
+    """import 방향은 한쪽이다 (규격 §1.4). 반대로 가면 tools/ 없는 사본이 죽는다."""
+    import pathlib as _p
+    import re
+
+    offenders = []
+    for path in (ROOT / "src").rglob("*.py"):
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if re.match(r"\s*(from|import)\s+tools\b", line):
+                offenders.append(f"{path.relative_to(ROOT)}:{n}  {line.strip()}")
+    assert not offenders, "src/ 가 tools/ 를 import 한다:\n" + "\n".join(offenders)
+
+
+def test_shipped_source_has_no_llm_api_imports():
+    """sync.sh 가 잡기 전에 여기서 잡는다. 거기서 걸리면 태그를 다시 내야 한다."""
+    import re
+
+    offenders = []
+    for path in (ROOT / "src").rglob("*.py"):
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if re.match(r"\s*(import|from)\s+(anthropic|openai)\b", line):
+                offenders.append(f"{path.relative_to(ROOT)}:{n}  {line.strip()}")
+    assert not offenders, (
+        "사내에서 죽을 의존이 src/ 에 있다 (C8):\n" + "\n".join(offenders))
 
 
 # ---------------------------------------------------------------------------
 # CLI 형태 — 사내에서 실제로 칠 명령
 # ---------------------------------------------------------------------------
+
+def _run_against_stub(args: list[str], cwd) -> "subprocess.CompletedProcess":
+    """가짜 LLM 서버를 띄우고 진입점을 끝까지 돌린다.
+
+    claude CLI 백엔드에 묶어두면 그게 없는 사본에서 이 테스트들이 건너뛰어진다 -
+    그러면 사내에서 처음 도는 경로(출력 디렉터리 생성, 파일 이름)가 검증되지 않은
+    채로 나간다. 배관을 재는 테스트에 판정 품질은 필요 없다.
+    """
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path as _Path
+
+    sys.path.insert(0, str(_Path(__file__).resolve().parent))
+    from stub_llm import StubLLM
+
+    root = _Path(__file__).resolve().parents[1]
+    with StubLLM() as stub:
+        env = dict(os.environ, LLM_API_URL=stub.url, LLM_API_KEY="stub")
+        return subprocess.run(
+            [sys.executable, str(root / "src" / "run.py"), "--backend", "local",
+             "--no-cache", *args],
+            capture_output=True, text=True, env=env, cwd=cwd)
+
 
 def test_entry_script_runs_without_pythonpath(tmp_path):
     """python <저장소>/src/run.py --conv-data ... --filter-data ... --output-dir ...
@@ -370,10 +508,9 @@ def test_output_dir_is_created_and_holds_both_artifacts(tmp_path):
                    encoding="utf-8")
     out = tmp_path / "없던" / "디렉터리"
 
-    proc = subprocess.run(
-        [sys.executable, str(root / "src" / "run.py"), "--backend", "cli",
+    proc = _run_against_stub([
          "--conv-data", str(log), "--output-dir", str(out)],
-        capture_output=True, text=True, cwd=tmp_path)
+        cwd=tmp_path)
     assert proc.returncode == 0, proc.stderr
     results = list(out.glob("conv_parsed_*.json"))
     summaries = list(out.glob("run_summary_*.txt"))
@@ -414,10 +551,9 @@ def test_output_filename_carries_the_finish_time(tmp_path):
     log = tmp_path / "conv_eval.json"
     log.write_text(json.dumps(generate(n=1, seed=0), ensure_ascii=False), encoding="utf-8")
 
-    proc = subprocess.run(
-        [sys.executable, str(root / "src" / "run.py"), "--backend", "cli",
+    proc = _run_against_stub([
          "--conv-data", str(log)],
-        capture_output=True, text=True, cwd=tmp_path)
+        cwd=tmp_path)
     assert proc.returncode == 0, proc.stderr
 
     # --output-dir 을 안 줘도 ./output 에 생긴다
@@ -449,9 +585,8 @@ def test_out_flag_overrides_the_timestamp(tmp_path):
     log.write_text(json.dumps(generate(n=1, seed=0), ensure_ascii=False), encoding="utf-8")
     fixed = tmp_path / "고정경로.json"
 
-    proc = subprocess.run(
-        [sys.executable, str(root / "src" / "run.py"), "--backend", "cli",
+    proc = _run_against_stub([
          "--conv-data", str(log), "--out", str(fixed)],
-        capture_output=True, text=True, cwd=tmp_path)
+        cwd=tmp_path)
     assert proc.returncode == 0, proc.stderr
     assert fixed.exists(), "--out 경로에 안 썼다"

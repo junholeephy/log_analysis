@@ -44,7 +44,16 @@ def _evidence_payload(result: TurnResult) -> dict:
             "question_self_contained": obs.question_self_contained,
             "question_multi_intent": obs.question_multi_intent,
             "answer_refused": obs.answer_refused,
+            # complaint_target 을 그렇게 읽은 근거. 어느 값이든 남긴다 - 라벨이
+            # 이상할 때 판정자가 무엇을 보고 그랬는지가 첫 단서다.
+            "complaint_quote": obs.complaint_quote,
         }
+        if obs.complaint_target == "none":
+            # 왜 "문제 없음"으로 넘어갔는지(또는 왜 못 넘어갔는지)가 사후에
+            # 확인돼야 한다. 이 라벨은 필터를 고치는 근거로 쓰인다.
+            if result.complaint:
+                payload["observation"]["quote_verified"] = result.complaint.verified
+                payload["observation"]["quote_ratio"] = round(result.complaint.ratio, 3)
     if result.judgment:
         payload["sufficiency"] = {
             "verdict": result.judgment.verdict,

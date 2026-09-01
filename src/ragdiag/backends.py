@@ -1,12 +1,20 @@
-"""판정 백엔드 - Claude Code CLI와 Anthropic API.
+"""판정 백엔드 — OpenAI 호환 로컬 서버.
+
+여기 있는 것은 **사내에서 실제로 도는 경로 하나뿐이다.** claude CLI 와 Anthropic
+API 백엔드는 사내에서 호출이 전부 실패하므로 `tools/` 로 뺐다 (규격 §1.4 · C8).
+import 방향은 한쪽이다 — `tools/` 는 여기를 import 하지만 여기는 `tools/` 를
+import 하지 않는다. 그래서 그 파일들이 없어도 이 모듈은 그대로 돈다.
 
 두 경로의 결정적 차이는 **스키마를 누가 강제하느냐**다.
 
-- API(`messages.parse`)는 서버가 스키마를 강제한다. 형식이 어긋난 응답은 나올 수 없다.
-- CLI(`claude -p`)는 그런 장치가 없다. 프롬프트가 출력 계약을 짊어지고, 여기서
-  JSON을 뽑아 Pydantic으로 검증하고, 실패하면 검증 오류를 되먹여 한 번 재시도한다.
+- 서버가 강제하는 경우(json_schema·guided_json, API messages.parse): 형식이 어긋난
+  응답은 나올 수 없다. 재시도가 필요 없다.
+- 강제가 안 되는 경우(json_object·none, 그리고 프록시가 파라미터를 조용히 버릴 때):
+  프롬프트가 출력 계약을 짊어지고, 여기서 JSON을 뽑아 Pydantic으로 검증하고,
+  실패하면 검증 오류를 되먹여 재시도한다.
 
-그래서 CLI 경로에서는 프롬프트에 output_contract()가 붙는다(prompts.py).
+그래서 강제가 없는 경로에서는 프롬프트에 output_contract()가 붙는다(prompts.py).
+negotiate() 가 서버가 실제로 강제하는지를 탐침으로 확인하는 것도 같은 이유다.
 """
 
 from __future__ import annotations
@@ -15,6 +23,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import threading
 import urllib.error
 import urllib.request
@@ -25,15 +34,26 @@ from pydantic import BaseModel, ValidationError
 
 T = TypeVar("T", bound=BaseModel)
 
-# 판정에는 도구가 필요 없다. 도구를 쓰기 시작하면 판정이 아니라 조사가 된다.
-DISALLOWED_TOOLS = (
-    "Bash,Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,Task,TodoWrite,"
-    "NotebookEdit,Agent,Skill,Artifact"
-)
-
 
 class JudgeError(RuntimeError):
     pass
+
+
+class Truncated(JudgeError):
+    """모델이 답을 내기 전에 생성이 끝났다.
+
+    형식 오류와 반드시 구분해야 한다. 형식 오류는 같은 요청을 다시 보내면서
+    무엇이 틀렸는지 알려주면 고쳐지지만(parse_with_repair), 잘린 응답은 같은
+    요청을 그대로 다시 보내면 **같은 자리에서 또 잘린다**. 조건(추론 스위치,
+    토큰 한도)을 바꿔야만 다른 결과가 나온다.
+    """
+
+    def __init__(self, message: str, *, finish_reason: Optional[str] = None,
+                 usage: Optional["Usage"] = None):
+        super().__init__(message)
+        self.finish_reason = finish_reason
+        # 잘린 요청도 토큰을 다 태웠다. 사용량에서 빠지면 안 된다.
+        self.usage = usage or Usage()
 
 
 @dataclass
@@ -101,6 +121,22 @@ def extract_json(text: str) -> str:
     raise ValueError(f"중괄호 짝이 맞지 않음: {text[:200]!r}")
 
 
+def _truncated_message(finish_reason: Optional[str], reasoned_chars: int,
+                       max_tokens: int) -> str:
+    """무엇이 듣는지는 왜 끝났는지에 달렸다. 짐작하지 말고 finish_reason 을 쓴다.
+
+    예전 문구는 어느 경우든 "max_tokens 를 늘리거나"라고 했는데, 한도에 걸린 게
+    아닐 때는 늘려도 똑같다. 틀린 조치를 권하면 사이클 하나를 그냥 버린다.
+    """
+    if finish_reason == "length":
+        return (f"토큰 한도({max_tokens:,})를 다 쓰고도 답이 나오지 않았습니다 "
+                f"(추론 {reasoned_chars:,}자). 추론이 한도를 먹었습니다.")
+    return (f"모델이 추론만 하고 답을 내지 못했습니다 "
+            f"(finish_reason={finish_reason}, 추론 {reasoned_chars:,}자). "
+            f"한도({max_tokens:,})에 걸린 게 아니라 스스로 멈췄으므로 "
+            f"max_tokens 를 늘려도 같습니다.")
+
+
 def _repair_note(error: Exception, contract_hint: str) -> str:
     return (
         f"\n\n---\n직전 응답이 형식 검증에 실패했다:\n{error}\n\n"
@@ -148,124 +184,6 @@ def strict_json_schema(model: type[BaseModel]) -> dict:
     tighten(schema)
     return schema
 
-
-class ClaudeCodeBackend:
-    """`claude -p`를 통해 판정한다. API 키 없이 동작한다.
-
-    사용량 주의: Claude Code의 기본 시스템 프롬프트(약 12k 토큰)가 매 호출에 실린다.
-    캐시가 더워진 뒤에도 호출당 list 환산 $0.05 안팎으로, API 경로보다 3배쯤 무겁다.
-
-    Usage.cost_usd는 CLI의 total_cost_usd(costBasis="list")를 그대로 담는다.
-    구독 인증으로 붙으면 이건 청구액이 아니라 사용량 지표다. 진짜 제약은 요금이 아니라
-    5시간/주간 사용량 한도이고, 한도를 넘으면 과금이 아니라 요청이 거절된다.
-    """
-
-    def __init__(
-        self,
-        model: str = "claude-opus-5",
-        cli_path: Optional[str] = None,
-        timeout: int = 300,
-    ):
-        self.model = model
-        self.cli = cli_path or shutil.which("claude") or os.path.expanduser(
-            "~/.local/bin/claude"
-        )
-        if not os.path.exists(self.cli):
-            raise JudgeError(
-                f"claude CLI를 찾을 수 없습니다: {self.cli}\n"
-                "  --cli-path 로 경로를 지정하거나 PATH에 추가하세요."
-            )
-        self.timeout = timeout
-
-    def _run(self, system: str, user: str) -> tuple[str, Usage]:
-        cmd = [
-            self.cli, "-p", user,
-            "--output-format", "json",
-            "--model", self.model,
-            "--system-prompt", system,
-            "--disallowedTools", DISALLOWED_TOOLS,
-            "--exclude-dynamic-system-prompt-sections",
-        ]
-        try:
-            proc = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=self.timeout
-            )
-        except subprocess.TimeoutExpired as e:
-            raise JudgeError(f"CLI 타임아웃 ({self.timeout}s)") from e
-        if proc.returncode != 0:
-            raise JudgeError(f"CLI 종료코드 {proc.returncode}: {proc.stderr[:300]}")
-
-        try:
-            envelope = json.loads(proc.stdout)
-        except json.JSONDecodeError as e:
-            raise JudgeError(f"CLI 응답을 파싱하지 못함: {proc.stdout[:300]!r}") from e
-        if envelope.get("is_error"):
-            raise JudgeError(f"CLI 오류: {envelope.get('result', '')[:300]}")
-
-        u = envelope.get("usage", {})
-        return envelope.get("result", ""), Usage(
-            input_tokens=u.get("input_tokens", 0)
-            + u.get("cache_read_input_tokens", 0)
-            + u.get("cache_creation_input_tokens", 0),
-            output_tokens=u.get("output_tokens", 0),
-            cost_usd=envelope.get("total_cost_usd", 0.0),
-        )
-
-    def complete(
-        self, system: str, user: str, out_model: type[T], contract_hint: str = ""
-    ) -> tuple[T, Usage]:
-        return parse_with_repair(
-            lambda msg: self._run(system, msg), user, out_model, contract_hint
-        )
-
-
-class ApiBackend:
-    """Anthropic SDK를 통해 판정한다. 서버가 스키마를 강제하므로 재시도가 필요 없다."""
-
-    def __init__(self, model: str = "claude-opus-5", effort: str = "high",
-                 use_fallbacks: bool = True, client=None):
-        import anthropic
-
-        self.anthropic = anthropic
-        self.model = model
-        self.effort = effort
-        self.use_fallbacks = use_fallbacks
-        self.client = client or anthropic.Anthropic()
-
-    def complete(
-        self, system: str, user: str, out_model: type[T], contract_hint: str = ""
-    ) -> tuple[T, Usage]:
-        anthropic = self.anthropic
-        kwargs = dict(
-            model=self.model, max_tokens=16000, system=system,
-            messages=[{"role": "user", "content": user}],
-            thinking={"type": "adaptive"},
-            output_config={"effort": self.effort},
-            output_format=out_model,
-        )
-        if self.use_fallbacks:
-            kwargs.update(betas=["server-side-fallback-2026-07-01"], fallbacks="default")
-        try:
-            response = self.client.beta.messages.parse(**kwargs)
-        except anthropic.NotFoundError as e:
-            raise JudgeError(f"모델/엔드포인트를 찾을 수 없음: {e}") from e
-        except anthropic.RateLimitError as e:
-            raise JudgeError(f"rate limit: {e}") from e
-        except anthropic.APIStatusError as e:
-            raise JudgeError(f"API 오류 {e.status_code}: {e}") from e
-        except anthropic.APIConnectionError as e:
-            raise JudgeError(f"연결 실패: {e}") from e
-
-        if response.stop_reason == "refusal":
-            raise JudgeError(
-                f"판정자가 거절함 (category={getattr(response.stop_details, 'category', None)})"
-            )
-        if response.parsed_output is None:
-            raise JudgeError("구조화 출력을 파싱하지 못함")
-        return response.parsed_output, Usage(
-            input_tokens=response.usage.input_tokens,
-            output_tokens=response.usage.output_tokens,
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -342,6 +260,10 @@ class OpenAICompatBackend:
         self.negotiation_log: list[str] = []   # 어떤 모드가 왜 탈락했는지
         self._mode: Optional[str] = None if json_mode == "auto" else json_mode
         self._lock = threading.Lock()
+        # 잘려서 조건을 바꿔 다시 물은 횟수. RUN SUMMARY 로 나간다.
+        # negotiate() 가 _lock 을 쥔 채 _attempt 를 부르므로 락을 따로 둔다.
+        self.fallbacks: list[str] = []
+        self._fallback_lock = threading.Lock()
 
     # -- HTTP ---------------------------------------------------------------
 
@@ -400,7 +322,12 @@ class OpenAICompatBackend:
         except TimeoutError as e:
             raise JudgeError(f"{self.timeout}초 안에 응답이 없습니다") from e
 
-    def _payload(self, system: str, user: str, out_model: type[T], mode: str) -> dict:
+    def _payload(self, system: str, user: str, out_model: type[T], mode: str,
+                 *, thinking: Optional[str] = None,
+                 max_tokens: Optional[int] = None) -> dict:
+        # 폴백 사다리가 이 둘을 갈아끼운다. self.thinking 을 직접 바꾸면 같은
+        # 백엔드를 공유하는 다른 스레드의 판정 조건까지 바뀌므로 인자로만 받는다.
+        thinking = thinking or self.thinking
         payload = {
             "model": self.model,
             "messages": [
@@ -408,11 +335,11 @@ class OpenAICompatBackend:
                 {"role": "user", "content": user},
             ],
             "temperature": self.temperature,
-            "max_tokens": self.max_tokens,
+            "max_tokens": max_tokens or self.max_tokens,
         }
-        if self.thinking != "auto":
+        if thinking != "auto":
             # Qwen3 계열 채팅 템플릿 스위치. 서버가 모르면 400이 나므로 명시할 때만 보낸다.
-            payload["chat_template_kwargs"] = {"enable_thinking": self.thinking == "on"}
+            payload["chat_template_kwargs"] = {"enable_thinking": thinking == "on"}
         if mode == "json_schema":       # OpenAI 규격, vLLM 최신 / TGI
             payload["response_format"] = {
                 "type": "json_schema",
@@ -428,27 +355,100 @@ class OpenAICompatBackend:
             payload["response_format"] = {"type": "json_object"}
         return payload
 
-    @staticmethod
-    def _text_and_usage(response: dict) -> tuple[str, Usage]:
+    def _text_and_usage(self, response: dict,
+                        sent_max_tokens: Optional[int] = None) -> tuple[str, Usage]:
         try:
-            message = response["choices"][0]["message"]
+            choice = response["choices"][0]
+            message = choice["message"]
         except (KeyError, IndexError) as e:
             raise JudgeError(f"예상 밖 응답 형태: {str(response)[:300]}") from e
-        text = message.get("content") or ""
-        if not text.strip():
-            # vLLM --reasoning-parser 가 켜져 있으면 추론은 reasoning_content로 가고
-            # content가 빌 수 있다. 추론만 하고 답을 못 낸 경우다.
-            if message.get("reasoning_content"):
-                raise JudgeError(
-                    "모델이 추론만 하고 답을 내지 못했습니다. "
-                    "max_tokens를 늘리거나 --thinking off 를 시도하세요."
-                )
-            raise JudgeError(f"빈 응답: {str(response)[:200]}")
+
         u = response.get("usage") or {}
-        return text or "", Usage(
-            input_tokens=u.get("prompt_tokens", 0),
-            output_tokens=u.get("completion_tokens", 0),
-        )
+        usage = Usage(input_tokens=u.get("prompt_tokens", 0),
+                      output_tokens=u.get("completion_tokens", 0))
+        finish = choice.get("finish_reason")
+        text = message.get("content") or ""
+        cap = sent_max_tokens or self.max_tokens
+
+        if not text.strip():
+            # vLLM --reasoning-parser 가 켜져 있으면 추론은 reasoning_content 로 가고
+            # content 가 빈다. 답에 도달하기 전에 생성이 끝난 것이다.
+            reasoning = message.get("reasoning_content") or ""
+            if reasoning:
+                raise Truncated(_truncated_message(finish, len(reasoning), cap),
+                                finish_reason=finish, usage=usage)
+            raise JudgeError(f"빈 응답: {str(response)[:200]}")
+
+        # 파서가 없는 서버는 추론을 content 에 그대로 담는다. 같은 사고인데 모양만
+        # 다르고, 이쪽은 "형식 검증 실패"로 위장해서 재시도만 태우다 끝난다.
+        # 잘렸어도 JSON 이 온전히 나왔다면(뒤에 붙던 산문만 잘린 경우) 그냥 쓴다.
+        if finish == "length":
+            try:
+                extract_json(text)
+            except ValueError:
+                raise Truncated(_truncated_message(finish, len(text), cap),
+                                finish_reason=finish, usage=usage) from None
+        return text, usage
+
+    # -- 잘린 응답 되살리기 ---------------------------------------------------
+
+    def _rungs(self) -> list[tuple[str, dict]]:
+        """폴백 사다리. 순서가 중요하다.
+
+        추론을 끄는 쪽을 먼저 밟는다. 더 잘 듣고 더 싸다 - 토큰을 늘리는 건 이미
+        한도만큼 태운 요청을 두 배로 태우는 것이라, 안 들으면 손해가 두 배다.
+        """
+        rungs = []
+        if self.thinking != "off":
+            rungs.append(("--thinking off", {"thinking": "off"}))
+        rungs.append((f"max_tokens {self.max_tokens * 2:,}",
+                      {"max_tokens": self.max_tokens * 2}))
+        return rungs
+
+    def _note_fallback(self, label: str) -> None:
+        with self._fallback_lock:
+            first = not self.fallbacks
+            self.fallbacks.append(label)
+        if first:
+            # 마지막에 몰아서 알리면 이미 다 태운 뒤다. 처음 한 번은 즉시 알린다.
+            print(f"\n[!] 추론이 답까지 도달하지 못해 {label} 로 다시 물었습니다.\n"
+                  f"    계속 나오면 처음부터 {label} 로 돌리는 편이 빠릅니다.",
+                  file=sys.stderr)
+
+    def _attempt(self, system: str, user: str, out_model: type[T],
+                 mode: str) -> tuple[str, Usage]:
+        """한 번 보내고, 잘렸으면 조건을 바꿔 다시 보낸다.
+
+        parse_with_repair 는 이걸 못 고친다. 그쪽은 같은 조건으로 다시 물으면서
+        무엇이 틀렸는지 알려주는 장치인데, 잘린 응답은 조건이 같으면 같은 자리에서
+        또 잘리기 때문이다. 조건을 바꾸는 건 여기서만 한다.
+        """
+        spent, tried, last = Usage(), [], None
+        for label, override in [("", {})] + self._rungs():
+            try:
+                text, usage = self._text_and_usage(
+                    self._post(self._payload(system, user, out_model, mode, **override)),
+                    override.get("max_tokens"))
+            except Truncated as e:
+                spent.add(e.usage)
+                tried.append(label or "그대로")
+                last = e
+                continue
+            except JudgeError:
+                if last is None:
+                    raise      # 첫 시도의 실패는 폴백 대상이 아니다. 그대로 올린다.
+                # 이 칸을 서버가 못 받는다 (chat_template_kwargs 미지원 등). 다음 칸으로.
+                tried.append(f"{label}(서버가 거절)")
+                continue
+            spent.add(usage)
+            if label:
+                self._note_fallback(label)
+            return text, spent
+
+        raise Truncated(
+            f"{last}\n  시도: {' → '.join(tried)} — 모두 답에 도달하지 못했습니다.\n"
+            f"  이 서버·모델에서는 --thinking off 를 기본으로 두는 편이 낫습니다.",
+            finish_reason=last.finish_reason, usage=spent)
 
     # -- 모드 협상 -----------------------------------------------------------
 
@@ -479,13 +479,20 @@ class OpenAICompatBackend:
         with self._lock:
             if self._mode:
                 return self._mode
-            errors = []
+            errors, overran = [], []
             for mode in JSON_MODES:
                 try:
-                    response = self._post(
-                        self._payload(_PROBE_SYSTEM, _PROBE_USER, out_model, mode)
-                    )
-                    text, _ = self._text_and_usage(response)
+                    # 탐침이 잘려서 멀쩡한 모드를 떨어뜨리면 그 뒤가 전부 어긋난다.
+                    text, _ = self._attempt(
+                        _PROBE_SYSTEM, _PROBE_USER, out_model, mode)
+                except Truncated as e:
+                    # 이 모드가 거절된 게 아니다. 모델이 답까지 못 갔을 뿐이다.
+                    # 다음 모드는 볼 값어치가 있다 - guided_json 처럼 첫 토큰부터
+                    # 문법을 강제하는 모드는 추론 자체를 못 하게 막아서 안 잘린다.
+                    overran.append(mode)
+                    errors.append(f"{mode}: {e}")
+                    self.negotiation_log.append(f"{mode:<12} 답까지 도달 못 함")
+                    continue
                 except JudgeError as e:
                     errors.append(f"{mode}: {str(e).splitlines()[0]}")
                     self.negotiation_log.append(f"{mode:<12} 거절됨 - {str(e).splitlines()[0]}")
@@ -503,6 +510,13 @@ class OpenAICompatBackend:
                 hint = ("\n  힌트: --thinking 을 보내고 있습니다. 서버가 "
                         "chat_template_kwargs를 모르면 모든 모드가 실패합니다. "
                         "--thinking auto 로 다시 시도해 보세요.")
+            if overran:
+                # "서버가 응답하지 않는다"고 하면 네트워크·URL 을 뒤지러 간다.
+                # 서버는 멀쩡히 응답했다. 고칠 곳은 정반대다.
+                raise Truncated(
+                    f"서버는 응답하는데 모델이 답까지 도달하지 못합니다 "
+                    f"({', '.join(overran)}). 연결 문제가 아닙니다.\n  "
+                    + "\n  ".join(errors) + hint)
             raise JudgeError(
                 "어떤 방식으로도 서버가 응답하지 않습니다:\n  "
                 + "\n  ".join(errors) + hint
@@ -514,9 +528,7 @@ class OpenAICompatBackend:
         mode = self.negotiate(out_model)
 
         def call(message: str) -> tuple[str, Usage]:
-            return self._text_and_usage(
-                self._post(self._payload(system, message, out_model, mode))
-            )
+            return self._attempt(system, message, out_model, mode)
 
         # 스키마가 강제되면 한 번에 맞는다. 강제가 없을 때만 재시도가 의미를 갖는다.
         attempts = 1 if mode in ("json_schema", "guided_json") else self.max_attempts

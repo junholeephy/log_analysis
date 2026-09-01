@@ -27,6 +27,45 @@ LEAVE = [
 ]
 
 CASES = [
+    # ---------- complaint_target: none (case0) ----------
+    #
+    # 여기가 이 골든셋에서 가장 미묘한 자리다. "불만이 아니다"는 판정자가 낼 수
+    # 있는 가장 쉬운 답이라, 재지 않으면 관용 쪽으로 얼마나 기우는지 알 수 없다.
+    # 진짜 정상 둘과 정상처럼 보이는 불만 둘을 함께 둔다 - 한쪽만 두면 통과하는
+    # 방법이 하나뿐이라(전부 none 이라고 하거나 전부 아니라고 하거나) 측정이 안 된다.
+    dict(
+        id="none01", note="앞 답을 받아들이고 다음을 묻는다",
+        pre_queries=["국내 출장 식비 상한이 얼마인가요?"],
+        answer="국내 출장 식비는 1일 3만원을 상한으로 합니다.",
+        complaint="그럼 숙박비는 얼마인가요?",
+        chunks=RULES,
+        expect=dict(complaint_target="none", question_domain="domain"),
+    ),
+    dict(
+        id="none02", note="수긍한 뒤 절차를 묻는다 — 주제는 같지만 불만이 아니다",
+        pre_queries=["연차 신청은 어떻게 하나요?"],
+        answer="연차유급휴가 신청은 사전에 그룹웨어를 통해 제출하시면 됩니다.",
+        complaint="네 감사합니다. 승인은 누가 하나요?",
+        chunks=LEAVE,
+        expect=dict(complaint_target="none", question_domain="domain"),
+    ),
+    dict(
+        id="none03", note="새 질문처럼 보이지만 앞 답이 부족했다는 지적이다",
+        pre_queries=["국내 출장비 상한을 알려주세요."],
+        answer="출장비는 사내 규정에 따라 지급됩니다.",
+        complaint="그래서 얼마라는 건가요?",
+        chunks=RULES,
+        expect=dict(complaint_target="content_missing", question_domain="domain"),
+    ),
+    dict(
+        id="none04", note="공손하지만 같은 것을 다시 묻는다 — 불만이다",
+        pre_queries=["연차 승인권자가 누구인가요?"],
+        answer="연차는 규정에 따라 처리됩니다.",
+        complaint="죄송한데 승인권자가 누구인지만 알려주실 수 있을까요?",
+        chunks=LEAVE,
+        expect=dict(complaint_target="content_missing"),
+    ),
+
     # ---------- complaint_target: format ----------
     dict(
         id="fmt01", note="표를 요구했는데 줄글로 답함",
@@ -476,11 +515,11 @@ def build() -> tuple[dict, dict]:
                 "llm_response": case["answer"] if last else f"(이전 답변 {i + 1})",
                 "user_question": question,
                 "trace_matched": "True",
-                "llm_eval_result": None if i == 0 else "단순 연속 질문",
+                "llm_eval_result": None if i == 0 else QUERY_LABELS["E"].name,
                 "llm_eval_score": None if i == 0 else 60,
                 "llm_eval_score_top1": None if i == 0 else 60,
                 "llm_alternatives": [] if i == 0 else [{"label": "E", "probability": 1.0}],
-                "llm_emotion_result": None if i == 0 else "중립",
+                "llm_emotion_result": None if i == 0 else EMOTION_LABELS["E"].name,
                 "llm_emotion_score": None if i == 0 else 50,
                 "llm_emotion_score_top1": None if i == 0 else 50,
                 "llm_emotion_alternatives": [] if i == 0 else
@@ -495,10 +534,10 @@ def build() -> tuple[dict, dict]:
             "llm_response": "(아직 답변 없음)",
             "user_question": case["complaint"],
             "trace_matched": "True",
-            "llm_eval_result": "명확화 요구",
+            "llm_eval_result": QUERY_LABELS["K"].name,
             "llm_eval_score": 25, "llm_eval_score_top1": 25,
             "llm_alternatives": [{"label": "K", "probability": 1.0}],
-            "llm_emotion_result": "매우 부정",
+            "llm_emotion_result": EMOTION_LABELS["I"].name,
             "llm_emotion_score": 0, "llm_emotion_score_top1": 0,
             "llm_emotion_alternatives": [{"label": "I", "probability": 1.0}],
         })

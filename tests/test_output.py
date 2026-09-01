@@ -17,7 +17,7 @@ RAW = {"users": [{
          "retrieved_data": json.dumps(["청크 A"])},
         {"turn": 2, "user_question": "q2", "llm_response": "a2",
          "retrieved_data": json.dumps(["청크 B"]),
-         "llm_eval_result": "명확화 요구"},
+         "llm_eval_result": "질의 킬로"},
     ]}],
 }]}
 
@@ -86,6 +86,77 @@ def test_failed_turn_records_the_error():
     result = TurnResult(case=to_case(conv, 2), error="JudgeError: 연결 실패")
     turn = build_output([(conv, result)])["analysis_results"][0]["conversations"][0]["turns"][0]
     assert turn["classification"]["error"].startswith("JudgeError")
+
+
+def test_failed_turn_names_the_step_it_died_in():
+    """관측에서 몰려 깨지는 것과 흩어져 깨지는 것은 조치가 다르다.
+
+    관측이면 프롬프트·토큰 쪽이고, 충족도에만 몰리면 청크가 길어서 잘리는 것이다.
+    단계 이름이 없으면 실데이터 한 번 돌린 뒤 어디를 고칠지 정할 수 없다.
+    """
+    from ragdiag.backends import Usage
+    from ragdiag.classify import classify_turn
+    from tests.test_route import obs as make_obs
+
+    class _Dies:
+        def __init__(self, at):
+            self.at = at
+
+        def observe(self, case):
+            if self.at == "observe":
+                raise RuntimeError("잘림")
+            return make_obs(), Usage(input_tokens=1, output_tokens=1)
+
+        def judge_sufficiency_from(self, case, obs):
+            raise RuntimeError("잘림")
+
+    case = to_case(parse_conversations(RAW)[0], 2)
+    assert case.rag_chunks, "충족도 단계까지 가려면 청크가 있어야 한다"
+
+    assert classify_turn(case, _Dies("observe")).error.startswith("[observe]")
+    assert classify_turn(case, _Dies("sufficiency")).error.startswith("[sufficiency]")
+
+
+def test_no_complaint_skips_the_sufficiency_step():
+    """불만이 없는데 문서 충족도를 묻는 건 무의미하고 호출만 쓴다.
+
+    없는 문서에서 인용을 지어낼 표면도 생긴다 - verify 가 잡지만 잡을 일을 안 만든다.
+    """
+    from ragdiag.backends import Usage
+    from ragdiag.classify import classify_turn
+    from tests.test_route import obs as make_obs
+
+    class _Judge:
+        def __init__(self):
+            self.asked = []
+
+        def observe(self, case):
+            self.asked.append("observe")
+            return (make_obs(complaint_target="none",
+                             complaint_quote=case.current_query[:14]),
+                    Usage(input_tokens=1, output_tokens=1))
+
+        def judge_sufficiency_from(self, case, obs):
+            self.asked.append("sufficiency")
+            raise AssertionError("불만이 없는데 충족도를 물었다")
+
+    import dataclasses
+
+    # 인용은 최소 길이를 넘겨야 검증을 통과한다. RAW 의 "q2" 로는 짧아서
+    # 검증이 실패하고, 그러면 case0 이 아니라 unclassified 로 간다.
+    # 답변도 온전해야 한다. RAW 의 "a2" 는 truncated 검증기가 잡는다 - 사용자가
+    # 지적하지 않았어도 잘린 답변은 결함이므로 case0 으로 안 보낸다.
+    case = dataclasses.replace(
+        to_case(parse_conversations(RAW)[0], 2),
+        current_query="그럼 반차는 어떻게 되나요?",
+        llm_ans_on_last_q="연차는 입사일 기준으로 매년 15일이 부여됩니다. "
+                          "자세한 내용은 인사규정 제12조를 확인해 주세요.")
+    judge = _Judge()
+    result = classify_turn(case, judge)
+
+    assert judge.asked == ["observe"], judge.asked
+    assert result.classification.primary_case == "case0", result.classification
+    assert result.judgment is None and result.citation is None
 
 
 def test_output_is_json_serializable():

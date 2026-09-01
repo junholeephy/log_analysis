@@ -30,9 +30,15 @@ class Field:
     allowed: Optional[tuple] = None  # 파서가 분기하는 값만. 사내 코드값 목록은 적지 않는다
     rng: Optional[tuple] = None      # (min, max)
     note: str = ""                   # 사내에서 확인된 사실을 적는 자리
+    # 파이프라인이 읽지 않는 필드. 어긋나도 결과가 달라지지 않으므로 MISMATCH 로
+    # 세지 않는다 - 계약 위반 줄은 "판정이 틀렸을 수 있다"는 뜻이어야 하고,
+    # 거기 잡음이 섞이면 사내에서 그 줄을 안 보게 된다.
+    unused: bool = False
 
     def describe(self) -> str:
         bits = [self.dtype]
+        if self.unused:
+            bits.append("파이프라인 미사용")
         if self.nullable:
             bits.append("nullable")
         if self.allowed:
@@ -75,7 +81,11 @@ TURN_SCHEMA = (
           note="청크가 \\n\\n 또는 \\n 으로 연결된 문자열로 오는 배포가 있다. "
                "파서가 쪼갠다. 비어 있으면 검색 결과 0건이고, 서비스가 "
                "'검색 없이 답할 수 있다'고 판단한 경우도 여기 해당한다 (case21)"),
-    Field("prev_question", "str", True),
+    Field("prev_question", "str|list", True, unused=True,
+          note="사내 로그에서 list 로 관측됨 (2026-09-01, 16,141건). 파이프라인은 "
+               "읽지 않는다 - pre_queries 를 turn 순서로 직접 만든다. "
+               "다만 이게 서비스가 모델에 실제로 넘긴 히스토리라면 우리가 재구성한 "
+               "것과 다를 수 있다. case14 판정의 전제가 걸려 있으니 내용 확인 필요"),
     Field("trace_matched", "bool|str", True,
           note="문자열 'true'/'yes'/'y'/'1'/'n' 로도 온다. 파서가 흡수한다. "
                "2턴 이상 대화라는 뜻이지만 선언값과 실제 턴 수가 어긋난 로그를 본 적 있다"),
@@ -219,10 +229,14 @@ def validate(rows: list[dict], schema: tuple[Field, ...], layer: str) -> list[Mi
 class ContractReport:
     checked: int = 0
     mismatches: list[Mismatch] = None
+    # 안 쓰는 필드에서 나온 어긋남. 결과에 영향이 없으므로 따로 담는다.
+    notes: list[Mismatch] = None
 
     def __post_init__(self):
         if self.mismatches is None:
             self.mismatches = []
+        if self.notes is None:
+            self.notes = []
 
     @property
     def n_ok(self) -> int:
@@ -251,11 +265,12 @@ def check_log(payload: dict) -> ContractReport:
 
     report = ContractReport(
         checked=len(USER_SCHEMA) + len(CONVERSATION_SCHEMA) + len(TURN_SCHEMA))
-    report.mismatches = (
-        validate(users, USER_SCHEMA, "user")
-        + validate(convs, CONVERSATION_SCHEMA, "conversation")
-        + validate(turns, TURN_SCHEMA, "turn")
-    )
+    found = (validate(users, USER_SCHEMA, "user")
+             + validate(convs, CONVERSATION_SCHEMA, "conversation")
+             + validate(turns, TURN_SCHEMA, "turn"))
+    skip = {f.name for schema in SCHEMAS.values() for f in schema if f.unused}
+    report.mismatches = [m for m in found if m.field not in skip]
+    report.notes = [m for m in found if m.field in skip]
     return report
 
 

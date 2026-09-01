@@ -129,7 +129,6 @@ def test_core_accepts_a_foreign_conversation_object():
     """
     from dataclasses import dataclass
 
-    from ragdiag.backends import ClaudeCodeBackend
     from ragdiag.pipeline import build_outcome, judge_cases, make_judge
     from ragdiag.schema import Case
 
@@ -160,8 +159,10 @@ def test_core_accepts_a_foreign_conversation_object():
     )]
     owners = [Conv("C-9001", Meta("u1", "raw1", "login1", "사원", "인사팀", "인사", ""))]
 
+    # 백엔드가 None 인 것이 이 테스트의 절반이다. 확정 문구는 코드로 판정되므로
+    # LLM 이 한 번도 불리면 안 되고, None 을 넣으면 불리는 순간 터져서 그게 드러난다.
     outcome = build_outcome(
-        owners, judge_cases(cases, make_judge(ClaudeCodeBackend()), workers=1))
+        owners, judge_cases(cases, make_judge(None), workers=1))
 
     assert outcome.n_llm_calls == 0, "확정 문구는 LLM 없이 판정돼야 한다"
     assert outcome.n_failed == 0

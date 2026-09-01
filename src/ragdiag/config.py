@@ -64,6 +64,10 @@ SPEC: dict[str, tuple[type | tuple, bool]] = {
     "service_error.markers": (list, False),
     "service_error.max_chars": (int, False),
 
+    # 라벨 실값 파일 경로. 사내 코드값이라 저장소에 두지 않는다 (§1.1 · C3).
+    "labels.query": (str, False),
+    "labels.emotion": (str, False),
+
     "org.candidate_fields": (list, False),
     "filter.any_values": (list, False),
 }
@@ -200,6 +204,34 @@ def load(path: Optional[str | Path]) -> Config:
     return Config(values=values, source=str(file))
 
 
+def _install_labels(config: "Config") -> list[str]:
+    """라벨 실값 파일을 읽어 테이블에 끼운다.
+
+    경로가 틀렸으면 여기서 죽는다. 조용히 자리표시자로 도는 것이 최악이다 -
+    필터가 에러 없이 0건을 돌려주고, 30분 뒤에 빈 결과를 보게 된다.
+    """
+    from ragdiag import labels as label_mod
+
+    tables = {}
+    for key, name in (("labels.query", "query"), ("labels.emotion", "emotion")):
+        path = config.get(key)
+        if not path:
+            continue
+        file = Path(path)
+        if not file.exists():
+            raise ConfigError(
+                f"{key}: 라벨 파일이 없습니다: {file}\n"
+                f"  사내 taxonomy 문서를 그 자리에 두세요 (형식: `A. 이름 -> 점수`).\n"
+                f"  이 파일은 저장소에 올라가지 않습니다.")
+        table = label_mod.load_markdown_table(file)
+        if not table:
+            raise ConfigError(
+                f"{key}: {file} 에서 라벨을 하나도 읽지 못했습니다.\n"
+                f"  한 줄이 `A. 이름 -> 점수` 형태여야 합니다.")
+        tables[name] = table
+    return label_mod.install(**tables)
+
+
 def apply(config: Config) -> list[str]:
     """설정을 settings 모듈에 반영한다. 바꾼 것들을 돌려준다.
 
@@ -207,7 +239,7 @@ def apply(config: Config) -> list[str]:
     실어 나르는 것이다. 설정은 실행 시작 시 한 번만 적용되고 그 뒤로 바뀌지
     않으므로 이쪽이 얕게 끝난다.
     """
-    changed = []
+    changed = _install_labels(config)
     for key, name in TO_SETTINGS.items():
         if key not in config:
             continue

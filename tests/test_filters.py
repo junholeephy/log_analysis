@@ -1,7 +1,7 @@
 """라벨 테이블과 필터 적용 테스트.
 
 가장 위험한 실패는 에러가 아니라 **조용한 0건**이다. 라벨 표기가 세 군데에서 다르고
-(필터 "I. 매우부정" · 문서 "매우 부정" · 로그 "매우 부정"), 문자열을 그대로 비교하면
+(필터 "I. 감정인디아" · 문서 "감정 인디아" · 로그 "감정 인디아"), 문자열을 그대로 비교하면
 아무 경고 없이 아무것도 안 걸린다. 그래서 표기 변형을 전부 테스트한다.
 """
 
@@ -38,63 +38,65 @@ ROOT = Path(__file__).resolve().parents[1]
 # 라벨 테이블
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("filename,table", [
-    ("query_taxonomy.md", QUERY_LABELS),
-    ("emotion_taxonomy.md", EMOTION_LABELS),
-])
-def test_code_table_matches_the_document(filename, table):
-    """코드 테이블이 taxonomy 문서와 어긋나지 않았는지.
+def test_shipped_table_carries_no_real_label_values():
+    """실값은 사내 코드값이라 저장소에 없다 (규격 §1.1 · C3).
 
-    테이블을 코드에 둔 건 에어갭 배포 때문이다. 그 대가로 문서와 벌어질 수 있으므로
-    여기서 잡는다.
+    이 저장소는 public 이고, 라벨 집합은 그 자체로 사내 분류 체계를 드러낸다.
+    전에는 labels.py 와 query_taxonomy.md 양쪽에 실값이 박혀 있었다.
     """
-    path = ROOT / filename
-    if not path.exists():
-        pytest.skip(f"{filename} 없음 — 드리프트 검사 생략")
-    from_doc = load_markdown_table(path)
-    assert set(from_doc) == set(table), "라벨 글자 집합이 다름"
-    for letter, label in from_doc.items():
-        assert label.score == table[letter].score, f"{letter} 점수 불일치"
-        known = {normalize_name(n) for n in (table[letter].name,) + table[letter].aliases}
-        assert normalize_name(label.name) in known, (
-            f"{letter}: 문서의 '{label.name}' 가 코드 테이블에 없음. "
-            "표기가 바뀌었으면 name 을 고치고, 오타면 aliases 에 추가하세요."
-        )
+    import re as _re
+
+    from ragdiag import labels as mod
+
+    source = (ROOT / "src/ragdiag/labels.py").read_text(encoding="utf-8")
+    for banned in ("질의 킬로", "질의 에코", "감정 인디아", "질의 알파",
+                   "질의 리마"):
+        assert banned not in source, f"실제 라벨 이름이 소스에 있다: {banned}"
+
+    assert not (ROOT / "query_taxonomy.md").exists() or \
+        _re.search(r"^query_taxonomy\.md$", (ROOT / ".gitignore").read_text(encoding="utf-8"),
+                   _re.M), "실값 파일이 저장소에 추적되고 있다"
+
+    # 구조는 남는다 - 파서가 alternatives 의 글자를 읽어야 하고 그건 형식이다.
+    assert set(mod.QUERY_LETTERS) == set("ABCDEFGHIJKLMNOPQR")
+    assert set(mod.EMOTION_LETTERS) == set("ABCDEFGHI")
 
 
-def test_query_table_has_all_eighteen_labels():
-    assert len(QUERY_LABELS) == 18
-    assert set(QUERY_LABELS) == set("ABCDEFGHIJKLMNOPQR")
+def test_placeholder_is_detectable(placeholder_labels):
+    """실값 없이 도는 상태를 코드가 알아야 막을 수 있다."""
+    from ragdiag import labels as mod
+
+    assert mod.is_placeholder()
+    assert len(mod.QUERY_LABELS) == 18 and len(mod.EMOTION_LABELS) == 9
 
 
-def test_emotion_scores_span_the_full_scale():
-    assert DEFAULT_EMOTION_SCORES["A"] == 100.0   # 매우 긍정
-    assert DEFAULT_EMOTION_SCORES["I"] == 0.0     # 매우 부정
+def test_installing_a_table_replaces_names_and_scores():
+    """설정으로 실값을 끼우면 이름도 점수도 바뀐다. 별칭 조회까지 따라와야 한다."""
+    from ragdiag import labels as mod
 
-
-def test_explicit_feedback_anchors_the_query_scale():
-    # 점수가 만족도 대리 지표라는 근거. 필터가 낮은 점수를 고르는 이유이기도 하다.
-    assert DEFAULT_QUERY_SCORES["L"] == 0     # 명시적 부정 피드백
-    assert DEFAULT_QUERY_SCORES["M"] == 100   # 명시적 긍정 피드백
+    assert not mod.is_placeholder(), "conftest 가 테스트 테이블을 끼웠어야 한다"
+    assert DEFAULT_QUERY_SCORES["L"] == 0
+    assert DEFAULT_EMOTION_SCORES["A"] == 100.0
+    assert resolve("질의 뎔타", QUERY_LABELS).letter == "D", "별칭이 따라오지 않았다"
 
 
 # ---------------------------------------------------------------------------
 # 라벨 표기 변형 — 조용한 0건의 원인
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("spec", ["I", "i", "I. 매우부정", "I. 매우 부정", "매우 부정", "매우부정"])
+@pytest.mark.parametrize("spec", ["I", "i", "I. 감정인디아", "I. 감정 인디아", "감정 인디아", "감정인디아"])
 def test_every_written_form_resolves_to_the_same_label(spec):
     label = resolve(spec, EMOTION_LABELS)
     assert label is not None and label.letter == "I"
 
 
 def test_filter_spelling_matches_log_spelling():
-    """필터는 '매우부정', 로그는 '매우 부정'. 띄어쓰기 하나로 갈리면 안 된다."""
-    assert resolve("I. 매우부정", EMOTION_LABELS) is resolve("매우 부정", EMOTION_LABELS)
+    """필터는 '감정인디아', 로그는 '감정 인디아'. 띄어쓰기 하나로 갈리면 안 된다."""
+    assert resolve("I. 감정인디아", EMOTION_LABELS) is resolve("감정 인디아", EMOTION_LABELS)
 
 
 def test_unknown_label_is_reported_not_swallowed():
-    letters, unknown = resolve_all(["I. 매우부정", "Z. 없는라벨"], EMOTION_LABELS)
+    letters, unknown = resolve_all(["I. 감정인디아", "Z. 없는라벨"], EMOTION_LABELS)
     assert letters == {"I"}
     assert unknown == ["Z. 없는라벨"]
 
@@ -109,15 +111,15 @@ def test_resolve_returns_none_for_garbage():
 # ---------------------------------------------------------------------------
 
 EVAL_ALTS = [
-    {"label": "F", "name": "조건 변경", "probability": 0.9},
+    {"label": "F", "name": "질의 폭스", "probability": 0.9},
     {"label": "B", "name": "맥락 추가", "probability": 0.095},
-    {"label": "I", "name": "범위 좁히기", "probability": 0.003},
-    {"label": "A", "name": "심화 확장", "probability": 0.002},
-    {"label": "K", "name": "명확화 요구", "probability": 0.001},
+    {"label": "I", "name": "질의 인디아", "probability": 0.003},
+    {"label": "A", "name": "질의 알파", "probability": 0.002},
+    {"label": "K", "name": "질의 킬로", "probability": 0.001},
 ]
 EMOTION_ALTS = [
-    {"label": "D", "name": "긍정적 중립", "probability": 0.931},
-    {"label": "E", "name": "중립", "probability": 0.067},
+    {"label": "D", "name": "긍정적 감정 에코", "probability": 0.931},
+    {"label": "E", "name": "감정 에코", "probability": 0.067},
     {"label": "B", "name": "긍정", "probability": 0.001},
 ]
 
@@ -144,7 +146,7 @@ def test_falls_back_to_the_recorded_score_without_alternatives():
 
 
 def test_overriding_scores_changes_the_result():
-    changed = dict(DEFAULT_QUERY_SCORES, F=0)   # 조건 변경을 0점으로
+    changed = dict(DEFAULT_QUERY_SCORES, F=0)   # 질의 폭스을 0점으로
     before = expected_score(EVAL_ALTS, DEFAULT_QUERY_SCORES)
     after = expected_score(EVAL_ALTS, changed)
     assert after < before - 30
@@ -167,7 +169,7 @@ EXAMPLE = {
         "eval_range": [0, 60],
         "emotion_range": [0, 20],
         "eval_labels": [],
-        "emotion_labels": ["I. 매우부정"],
+        "emotion_labels": ["I. 감정인디아"],
         "query_scores": {"A": 80, "K": 25, "L": 0, "M": 100},
     },
 }
@@ -250,7 +252,7 @@ def test_only_followups_with_a_previous_turn_are_candidates():
 def test_example_filter_selects_very_negative_low_score_turns():
     convs = _convs([
         _turn(1),
-        _turn(2, "K", "I"),   # 명확화 요구(25) + 매우 부정(0)  -> 통과
+        _turn(2, "K", "I"),   # 질의 킬로(25) + 감정 인디아(0)  -> 통과
         _turn(3, "M", "I"),   # 명시적 긍정(100)               -> eval_range 탈락
         _turn(4, "K", "A"),   # 매우 긍정(100)                 -> emotion 탈락
     ])
@@ -328,14 +330,14 @@ def test_score_is_recomputed_with_the_filter_table():
 
 
 def test_document_typo_still_resolves():
-    """문서에 '예시 요첟' 오타가 있었다.
+    """문서에 '질의 뎔타' 오타가 있었다.
 
     eval 시스템이 문서대로 설정됐다면 그 오타를 그대로 뱉을 수 있다. 어느 쪽이
     실제인지 확인할 수 없으므로 둘 다 D로 해석한다 — 안 그러면 조용히 0건이 된다.
     """
-    assert resolve("예시 요첟", QUERY_LABELS).letter == "D"
-    assert resolve("예시 요청", QUERY_LABELS).letter == "D"
-    assert resolve("D. 예시 요첟", QUERY_LABELS).letter == "D"
+    assert resolve("질의 뎔타", QUERY_LABELS).letter == "D"
+    assert resolve("질의 델타", QUERY_LABELS).letter == "D"
+    assert resolve("D. 질의 뎔타", QUERY_LABELS).letter == "D"
 
 
 # ---------------------------------------------------------------------------

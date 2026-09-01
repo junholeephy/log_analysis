@@ -39,7 +39,12 @@ from ragdiag.checks import (
 from ragdiag.judge import Judge
 from ragdiag.route import Classification, route, service_unavailable
 from ragdiag.schema import Case, GroundingCheck, Observation, SufficiencyJudgment
-from ragdiag.verify import CitationCheck, verify_evidence
+from ragdiag.verify import (
+    CitationCheck,
+    QuoteCheck,
+    verify_complaint_quote,
+    verify_evidence,
+)
 
 # 내용에 대한 불만일 때만 문서 충족도를 따진다. 형식 불만에 그걸 묻는 건 무의미하다.
 CONTENT_COMPLAINTS = {"content_missing", "content_wrong"}
@@ -53,6 +58,8 @@ class TurnResult:
     judgment: Optional[SufficiencyJudgment] = None
     citation: Optional[CitationCheck] = None
     grounding: Optional[GroundingCheck] = None
+    # complaint_target="none" 주장의 인용 검증 결과. 그 외에는 None.
+    complaint: Optional[QuoteCheck] = None
     classification: Optional[Classification] = None
     error: Optional[str] = None
     usage: Usage = field(default_factory=Usage)
@@ -102,6 +109,10 @@ def classify_turn(case: Case, judge: Judge) -> TurnResult:
         calls += bool(used.input_tokens or used.output_tokens or used.cost_usd)
         return value
 
+    # 한 단계라도 실패하면 턴 전체가 버려진다. 어디까지 갔는지는 남겨야 다음
+    # 실행에서 무엇을 고칠지 정할 수 있다 - 관측에서 다 깨지는 것과 여기저기서
+    # 흩어져 깨지는 것은 원인도 조치도 다르다.
+    stage = "observe"
     try:
         # 서비스가 자원을 확보하지 못했을 때 내보내는 확정 문구는 모델이 만든 답이
         # 아니다. 판정할 답변이 없으므로 LLM 을 한 번도 부르지 않고 여기서 끝낸다.
@@ -119,9 +130,16 @@ def classify_turn(case: Case, judge: Judge) -> TurnResult:
         obs = track(judge.observe(case))
         checks = run_checks(case, obs)
 
+        # "불만이 아니다"는 판정자가 낼 수 있는 가장 쉬운 답이다. 근거로 든 구절이
+        # 후속 발화에 실제로 있는지 대조한다 - verify_evidence 가 sufficient 주장에
+        # 대해 하는 일과 같다. 근거를 못 대면 라우팅이 통과시키지 않는다.
+        complaint = (verify_complaint_quote(obs.complaint_quote, case.current_query)
+                     if obs.complaint_target == "none" else None)
+
         judgment = citation = grounding = None
         # 도메인 질문 + 내용 불만일 때만 LLM 검증을 더 쓴다.
         if obs.question_domain == "domain" and obs.complaint_target in CONTENT_COMPLAINTS:
+            stage = "sufficiency"
             if not case.rag_chunks:
                 # 판정할 문서가 하나도 없다. verdict 는 물어볼 것 없이 insufficient 이고
                 # 인용할 대상도 없다. LLM 을 부르면 호출만 쓰는 게 아니라 없는 문서에서
@@ -133,18 +151,21 @@ def classify_turn(case: Case, judge: Judge) -> TurnResult:
                 judgment = track(judge.judge_sufficiency_from(case, obs))
             citation = verify_evidence(judgment.evidence, case.rag_chunks)
             if judgment.verdict == "sufficient" and citation.n_kept > 0:
+                stage = "grounding"
                 grounding = track(judge.check_grounding(case))
 
+        stage = "route"
         return TurnResult(
             case=case, observation=obs, checks=checks, judgment=judgment,
-            citation=citation, grounding=grounding,
-            classification=route(obs, checks, judgment, citation, grounding),
+            citation=citation, grounding=grounding, complaint=complaint,
+            classification=route(obs, checks, judgment, citation, grounding,
+                                 complaint=complaint),
             usage=usage, n_calls=calls,
         )
     except Exception as e:
         # 배치 중 한 턴의 실패가 나머지를 날리면 안 된다. 타입명을 남겨서
         # 예상 못 한 예외가 조용히 묻히지도 않게 한다.
-        return TurnResult(case=case, error=f"{type(e).__name__}: {e}",
+        return TurnResult(case=case, error=f"[{stage}] {type(e).__name__}: {e}",
                           usage=usage, n_calls=calls)
 
 

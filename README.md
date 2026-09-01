@@ -2,6 +2,7 @@
 
 사내 지식 챗봇의 대화 로그에서 **사용자가 직전 답변에 불만을 표한 턴**을 골라,
 그 실패가 taxonomy 29개 케이스 중 어디에 해당하는지 분류한다.
+실패가 아닌 턴은 `case0`(정상)으로 따로 뺀다 — 필터가 넓게 잡아 들어온 것들이다.
 
 목적은 개별 답변을 고치는 게 아니라 **집계했을 때 어디를 고쳐야 하는지**를
 알아내는 것이다. 그래서 라벨은 증상이 아니라 **조치 주체**로 나뉜다 — 같은 증상도
@@ -10,7 +11,7 @@
 🔀 **[처리 흐름](process_flow.md)** — conv-data · filter-data 가 들어와 case 가 붙기까지,
 각 단계가 무엇을 쓰고 **무엇을 일부러 안 쓰는지**.
 
-📋 **[실패 분류 체계](TAXONOMY.md)** — 29개 케이스 중 무엇이 이 로그로 판정 가능하고
+📋 **[실패 분류 체계](TAXONOMY.md)** — 29개 케이스 + `case0` 중 무엇이 이 로그로 판정 가능하고
 무엇이 아닌지, 그 판단 근거.
 
 📊 **[파이프라인 흐름도](https://claude.ai/code/artifact/180f8cc5-d5fb-41e0-9084-8be60c271d5f)**
@@ -33,13 +34,39 @@
 | `src/ragdiag/fixtures/synth.py` | **가짜 데이터는 파일이 아니라 코드.** `generate(n, seed)` 가 런타임에 만든다 |
 | `scripts/sync.sh` | 이식. `.git` 도 데이터도 넘기지 않는다 (규격 부록 A 전문) |
 | `docs/insights/` | 사내에서 본 것을 적어 오는 자리 |
+| `src/ragdiag/labels.py` | **자리표시자만.** 실제 라벨 이름·점수는 설정으로 온다 (아래) |
+
+### 라벨 실값은 저장소에 없다
+
+`llm_eval_result` · `llm_emotion_result` 의 **라벨 이름과 점수는 사내 코드값**이라
+올리지 않는다 (규격 §1.1 · C3 — "식별 가능한 코드값 목록은 적지 않는다").
+이 저장소는 public 이고, 라벨 집합은 그 자체로 사내 분류 체계를 드러낸다.
+
+저장소에 있는 것은 **구조뿐**이다 — 글자 `A`~`R` / `A`~`I` 와 개수. 파서가
+`llm_alternatives` 의 글자를 읽어야 하고 그건 값이 아니라 형식이다.
+
+실값은 설정으로 가리킨다. 사내 taxonomy 문서를 **형식 그대로** 쓰면 된다:
+
+```yaml
+labels:
+  query:   configs/query_taxonomy.md     # A. 이름 -> 점수
+  emotion: configs/emotion_taxonomy.md
+```
+
+두 파일은 `.gitignore` 에 있다. 사내에서는 `{AA}/configs/` 에 두고 `local.yaml` 이
+가리키게 한다 — `sync.sh` 가 `{AA}/{BB}` 를 통째로 지웠다 다시 만들기 때문에
+**사내 자산은 `{AA}/{BB}` 밖에 둬야 한다.**
+
+> **실값 없이 라벨·점수 조건을 건 필터를 주면 계산 전에 죽는다.** 자리표시자
+> "질의유형 K" 는 로그의 실제 라벨과 절대 안 맞아서, 막지 않으면 필터가 **에러 없이
+> 0건**을 돌려준다 — 이 코드베이스에서 가장 찾기 어려운 실패다.
 
 ## 진입점
 
 | | 무엇 | 언제 |
 |---|---|---|
-| **`python src/run.py`** | 본 파이프라인. conv_eval 로그를 29개 case 로 분류 | 실제 분석 |
-| `scripts/legacy_run.py` | 구 파이프라인. case20/case22 판별만, 라벨 6개 | **회귀 기준선** |
+| **`python src/run.py`** | 본 파이프라인. conv_eval 로그를 30개 case 로 분류 | 실제 분석 |
+| `tools/legacy_run.py` | 구 파이프라인. case20/case22 판별만, 라벨 6개 | **회귀 기준선** |
 
 `legacy_run.py` 는 지우지 않는다. 이 프로젝트에서 **실제 LLM 으로 검증된 최초의
 파이프라인**이고, 그 23건 회귀셋이 새 파이프라인의 라우팅 결함을 잡아냈다.
@@ -198,9 +225,9 @@ status    : PARTIAL
 ```
 src/ragdiag/settings.py    배포마다 바뀌는 값 — 여기부터 열 것
 src/ragdiag/schema.py      Case + Step 1·2·3 출력 (Pydantic, 필드 순서에 의미 있음)
-src/ragdiag/taxonomy.py    case 29개 메타데이터와 설명
+src/ragdiag/taxonomy.py    case 30개 메타데이터와 설명 (case0 은 우리가 더한 것)
 src/ragdiag/prompts.py     판정 프롬프트 (단계별로 뺄 정보가 여기에 명시됨)
-src/ragdiag/backends.py    로컬 LLM / Claude Code CLI / Anthropic API
+src/ragdiag/backends.py    로컬 LLM (OpenAI 호환 HTTP) — 사내에서 도는 유일한 경로
 src/ragdiag/judge.py       LLM 호출, 디스크 캐시, 케이스 단위 병렬
 src/ragdiag/decide.py      구 진리표 (judge 가 참조)
 src/ragdiag/verify.py      인용 대조 (사전지식 오염 차단)
@@ -255,7 +282,7 @@ export LLM_API_KEY=<키>
 문제가 생기면 먼저 이걸 돌린다:
 
 ```bash
-python scripts/legacy_run.py --check-llm   # 서버·모델·강제방식·1회 소요시간
+python tools/legacy_run.py --check-llm   # 서버·모델·강제방식·1회 소요시간
 ```
 
 ## 3단계 분류
@@ -297,7 +324,7 @@ turn 1  질문   "국내 출장 갈 때 식비는 얼마까지 쓸 수 있나요
                 다를 수 있으니 총무팀에 확인해 보시기 바랍니다."
 
 turn 2  질문   "부서별로 다르다는 게 아니라 규정상 정해진 금액이 있을 텐데요."
-        라벨   명확화 요구(K, 25점) · 매우 부정(I, 3.1점)
+        라벨   질의유형 K(25점) · 감정 I(3.1점)
 ```
 
 문서에 "1일 3만원"이 명확히 있는데 답변은 "총무팀에 확인하세요"로 넘겼다.
@@ -306,8 +333,8 @@ turn 2  질문   "부서별로 다르다는 게 아니라 규정상 정해진 �
 
 ```
 진단 가능 후속 턴 (2턴 이상)     1
-eval_score (0~60)               1     명확화 요구 = 25점
-emotion_score (0~20)            1     매우 부정 = 3.1점
+eval_score (0~60)               1     라벨 K = 25점
+emotion_score (0~20)            1     라벨 I = 3.1점
 emotion 라벨 (I. 매우부정)       1
 ```
 
@@ -548,12 +575,37 @@ taxonomy 를 바꿀 때 LLM을 다시 돌리지 않아도 되며, "왜 이 라�
 
 ## 판정 백엔드
 
-| | `--backend local` | `--backend cli` | `--backend api` |
-|---|---|---|---|
-| 대상 | **에어갭 장비의 로컬 LLM** | 개발 장비 | 개발 장비 |
-| 연결 | OpenAI 호환 HTTP (표준 라이브러리) | `claude -p` | Anthropic SDK |
-| 인증 | `LLM_API_URL` + `LLM_API_KEY` | 불필요 | `ANTHROPIC_API_KEY` |
-| 스키마 강제 | 서버 능력에 따라 자동 협상 | 없음 (프롬프트 계약) | 서버가 강제 |
+**`src/run.py` 가 아는 백엔드는 하나다.** 규격 §1.4 · C8 — 사내에서 실패할 호출은
+`src/` 에 두지 않는다. claude CLI 와 Anthropic API 백엔드는 `tools/` 에 있고,
+`.gitattributes` 의 export-ignore 로 archive 에서 빠진다.
+
+| | `src/run.py` | `tools/dev_run.py` |
+|---|---|---|
+| 대상 | **에어갭 장비의 로컬 LLM** | 개발 장비 전용 |
+| 백엔드 | `--backend local` 하나 | `--backend cli` (claude -p) · `--backend api` |
+| 연결 | OpenAI 호환 HTTP (표준 라이브러리) | CLI 서브프로세스 · Anthropic SDK |
+| 인증 | `LLM_API_URL` + `LLM_API_KEY` | 불필요 · `ANTHROPIC_API_KEY` |
+| 스키마 강제 | 서버 능력에 따라 자동 협상 | 없음 (프롬프트 계약) · 서버가 강제 |
+| 사내에 도착하나 | **그렇다** | 아니다 (export-ignore) |
+
+`tools/dev_run.py` 는 **같은 코드 경로를 돈다.** 백엔드만 만들어 `main()` 에 넣으므로
+인자도 출력도 `src/run.py` 와 같다 — 검증하는 코드와 배포되는 코드가 갈라지면
+여기서 통과한 것이 사내에서 통과한다는 보장이 사라진다.
+
+```bash
+python tools/dev_run.py --conv-data data/conv_eval.json   # claude 로 판정
+python tools/dev_run.py --golden                          # 관측 골든셋
+python tools/dev_run.py --backend api --legacy-regression
+```
+
+> **`tools/backend_cli.py` 는 저장소에도 없다.** 위의 나머지는 커밋되고 export-ignore
+> 로만 빠지지만, claude CLI 백엔드는 `.gitignore` 에 넣어 GitHub 에도 올리지 않는다.
+> 없는 사본에서 `--backend cli` 를 주면 무엇을 대신 쓰라는 안내가 나간다.
+>
+> 그 백엔드를 필요로 하던 테스트는 `tests/stub_llm.py`(요청의 JSON 스키마를 읽어
+> 최소 유효 객체로 답하는 가짜 서버)로 옮겼다. 그래서 **깨끗한 사본에서 API 키
+> 하나 없이 전체가 돌고, 건너뛰는 테스트가 없다** — 규격 §1.4 가 요구하는
+> `env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY python -m pytest` 가 그대로 통과한다.
 
 `LLM_API_URL`이 설정돼 있으면 기본 백엔드가 자동으로 `local`이 된다.
 
@@ -567,16 +619,18 @@ taxonomy 를 바꿀 때 LLM을 다시 돌리지 않아도 되며, "왜 이 라�
 
 ### 에어갭 장비 이관
 
-반입할 것은 소스와 `pydantic` 하나뿐이다. 로컬 LLM에는 표준 라이브러리로 붙으므로
-HTTP 클라이언트가 필요 없고, `anthropic`은 반입하지 않아도 된다
-(`ApiBackend`가 지연 import라 없어도 전체가 동작한다 — 테스트로 확인됨).
+반입할 것은 소스와 `pydantic`·`PyYAML` 뿐이다. 로컬 LLM에는 표준 라이브러리로
+붙으므로 HTTP 클라이언트가 필요 없고, `anthropic`은 **소스에 아예 없다** —
+`tools/` 로 빠져 archive 에 담기지 않는다. `sync.sh` 의 이식 표면 점검이
+`anthropic`·`openai` import 를 실제로 잡으므로 다시 새어 들어가면 태그를 내기 전에
+걸린다.
 
 ```bash
 pip install pydantic                      # 사내 미러
 export LLM_API_URL=http://<서버>:8000
 export LLM_API_KEY=<키>
 
-python scripts/legacy_run.py --check-llm      # 1. 서버 규약 확정 (모델·강제방식·소요시간)
+python tools/legacy_run.py --check-llm      # 1. 서버 규약 확정 (모델·강제방식·소요시간)
 python -m pytest tests/ -q                   # 2. LLM 없이 도는 부분
 python src/run.py --dry-run                  # 3. 합성 데이터로 끝까지 도는지
 python src/run.py --conv-data data/conv_eval.json --limit 20   # 4. 실데이터 일부
@@ -629,15 +683,42 @@ vLLM `--reasoning-parser`를 켜서 `reasoning_content`로 분리되는 경우�
   `on`/`off`는 `chat_template_kwargs.enable_thinking`을 보낸다. 서버가 이 필드를 모르면
   모든 모드가 400이 되므로, 협상 실패 메시지가 그 가능성을 알려준다.
 - `--max-tokens` 기본 16000. 추론 모드가 켜져 있으면 생각에만 수천 토큰을 쓰고,
-  잘리면 JSON이 아예 안 나온다. 추론만 하고 답을 못 낸 경우는 별도 오류로 구분된다.
+  잘리면 JSON이 아예 안 나온다.
+
+### 답까지 도달 못 한 응답은 버리지 않는다
+
+생각만 하다 생성이 끝나는 일이 생긴다. 이건 **형식 오류가 아니다.** 형식 오류는 무엇이
+틀렸는지 알려주며 다시 물으면 고쳐지지만(`parse_with_repair`), 잘린 응답은 조건이 같으면
+같은 자리에서 또 잘린다. 그래서 `_attempt()`가 조건을 바꿔 다시 묻는다:
+
+| 순서 | 바꾸는 것 | 왜 이 순서인가 |
+|---|---|---|
+| 1 | `enable_thinking=False` | 더 잘 듣고 더 싸다 |
+| 2 | `max_tokens` × 2 | 이미 한도만큼 태운 요청을 두 배로 태우는 것이라 나중 |
+
+서버가 `chat_template_kwargs`를 400으로 거절하면 그 칸을 건너뛰고 다음 칸으로 간다.
+되살린 횟수는 RUN SUMMARY의 `truncated` 줄에 나오고, 처음 한 번은 즉시 화면에 뜬다.
+
+**되살아나도 그건 임시방편이다.** 합성 27턴을 잘리는 서버에 물렸을 때, 사다리로 다 살렸지만
+출력 토큰은 407,500이었다. 같은 27턴을 처음부터 `--thinking off`로 돌리면 7,500이다.
+`truncated` 줄이 보이면 다음 실행은 `--thinking off`로 시작하는 게 맞다.
+
+두 가지가 더 걸려 있었다.
+
+- **모드 협상에서 잘리면 실행 전체가 죽었다.** 탐침이 잘리면 그 모드가 거절된 걸로 세서
+  네 모드가 다 탈락하고, 메시지는 "어떤 방식으로도 서버가 응답하지 않습니다"라고 했다.
+  서버는 멀쩡히 응답하고 있었다 — 연결을 뒤지러 가면 정반대 방향이다.
+- **오류 문구가 틀린 조치를 권했다.** 어느 경우든 "max_tokens를 늘리거나"라고 했는데,
+  `finish_reason`이 `length`가 아니면 모델이 스스로 멈춘 것이라 늘려도 같다. 이제
+  `finish_reason`을 그대로 읽어서 듣는 쪽만 권한다.
 
 **thinking을 켤지 끌지는 측정해서 정해라.** 출력 스키마에 이미 `reasoning` 필드가 맨 앞에
 있어서 모델은 어차피 근거를 먼저 쓴다. 추론 모드가 그 위에 더 얹을 값이 있는지는 모델과
 과제에 따라 다르다. 23건짜리 합성 셋이 있으니 양쪽을 다 돌려 비교하는 게 추측보다 빠르다.
 
 ```bash
-python scripts/legacy_run.py --synthetic --thinking off --out off.jsonl
-python scripts/legacy_run.py --no-cache --synthetic --thinking on --out on.jsonl
+python tools/legacy_run.py --synthetic --thinking off --out off.jsonl
+python tools/legacy_run.py --no-cache --synthetic --thinking on --out on.jsonl
 ```
 
 특히 `partial`과 `insufficient`의 경계 판정에서 차이가 날 가능성이 크다. 그 4+3건이
@@ -662,7 +743,7 @@ CLI가 3배쯤 무거운 이유는 Claude Code 기본 시스템 프롬프트(약
 CLI 경로에는 서버측 스키마 강제가 없으므로 `prompts.output_contract()`가 Pydantic 모델에서
 계약 문구를 생성해 시스템 프롬프트에 붙인다. 손으로 두 번 쓰면 `schema.py`와 어긋난다.
 
-프롬프트 전문은 `python scripts/legacy_run.py --show-prompts`로 예시 입력과 함께 볼 수 있다.
+프롬프트 전문은 `python tools/legacy_run.py --show-prompts`로 예시 입력과 함께 볼 수 있다.
 
 ## 이 장비에서 개발할 때
 
@@ -685,10 +766,10 @@ python3 -m venv venv && ./venv/bin/pip install -r requirements.txt
 ### 구 파이프라인 (회귀 기준선)
 
 ```bash
-./venv/bin/python scripts/legacy_run.py --check-llm     # 서버 규약 확정
-./venv/bin/python scripts/legacy_run.py --show-prompts  # 프롬프트 전문
-./venv/bin/python scripts/legacy_run.py --trace C-4002:3  # 케이스 하나의 통과 경로
-./venv/bin/python scripts/legacy_run.py --inspect --conv data/conv_eval.json  # 데이터 실태
+./venv/bin/python tools/legacy_run.py --check-llm     # 서버 규약 확정
+./venv/bin/python tools/legacy_run.py --show-prompts  # 프롬프트 전문
+./venv/bin/python tools/legacy_run.py --trace C-4002:3  # 케이스 하나의 통과 경로
+./venv/bin/python tools/legacy_run.py --inspect --conv data/conv_eval.json  # 데이터 실태
 ```
 
 `--show-prompts` 가 보여주는 것은 **구 파이프라인의 Stage 1(정보 요구 추출)** 이다.

@@ -20,10 +20,16 @@ GOOD = '{"reasoning": "문서를 쓰지 않았다", "answer_used_rag": "ignored"
 class _Stub:
     """지정한 모드만 받아주는 가짜 OpenAI 호환 서버."""
 
-    def __init__(self, accepts, replies=(GOOD,), models=("served-model",), ignores=()):
+    def __init__(self, accepts, replies=(GOOD,), models=("served-model",), ignores=(),
+                 responder=None, rejects_thinking=False):
         self.accepts = set(accepts)
+        # chat_template_kwargs 를 모르는 서버. 400 으로 거절한다.
+        self.rejects_thinking = rejects_thinking
         self.ignores = set(ignores)   # 200은 주지만 강제는 안 하는 모드
         self.replies = list(replies)
+        # 요청 내용에 따라 응답을 바꾸는 서버. 추론 스위치를 껐을 때만 답이
+        # 나오는 모델을 흉내내는 데 쓴다.
+        self.responder = responder
         self.models = list(models)
         self.seen = []          # 받은 (mode, payload)
         outer = self
@@ -54,18 +60,23 @@ class _Stub:
                     mode = "none"
                 outer.seen.append((mode, body))
 
-                if mode not in outer.accepts:
+                if mode not in outer.accepts or (
+                        outer.rejects_thinking and "chat_template_kwargs" in body):
                     self.send_response(400)
                     self.end_headers()
                     self.wfile.write(b'{"error":"unsupported"}')
                     return
 
                 if mode in outer.ignores:
-                    text = "Hello! How can I help you today?"   # 강제 안 걸린 응답
+                    reply = "Hello! How can I help you today?"   # 강제 안 걸린 응답
+                elif outer.responder:
+                    reply = outer.responder(body)
                 else:
-                    text = outer.replies[min(len(outer.seen) - 1, len(outer.replies) - 1)]
+                    reply = outer.replies[min(len(outer.seen) - 1, len(outer.replies) - 1)]
+                # 문자열이면 평범한 응답, dict 면 choice 를 통째로 준 것이다.
+                choice = reply if isinstance(reply, dict) else {"message": {"content": reply}}
                 payload = {
-                    "choices": [{"message": {"content": text}}],
+                    "choices": [choice],
                     "usage": {"prompt_tokens": 100, "completion_tokens": 20},
                 }
                 data = json.dumps(payload).encode()
@@ -92,6 +103,10 @@ class _Stub:
 
 def _backend(url, **kw):
     return OpenAICompatBackend(base_url=url, model="local-30b", timeout=10, **kw)
+
+
+def _as_response(choice):
+    return {"choices": [choice], "usage": {"completion_tokens": 16000}}
 
 
 def test_prefers_json_schema_when_server_supports_it():
@@ -242,19 +257,126 @@ def test_thinking_kwarg_is_only_sent_when_requested():
         assert stub.seen[-1][1]["chat_template_kwargs"] == {"enable_thinking": True}
 
 
-def test_reasoning_only_response_gives_an_actionable_error():
-    """reasoning_parser가 켜진 서버에서 추론만 하고 답을 못 낸 경우."""
-    class _ReasoningOnly(_Stub):
-        pass
+# ---------------------------------------------------------------------------
+# 잘린 응답
+#
+# 추론 모델은 생각에만 수천 토큰을 쓴다. 답에 도달하기 전에 생성이 끝나면 그 턴은
+# 통째로 버려졌다 - 재시도조차 없었다. parse_with_repair 는 "무엇이 틀렸는지"를
+# 되먹이는 장치라 같은 조건으로 다시 물을 뿐이고, 조건이 같으면 같은 자리에서 또
+# 잘리기 때문이다. 조건을 바꾸는 사다리가 있어야 한다.
+# ---------------------------------------------------------------------------
 
-    stub = _Stub(accepts=["json_schema"])
-    with stub:
+def _thinking_off(body):
+    return body.get("chat_template_kwargs", {}).get("enable_thinking") is False
+
+
+def _reasoning_only(finish_reason="length"):
+    """reasoning_parser 가 켜진 서버가 추론만 하다 끝냈을 때의 응답."""
+    return {"message": {"content": "", "reasoning_content": "음, 이건 " * 300},
+            "finish_reason": finish_reason}
+
+
+def test_truncation_recovers_by_turning_thinking_off():
+    """생각만 하다 끝난 턴을 버리지 않는다. 조건을 바꿔 한 번 더 묻는다."""
+    def server(body):
+        return GOOD if _thinking_off(body) else _reasoning_only()
+
+    with _Stub(accepts=["json_schema"], responder=server) as stub:
         backend = _backend(stub.url)
-        backend.negotiate(GroundingCheck)
-        with pytest.raises(JudgeError, match="추론만 하고"):
-            backend._text_and_usage(
-                {"choices": [{"message": {"content": "", "reasoning_content": "음..."}}]}
-            )
+        result, usage = backend.complete("sys", "usr", GroundingCheck)
+        assert result.answer_used_rag == "ignored"
+        assert backend.fallbacks, "무엇으로 되살렸는지 기록이 남아야 한다"
+        assert all("thinking off" in f for f in backend.fallbacks)
+        # 잘린 요청도 토큰을 다 태웠다. 사용량에서 빠지면 비용을 과소평가한다.
+        assert usage.output_tokens >= 40, usage
+
+
+def test_truncation_falls_through_to_a_bigger_budget():
+    """추론 스위치를 못 받는 서버도 있다. 그때는 한도를 늘려서 다시 묻는다."""
+    def server(body):
+        if "chat_template_kwargs" in body:
+            raise AssertionError("여기 오면 안 된다")   # 아래 rejects 가 먼저 막는다
+        return GOOD if body["max_tokens"] > 1000 else _reasoning_only()
+
+    with _Stub(accepts=["json_schema"], responder=server,
+               rejects_thinking=True) as stub:
+        backend = _backend(stub.url, max_tokens=1000)
+        result, _ = backend.complete("sys", "usr", GroundingCheck)
+        assert result.answer_used_rag == "ignored"
+        assert any("max_tokens" in f for f in backend.fallbacks), backend.fallbacks
+
+
+def test_giving_up_says_what_was_tried():
+    with _Stub(accepts=["json_schema"],
+               responder=lambda body: _reasoning_only()) as stub:
+        backend = _backend(stub.url)
+        with pytest.raises(JudgeError) as e:
+            backend.complete("sys", "usr", GroundingCheck)
+        msg = str(e.value)
+        assert "시도:" in msg, msg
+        assert "thinking off" in msg, msg
+        # 연결을 의심하게 만들면 정반대 방향으로 시간을 버린다.
+        assert "연결 문제가 아닙니다" in msg, msg
+
+
+def test_the_error_does_not_prescribe_the_wrong_knob():
+    """한도에 걸린 게 아니면 max_tokens 를 늘려도 소용없다.
+
+    예전 문구는 어느 경우든 "max_tokens를 늘리거나"라고 했다. 사내에서는 그 한 줄이
+    사이클 하나다 - 늘려서 다시 돌리고, 똑같이 실패하는 데 몇 시간이 간다.
+    """
+    with _Stub(accepts=["json_schema"]) as stub:
+        backend = _backend(stub.url)
+
+        # 스스로 멈춘 경우 - 늘려도 같다
+        with pytest.raises(JudgeError, match="추론만 하고") as e:
+            backend._text_and_usage(_as_response(_reasoning_only("stop")))
+        assert "늘려도 같습니다" in str(e.value)
+
+        # 한도에 걸린 경우 - 이때는 늘리는 게 맞다
+        with pytest.raises(JudgeError, match="토큰 한도") as e:
+            backend._text_and_usage(_as_response(_reasoning_only("length")))
+
+
+def test_truncated_content_is_caught_even_without_a_reasoning_parser():
+    """파서가 없는 서버는 추론을 content 에 담는다. 같은 사고인데 모양만 다르다.
+
+    이쪽은 "형식 검증 실패"로 위장해서, 재시도만 태우고 끝났다.
+    """
+    cut = {"message": {"content": "<think>어디 보자, 이 문서는" * 50},
+           "finish_reason": "length"}
+
+    def server(body):
+        return GOOD if _thinking_off(body) else cut
+
+    with _Stub(accepts=["json_schema"], responder=server) as stub:
+        backend = _backend(stub.url)
+        result, _ = backend.complete("sys", "usr", GroundingCheck)
+        assert result.answer_used_rag == "ignored"
+        assert backend.fallbacks
+
+
+def test_a_complete_answer_cut_short_is_still_used():
+    """JSON 이 온전히 나온 뒤 뒤에 붙던 산문만 잘린 건 잘린 게 아니다."""
+    with _Stub(accepts=["json_schema"],
+               replies=[{"message": {"content": GOOD + "\n덧붙이자면 이 답변은"},
+                         "finish_reason": "length"}]) as stub:
+        backend = _backend(stub.url)
+        result, _ = backend.complete("sys", "usr", GroundingCheck)
+        assert result.answer_used_rag == "ignored"
+        assert not backend.fallbacks, "멀쩡한 응답에 폴백을 태우면 호출이 두 배가 된다"
+
+
+def test_a_truncated_probe_does_not_disqualify_a_good_mode():
+    """탐침이 잘려서 멀쩡한 모드를 떨어뜨리면 그 뒤가 전부 어긋난다.
+
+    json_schema 가 탈락하면 none 까지 떨어지고, 강제가 없으니 판정 품질이 흔들린다.
+    """
+    def server(body):
+        return GOOD if _thinking_off(body) else _reasoning_only()
+
+    with _Stub(accepts=["json_schema"], responder=server) as stub:
+        assert _backend(stub.url).negotiate(GroundingCheck) == "json_schema"
 
 
 def test_rejects_unknown_thinking_mode():

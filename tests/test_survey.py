@@ -26,7 +26,7 @@ def _turn(n, eval_result=None, emotion=None, eval_score=None, emotion_score=None
 def test_first_turns_are_excluded_from_candidates():
     """첫 턴은 비판할 직전 답변이 없어 진단 대상이 아니다."""
     convs = parse_conversations(_raw([
-        {"conversation_id": "c1", "turns": [_turn(1), _turn(2, "명확화 요구")]},
+        {"conversation_id": "c1", "turns": [_turn(1), _turn(2, "질의 킬로")]},
     ]))
     text = survey(convs)
     assert "전체 턴                     2" in text
@@ -42,25 +42,25 @@ def test_metadata_mismatch_is_flagged():
 
 def test_label_distribution_is_counted():
     convs = parse_conversations(_raw([{"conversation_id": "c", "turns": [
-        _turn(1), _turn(2, "명확화 요구"), _turn(3, "명확화 요구"), _turn(4, "조건 변경")]}]))
+        _turn(1), _turn(2, "질의 킬로"), _turn(3, "질의 킬로"), _turn(4, "질의 폭스")]}]))
     text = survey(convs)
-    assert "명확화 요구" in text and "조건 변경" in text
+    assert "질의 킬로" in text and "질의 폭스" in text
 
 
 def test_filter_preview_shows_each_step_separately():
     """한 번에 다 걸고 최종 숫자만 보면 어느 조건이 과했는지 알 수 없다."""
     convs = parse_conversations(_raw([{"conversation_id": "c", "turns": [
         _turn(1),
-        _turn(2, "명확화 요구", "부정", 30.0),
-        _turn(3, "조건 변경", "부정", 80.0),
-        _turn(4, "명확화 요구", "긍정", 20.0),
+        _turn(2, "질의 킬로", "감정 호텔", 30.0),
+        _turn(3, "질의 폭스", "감정 호텔", 80.0),
+        _turn(4, "질의 킬로", "감정 브라보", 20.0),
     ]}]))
-    text = preview_filter(convs, eval_labels={"명확화 요구"},
-                          emotion_labels={"부정"}, max_eval_score=50.0)
+    text = preview_filter(convs, eval_labels={"질의 킬로"},
+                          emotion_labels={"감정 호텔"}, max_eval_score=50.0)
     assert "eval_result 포함" in text
     assert "emotion_result 포함" in text
     assert "최종 진단 대상" in text
-    # 명확화 요구 2건 -> 부정 1건 -> 점수 50 이하 1건
+    # 질의 킬로 2건 -> 부정 1건 -> 점수 50 이하 1건
     assert text.rstrip().count("turn 2") == 1
 
 
@@ -70,13 +70,13 @@ def test_filter_preview_drops_followups_without_a_previous_turn():
     턴 번호가 띄엄띄엄한 데이터에서 실제로 생긴다.
     """
     convs = parse_conversations(_raw([{"conversation_id": "c", "turns": [
-        _turn(5, "명확화 요구", "부정", 10.0)]}]))
+        _turn(5, "질의 킬로", "감정 호텔", 10.0)]}]))
     assert "후속 턴 (직전 턴 존재)                       0" in preview_filter(convs)
 
 
 def test_no_conditions_means_everything_survives():
     convs = parse_conversations(_raw([{"conversation_id": "c", "turns": [
-        _turn(1), _turn(2, "조건 변경", "중립", 50.0)]}]))
+        _turn(1), _turn(2, "질의 폭스", "감정 에코", 50.0)]}]))
     text = preview_filter(convs)
     assert "최종 진단 대상                              1" in text
 
@@ -101,7 +101,7 @@ def _t(n, trace=None, eval_result=None):
 
 def test_clean_data_has_no_issues():
     convs = parse_conversations(_raw([{"conversation_id": "c", "turns": [
-        _t(1, "True"), _t(2, "True", "조건 변경")]}]))
+        _t(1, "True"), _t(2, "True", "질의 폭스")]}]))
     assert check_integrity(convs) == []
 
 
@@ -125,14 +125,14 @@ def test_trace_true_but_only_one_turn_is_flagged():
 
 def test_disagreeing_trace_flags_are_caught():
     convs = parse_conversations(_raw([{"conversation_id": "c", "turns": [
-        _t(1, "True"), _t(2, "False", "조건 변경")]}]))
+        _t(1, "True"), _t(2, "False", "질의 폭스")]}]))
     assert "trace_inconsistent" in {i.kind for i in check_integrity(convs)}
 
 
 def test_eval_label_on_first_turn_is_impossible():
     # eval은 직전 턴을 참고해 계산되므로 turn 1에는 있을 수 없다.
     convs = parse_conversations(_raw([{"conversation_id": "c", "turns": [
-        _t(1, "True", "조건 변경"), _t(2, "True", "맥락 추가")]}]))
+        _t(1, "True", "질의 폭스"), _t(2, "True", "맥락 추가")]}]))
     assert "eval_on_first_turn" in {i.kind for i in check_integrity(convs)}
 
 
@@ -145,7 +145,7 @@ def test_followup_without_eval_label_is_flagged():
 
 def test_turn_numbering_gap_is_flagged():
     convs = parse_conversations(_raw([{"conversation_id": "c", "turns": [
-        _t(1, "True"), _t(5, "True", "조건 변경")]}]))
+        _t(1, "True"), _t(5, "True", "질의 폭스")]}]))
     assert "turn_numbering" in {i.kind for i in check_integrity(convs)}
 
 

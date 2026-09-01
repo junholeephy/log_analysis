@@ -10,6 +10,8 @@
   3.2 계약 위반 메시지가 옮겨 적을 수 없으면 포맷 회수가 끊긴다
 """
 
+import os
+import pathlib
 import subprocess
 from pathlib import Path
 
@@ -84,6 +86,74 @@ def test_synth_output_satisfies_the_contract():
 
     report = check_log(generate(seed=0))
     assert report.ok, "\n".join(m.line() for m in report.mismatches)
+
+
+def test_run_summary_lines_fit_eighty_columns():
+    """옮겨 적는 사람 기준이다. 칸 수로 자르지 않으면 한글이 중간에서 끊긴다.
+
+    실제로 `max_tokens=24,000(설정 ` 처럼 끊긴 줄이 나왔다. 반출이 안 되는 환경에서
+    RUN SUMMARY 는 유일한 회수 채널인데, 중간에서 끊긴 줄은 옮겨 적을 수 없다.
+    """
+    from ragdiag.summary import Conditions, RunSummary, display_width
+
+    cond = Conditions()
+    cond.add("설정", "configs/local.yaml", note="4개 값을 덮어씀")
+    cond.add("백엔드", "local", "설정 llm.backend")
+    cond.add("주소", "http://some-rather-long-internal-host.example:8000", "환경변수 LLM_API_URL")
+    cond.add("모델", "qwen3.5-397b-a17b-instruct-2507", "설정 llm.model")
+    cond.add("판정", "json_mode=guided_json  thinking=off(설정 llm.thinking)  "
+                     "max_tokens=24,000(설정 llm.max_tokens)")
+    cond.add("동시", "8", "설정 run.workers")
+
+    summary = RunSummary(version="v9.9", args="--conv-data x " * 8,
+                         setup=cond.compact(), input_shape="3 users / 6 conv / 18 turns")
+    for line in summary.render().splitlines():
+        assert display_width(line) <= 80, f"{display_width(line)}칸: {line!r}"
+
+    # 값이 통째로 살아 있어야 재현에 쓸 수 있다.
+    joined = " ".join(summary.setup)
+    for value in ("qwen3.5-397b-a17b-instruct-2507", "max_tokens=24,000", "동시=8"):
+        assert value in joined, f"{value} 가 잘렸다: {joined!r}"
+
+
+def test_prev_question_accepts_the_shape_the_real_log_uses():
+    """사내 로그의 prev_question 은 list 다 (2026-09-01, 16,141건).
+
+    계약이 str 만 받으면 매 실행마다 MISMATCH 한 줄이 뜨는데, 파이프라인은 이
+    필드를 읽지 않으므로 판정은 멀쩡하다. 계약 위반 줄은 "판정이 틀렸을 수 있다"는
+    뜻이어야 한다 - 거기 잡음이 섞이면 사내에서 그 줄 자체를 안 보게 된다.
+    """
+    from ragdiag.contracts import check_log
+    from ragdiag.fixtures.synth import generate
+
+    payload = generate(seed=0)
+    for user in payload["users"]:
+        for conv in user["conversations"]:
+            for turn in conv["turns"]:
+                turn["prev_question"] = ["앞 질문 1", "앞 질문 2"]
+
+    report = check_log(payload)
+    assert report.ok, "\n".join(m.line() for m in report.mismatches)
+
+
+def test_unused_fields_do_not_count_as_contract_violations():
+    """안 쓰는 필드의 어긋남은 노트로 내려가고, 쓰는 필드는 그대로 위반이다."""
+    from ragdiag.contracts import check_log
+    from ragdiag.fixtures.synth import generate
+
+    payload = generate(seed=0)
+    for user in payload["users"]:
+        for conv in user["conversations"]:
+            for turn in conv["turns"]:
+                turn["prev_question"] = {"안": "쓰는 필드"}
+                turn["llm_eval_score"] = "쓰는 필드"
+
+    report = check_log(payload)
+    assert [m.field for m in report.mismatches] == ["llm_eval_score"], (
+        [m.line() for m in report.mismatches])
+    assert [m.field for m in report.notes] == ["prev_question"], (
+        [m.line() for m in report.notes])
+    assert not report.ok, "쓰는 필드가 어긋났으므로 ok 가 아니다"
 
 
 # ---------------------------------------------------------------------------
@@ -181,12 +251,14 @@ def test_sync_derives_names_instead_of_hardcoding_them():
     assert '"$DEST"/src/*.py' in text, "src/ 에서 진입점을 찾아야 한다"
 
 
-def test_sync_refuses_outside_the_work_root():
-    """AA 루트가 아닌 곳에서 돌면 엉뚱한 자리에 사본을 만든다."""
+def test_sync_refuses_outside_the_two_known_places():
+    """실행 위치가 모드를 정한다. 셋째 위치에서 돌면 엉뚱한 자리에 사본을 만든다."""
     proc = subprocess.run(["bash", str(ROOT / "scripts/sync.sh"), "v0.0"],
                           capture_output=True, text=True, cwd="/tmp")
     assert proc.returncode != 0
-    assert "AA 루트" in proc.stderr
+    assert "실행 위치가 맞지 않습니다" in proc.stderr
+    # 둘 중 어디로 가야 하는지 둘 다 알려줘야 한다.
+    assert "본 머신:" in proc.stderr and "사내:" in proc.stderr
 
 
 def test_sync_refuses_without_a_tag():
@@ -245,96 +317,154 @@ def _fresh_aa(tmp_path, bb):
     return aa
 
 
-def test_sync_hint_skips_pip_when_dependencies_did_not_change(tmp_path):
-    """규격 부록에서 이 블록만 갈라져 있다. 갈라진 이유가 지워지지 않게 고정한다.
+# 규격 문서는 옆 저장소에 있다. 절대 경로를 박으면 개인 머신 경로가 소스에 남고
+# sync.sh 의 이식 표면 점검이 그걸 잡는다 (§1.3 위반이기도 하다).
+SPEC = pathlib.Path(
+    os.environ.get("IMPLEMENTATION_SPEC")
+    or ROOT.parent / "general_implementation" / "IMPLEMENTATION_SPEC.md")
 
-    부록은 매번 pip 와 PYTHONPATH 를 찍는다. 둘 다 늘 필요한 것이 아닌데,
-    사람은 여기 찍힌 줄을 그대로 따라간다. 필요 없는 줄이 섞이면 매번 안 해도
-    될 일을 하거나 - 더 나쁘게는 - 이 안내를 통째로 안 믿게 된다.
+
+def test_gitattributes_has_no_end_of_line_comments():
+    """git 은 .gitattributes 에서 줄 끝 주석을 지원하지 않는다.
+
+    실제로 이걸로 한 번 뚫렸다. `tools/ export-ignore  # 설명` 은 경고 한 줄만
+    내고 **그 줄이 통째로 무시된다.** 무시된 줄은 조용히 무시되므로 archive 를
+    풀어보기 전에는 tools/ 가 사내로 넘어가는 것을 알 수 없다.
     """
+    path = ROOT / ".gitattributes"
+    assert path.exists(), "이식 표면을 정하는 파일이 없다 (규격 §2.3)"
+
+    bad = []
+    for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if "#" in stripped:
+            bad.append(f"{n}: {stripped}")
+    assert not bad, ("줄 끝 주석은 그 줄을 통째로 무효로 만든다. 주석은 따로 줄을 "
+                     "쓸 것:\n" + "\n".join(bad))
+
+
+def test_every_export_ignore_line_actually_registers():
+    """적어 놓은 것과 git 이 실제로 적용하는 것은 다를 수 있다.
+
+    패턴 문법이 .gitignore 와 미묘하게 다르고, 잘못 쓴 줄은 **조용히** 무시된다.
+    한 줄이 죽으면 그 디렉터리가 통째로 사내에 도착하는데, archive 를 풀어보기
+    전에는 알 수 없다. 그래서 줄마다 git 에게 직접 물어본다.
+
+    패턴을 쓴 그대로 물어봐야 한다 - `tools/` 는 set 이지만 `tools` 나
+    `tools/dev_run.py` 로 물으면 unspecified 다. 디렉터리 패턴은 archive 가
+    디렉터리 항목에서 걸러내기 때문이다.
+    """
+    lines = [l.strip() for l in (ROOT / ".gitattributes").read_text(encoding="utf-8").splitlines()]
+    patterns = [l.split()[0] for l in lines
+                if l and not l.startswith("#") and "export-ignore" in l]
+    assert patterns, ".gitattributes 에 export-ignore 줄이 없다"
+
+    dead = []
+    for pattern in patterns:
+        out = subprocess.run(["git", "check-attr", "export-ignore", "--", pattern],
+                             capture_output=True, text=True, cwd=ROOT)
+        if not out.stdout.strip().endswith(": set"):
+            dead.append(f"{pattern} → {out.stdout.strip().split(': ')[-1]}")
+    assert not dead, "이 줄들은 무시된다:\n" + "\n".join(dead)
+
+
+def test_sync_matches_the_spec_appendix():
+    """부록 A 가 전문이다. 여기서 손대면 양쪽이 조용히 갈라진다.
+
+    예전에는 이 저장소에만 있는 편차(조건부 pip 안내)를 두고 그 이유를 테스트로
+    고정했었다. 규격이 두 모드로 다시 쓰이면서 그 편차가 사라졌고, 편차를 재던
+    테스트만 남아 실패했다. 이제는 **전문 일치**만 재고 편차를 두지 않는다.
+    """
+    if not SPEC.exists():
+        pytest.skip("규격 문서가 이 장비에 없다 (다른 저장소)")
+    body = SPEC.read_text(encoding="utf-8").split("<!-- BEGIN sync.sh -->")[1]
+    body = body.split("<!-- END sync.sh -->")[0]
+    want = body.split("```bash\n", 1)[1].rsplit("```", 1)[0]
+    have = (ROOT / "scripts/sync.sh").read_text(encoding="utf-8")
+    assert have == want, "scripts/sync.sh 가 규격 부록과 다르다. 부록을 그대로 옮길 것."
+
+
+def test_preflight_catches_a_file_that_must_not_ship(tmp_path):
+    """①에서 걸리면 태그를 다시 내면 되고, ②에서 걸리면 사이클을 하나 버린다."""
+    import subprocess
+
+    bb = _fake_repo(tmp_path)
+    (bb / "tools").mkdir()
+    (bb / "tools" / "dev.py").write_text("import anthropic\n", encoding="utf-8")
+    for a in (["add", "-A"], ["commit", "-q", "-m", "tools"], ["tag", "v1"]):
+        subprocess.run(["git", "-C", str(bb), *a], check=True)
+
+    out = subprocess.run(["bash", "scripts/sync.sh", "v1"],
+                         capture_output=True, text=True, cwd=bb)
+    assert out.returncode != 0, out.stdout
+    assert "tools" in out.stderr, out.stderr
+    assert "export-ignore" in out.stderr, "무엇을 하라는지까지 적어야 한다"
+
+
+def test_preflight_passes_when_the_surface_is_clean(tmp_path):
+    import subprocess
+
+    bb = _fake_repo(tmp_path)
+    subprocess.run(["git", "-C", str(bb), "tag", "v1"], check=True)
+    out = subprocess.run(["bash", "scripts/sync.sh", "v1"],
+                         capture_output=True, text=True, cwd=bb)
+    assert out.returncode == 0, out.stderr
+    assert "preflight: OK" in out.stdout
+    assert "git push origin v1" in out.stdout, "다음에 할 일을 알려줘야 한다"
+
+
+def test_sync_writes_version_and_leaves_no_git(tmp_path):
+    """결과 파일이 반출 안 되는 상황에서 VERSION 이 '어떤 코드로 돌렸는지'의 전부다."""
     import subprocess
 
     bb = _fake_repo(tmp_path)
     subprocess.run(["git", "-C", str(bb), "tag", "v1"], check=True)
     aa = _fresh_aa(tmp_path, bb)
 
-    first = _sync(aa, bb, "v1")
-    assert first.returncode == 0, first.stderr
-    assert "pip install" in first.stdout, "최초에는 의존 설치를 안내해야 한다"
-
-    again = _sync(aa, bb, "v1")
-    assert again.returncode == 0, again.stderr
-    assert "pip install" not in again.stdout, (
-        "의존이 그대로인데 pip 를 또 안내한다:\n" + again.stdout)
+    out = _sync(aa, bb, "v1")
+    assert out.returncode == 0, out.stderr
+    assert (aa / "toolkit" / "VERSION").read_text(encoding="utf-8").startswith("v1 ")
+    assert not (aa / "toolkit" / ".git").exists(), "C6 — .git 이 AA 로 넘어갔다"
+    assert (aa / "outputs").is_dir() and (aa / "notebooks").is_dir()
+    assert (aa / ".staging" / ".gitignore").read_text(encoding="utf-8").strip() == "*"
 
 
-def test_sync_hint_warns_when_dependencies_changed(tmp_path):
+def test_sync_keeps_local_yaml_and_names_the_new_keys(tmp_path):
+    """사내 실값이 든 유일한 파일이다. 덮어쓰면 되돌릴 방법이 없다."""
     import subprocess
 
     bb = _fake_repo(tmp_path)
     subprocess.run(["git", "-C", str(bb), "tag", "v1"], check=True)
     aa = _fresh_aa(tmp_path, bb)
     _sync(aa, bb, "v1")
+    (aa / "configs" / "local.yaml").write_text("a: 사내실값\n", encoding="utf-8")
 
-    (bb / "requirements.txt").write_text("pydantic>=2.0\nrequests>=2\n", encoding="utf-8")
-    for a in (["add", "-A"], ["commit", "-q", "-m", "dep"], ["tag", "v2"]):
+    (bb / "configs" / "example.yaml").write_text("a: 1\nb: 2\n", encoding="utf-8")
+    for a in (["add", "-A"], ["commit", "-q", "-m", "key"], ["tag", "v2"]):
         subprocess.run(["git", "-C", str(bb), *a], check=True)
 
     out = _sync(aa, bb, "v2")
     assert out.returncode == 0, out.stderr
-    assert "requirements.txt 가 바뀌었습니다" in out.stdout, out.stdout
-    assert "pip install" in out.stdout
+    assert (aa / "configs" / "local.yaml").read_text(encoding="utf-8") == "a: 사내실값\n"
+    assert "b" in out.stderr, "example 에만 있는 키를 알려줘야 한다\n" + out.stderr
 
 
-def test_sync_hint_points_at_the_entry_script(tmp_path):
-    """규격이 정한 src/run.py 를 안내한다. PYTHONPATH 는 필요 없다."""
-    import subprocess
-
-    bb = _fake_repo(tmp_path, with_launcher=True)
-    subprocess.run(["git", "-C", str(bb), "tag", "v1"], check=True)
-    out = _sync(_fresh_aa(tmp_path, bb), bb, "v1")
-    assert "python toolkit/src/run.py" in out.stdout, out.stdout
-    assert "PYTHONPATH" not in out.stdout
-
-
-def test_sync_hint_marks_the_entry_when_it_cannot_be_found(tmp_path):
-    """진입점을 못 찾으면 자리표시자를 찍는다. 틀린 명령을 주는 것보다 낫다."""
-    import subprocess
-
-    bb = _fake_repo(tmp_path, with_launcher=False)
-    subprocess.run(["git", "-C", str(bb), "tag", "v1"], check=True)
-    out = _sync(_fresh_aa(tmp_path, bb), bb, "v1")
-    assert "toolkit/src/<entry>.py" in out.stdout, out.stdout
-
-
-def test_sync_hint_points_at_the_dashboard_when_the_repo_has_one(tmp_path):
-    """대시보드 의존은 따로 있다. 알려주지 않으면 알아낼 방법이 없다.
-
-    requirements.txt 에 없으므로 sync.sh 안내만 보고는 존재조차 모른다 -
-    써보고 ModuleNotFoundError 를 만나야 알게 된다. 사내에서는 그게 사이클을 먹는다.
-    """
+def test_sync_removes_the_copy_when_the_check_fails(tmp_path):
+    """실수로 커밋되는 것을 막는다. 걸린 사본이 남아 있으면 그게 사내 git 에 들어간다."""
     import subprocess
 
     bb = _fake_repo(tmp_path)
-    (bb / "src" / "dashboard.py").write_text("import streamlit\n", encoding="utf-8")
-    (bb / "requirements-dashboard.txt").write_text("streamlit>=1.30\n", encoding="utf-8")
-    for a in (["add", "-A"], ["commit", "-q", "-m", "dash"], ["tag", "v1"]):
+    (bb / "tools").mkdir()
+    (bb / "tools" / "dev.py").write_text("x = 1\n", encoding="utf-8")
+    for a in (["add", "-A"], ["commit", "-q", "-m", "tools"], ["tag", "v1"]):
         subprocess.run(["git", "-C", str(bb), *a], check=True)
+    aa = _fresh_aa(tmp_path, bb)
 
-    out = _sync(_fresh_aa(tmp_path, bb), bb, "v1")
-    assert "requirements-dashboard.txt" in out.stdout, out.stdout
-    assert "-m streamlit run" in out.stdout, (
-        "PATH 를 타지 않는 형태로 안내해야 한다\n" + out.stdout)
-
-
-def test_sync_hint_omits_the_dashboard_when_there_is_none(tmp_path):
-    """대시보드가 없는 프로젝트에 없는 안내를 찍지 않는다."""
-    import subprocess
-
-    bb = _fake_repo(tmp_path)
-    subprocess.run(["git", "-C", str(bb), "tag", "v1"], check=True)
-    out = _sync(_fresh_aa(tmp_path, bb), bb, "v1")
-    assert "대시보드" not in out.stdout, out.stdout
+    out = _sync(aa, bb, "v1")
+    assert out.returncode != 0
+    assert not (aa / "toolkit").exists(), "걸린 사본이 남아 있다"
 
 
 def test_dashboard_deps_are_not_in_the_main_requirements():
@@ -427,7 +557,7 @@ def _flow_tables():
     doc = (ROOT / "process_flow.md").read_text(encoding="utf-8")
     row = re.compile(r"\|\s*(✗?)\s*\| `(case\d+)` \| ([^|]+?) \| (?:\*\*)?(high|medium|low)(?:\*\*)? \|")
     overview = doc.split("## 전체 그림")[0]
-    routing = doc.split("**출력** — case 25개")[1]
+    routing = doc.split("**출력** — case 26개")[1]
     return ([m.groups() for m in row.finditer(overview)],
             [m.groups() for m in
              re.finditer(r"\| `(case\d+)` \| ([^|]+?) \| (?:\*\*)?(high|medium|low)(?:\*\*)? \|",
@@ -435,7 +565,7 @@ def _flow_tables():
 
 
 def test_process_flow_overview_lists_every_case():
-    """서두 개요표는 29개 전부를 담고, 도달 못 하는 것에 ✗ 를 붙인다.
+    """서두 개요표는 taxonomy 전부를 담고, 도달 못 하는 것에 ✗ 를 붙인다.
 
     빠진 case 가 있으면 읽는 사람은 그게 없는 줄 안다.
     """
@@ -511,7 +641,7 @@ def test_process_flow_names_the_fields_that_reach_the_output_file():
     assert shipped, "output.py 에서 observation 필드를 못 찾았다"
 
     doc = (ROOT / "process_flow.md").read_text(encoding="utf-8")
-    section = doc.split("실리는 7개")[1].split("나머지")[0]
+    section = doc.split("실리는 8개")[1].split("나머지")[0]
     listed = set(re.findall(r"`(\w+)`", section))
     assert listed == shipped, (
         f"문서에만: {sorted(listed - shipped)} / "

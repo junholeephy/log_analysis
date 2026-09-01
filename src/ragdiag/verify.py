@@ -73,6 +73,31 @@ class CitationCheck:
         return any(e.index_corrected for e in self.kept)
 
 
+@dataclass
+class QuoteCheck:
+    """판정자가 "이건 불만이 아니다"라고 할 때 든 근거의 검증 결과."""
+
+    quote: str
+    ratio: float
+    verified: bool
+
+
+def verify_complaint_quote(quote: str, current_query: str) -> QuoteCheck:
+    """그 구절이 후속 발화에 실제로 있는지 대조한다.
+
+    "문제 없음"은 판정자가 낼 수 있는 가장 쉬운 답이다. 그냥 열어두면 애매한 턴이
+    전부 그리로 새고, 모든 집계가 조용히 줄어든다. 어디를 보고 그렇게 읽었는지
+    원문에서 따오게 하면 근거 없이 넘어갈 수 없다 - verify_evidence 가 sufficient
+    주장에 대해 하는 일과 같다.
+
+    프롬프트로 "관대하게 판단하지 마라"라고 쓰는 것과 달리 이건 검증 가능하다.
+    """
+    if len(normalize(quote)) < settings.EVIDENCE_MIN_QUOTE_CHARS:
+        return QuoteCheck(quote, 0.0, False)
+    ratio = match_ratio(quote, current_query)
+    return QuoteCheck(quote, ratio, ratio >= settings.MATCH_THRESHOLD)
+
+
 def verify_evidence(evidence: list[Evidence], chunks: list[str]) -> CitationCheck:
     check = CitationCheck(n_chunks=len(chunks))
     for ev in evidence:

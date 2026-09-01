@@ -28,18 +28,20 @@ import atexit
 import json
 import os
 import sys
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
 from ragdiag.backends import (
+    KEY_VARS,
     URL_VARS,
-    ClaudeCodeBackend,
     JudgeError,
     backend_from_env,
     env_first,
 )
-from ragdiag import contracts
+from ragdiag import contracts, settings
 from ragdiag.config import ConfigError
+from ragdiag.filters import LabelTableMissing
 from ragdiag.config import apply as apply_config
 from ragdiag.config import load as load_config
 from ragdiag.judge import Judge
@@ -49,40 +51,107 @@ from ragdiag.pipeline import (
     load_and_select,
     make_judge,
 )
-from ragdiag.summary import RunSummary, Timer, peak_memory_gb, version
+from ragdiag.summary import (
+    Conditions,
+    RunSummary,
+    Timer,
+    peak_memory_gb,
+    version,
+)
 
 # --output-dir 도 설정도 없을 때. 실행 위치 기준이라 사내에서는
 # 작업 폴더 아래에 생긴다.
 DEFAULT_OUTPUT_DIR = "output"
 
 
-def make_backend(args, config=None):
-    """CLI 인자 > 설정 > 환경변수 순으로 고른다."""
-    pick = (lambda flag, key, default=None:
-            flag if flag is not None else
-            (config.get(key, default) if config else default))
+def make_backend(args, config=None, trace=None):
+    """CLI 인자 > 설정 > 환경변수 순으로 고른다.
 
-    # 아무도 안 정했으면 환경으로 고른다. LLM_API_URL 이 있으면 로컬 서버,
-    # 없으면 개발 장비의 claude CLI. 이 자동 선택이 없으면 --golden 같은
-    # 검증 명령이 이 장비에서 안 돈다.
-    backend = pick(args.backend, "llm.backend",
-                   "local" if env_first(URL_VARS) else "cli")
+    trace(Conditions)를 주면 각 값이 **어디서 왔는지** 함께 적는다. 값만 찍으면
+    "왜 저 값이지"를 못 푼다 - 사내에는 .bashrc 의 환경변수, AA/configs/local.yaml,
+    CLI 플래그가 겹쳐 있고 셋 다 화면에 안 보인다. 어느 쪽이 이겼는지가 안 보이면
+    설정을 고쳐도 안 먹는 이유를 알 수 없다.
+    """
+    src: dict[str, str] = {}
+
+    def pick(flag, key, default=None, flag_name=""):
+        if flag is not None:
+            src[key] = flag_name or "--" + key.rsplit(".", 1)[-1].replace("_", "-")
+            return flag
+        if config is not None and config.get(key) is not None:
+            src[key] = f"설정 {key}"
+            return config.get(key)
+        src[key] = "기본값"
+        return default
+
+    # 이 진입점이 아는 백엔드는 하나다. 예전에는 LLM_API_URL 이 없으면 claude CLI 로
+    # 떨어졌는데, 그 경로가 tools/ 로 나가면서 자동 선택도 같이 사라졌다.
+    # 주소가 없으면 backend_from_env 가 무엇을 export 하라고 알려준다.
+    backend = pick(args.backend, "llm.backend", "local")
+    if src["llm.backend"] == "기본값":
+        found = next((n for n in URL_VARS if os.environ.get(n)), None)
+        src["llm.backend"] = f"기본값 · 주소는 {found}" if found else "기본값"
     model = pick(args.model, "llm.model")
     timeout = pick(args.timeout, "llm.timeout_sec", 600)
-    if backend == "cli":
-        return ClaudeCodeBackend(model=model or "claude-opus-5", timeout=timeout)
-    return backend_from_env(
-        base_url=pick(args.base_url, "llm.url"),
-        api_key=pick(args.api_key, "llm.key"),
-        model=model,
-        json_mode=pick(args.json_mode, "llm.json_mode", "auto"),
-        thinking=pick(args.thinking, "llm.thinking", "auto"),
-        max_tokens=pick(args.max_tokens, "llm.max_tokens", 16000),
+    json_mode = pick(args.json_mode, "llm.json_mode", "auto")
+    thinking = pick(args.thinking, "llm.thinking", "auto")
+    max_tokens = pick(args.max_tokens, "llm.max_tokens", 16000)
+
+    def note(built):
+        if trace is None:
+            return built
+        trace.add("백엔드", backend, src["llm.backend"])
+        if backend != "cli":
+            trace.add("주소", url or "(없음)", src["llm.url"])
+            # 키는 값을 절대 찍지 않는다. 어디서 왔는지만 적는다.
+            trace.add("키", "설정됨" if key else "(없음)", src["llm.key"])
+        trace.add("모델", built.model,
+                  src["llm.model"] if model else "자동 탐지",
+                  "" if model else "서버 /v1/models 의 첫 항목")
+        if backend != "cli":
+            # 값마다 출처가 달라서 한 줄로 묶으면 어느 게 어디서 왔는지 사라진다.
+            # 기본값이 아닌 것에만 출처를 붙인다.
+            def tag(key, text):
+                where = src[key]
+                return text if where == "기본값" else f"{text}({where})"
+            trace.add("판정", "  ".join([
+                tag("llm.json_mode", f"json_mode={json_mode}"),
+                tag("llm.thinking", f"thinking={thinking}"),
+                tag("llm.max_tokens", f"max_tokens={max_tokens:,}")]))
+        return built
+
+    if backend != "local":
+        # 이 진입점은 사내에서 도는 경로만 안다. claude CLI 와 Anthropic API 는
+        # 사내에서 호출이 전부 실패하므로 tools/ 에 있고, src/ 는 tools/ 를
+        # import 하지 않는다 (규격 §1.4).
+        raise JudgeError(
+            f"--backend {backend} 는 이 진입점에 없습니다.\n"
+            "  사내에서 실패할 호출은 src/ 에 두지 않습니다 (규격 §1.4 · C8).\n"
+            "  개발 장비에서 그 백엔드로 돌리려면:\n"
+            "    python tools/dev_run.py --backend " + backend + " ...\n"
+            "  사내·서버 경로는 --backend local 입니다."
+        )
+
+    url = pick(args.base_url, "llm.url", flag_name="--base-url")
+    if url is None:
+        for name in URL_VARS:
+            if os.environ.get(name):
+                url, src["llm.url"] = os.environ[name], f"환경변수 {name}"
+                break
+    key = pick(args.api_key, "llm.key", flag_name="--api-key")
+    if key is None:
+        for name in KEY_VARS:
+            if os.environ.get(name):
+                key, src["llm.key"] = os.environ[name], f"환경변수 {name}"
+                break
+    return note(backend_from_env(
+        base_url=url, api_key=key, model=model,
+        json_mode=json_mode, thinking=thinking, max_tokens=max_tokens,
         timeout=timeout,
-    )
+    ))
 
 
-def run_legacy_regression(args) -> int:
+def run_legacy_regression(args, backend=None) -> int:
     """구 회귀셋을 새 파이프라인으로 돌려 판별력이 유지되는지 본다.
 
     이 23건은 실제 LLM 으로 검증된 유일한 케이스 집합이다. 관측 골든셋이
@@ -104,7 +173,7 @@ def run_legacy_regression(args) -> int:
         cases = cases[: args.limit]
 
     try:
-        backend = make_backend(args)
+        backend = backend or make_backend(args)
     except JudgeError as e:
         print(e, file=sys.stderr)
         return 2
@@ -147,7 +216,7 @@ def run_legacy_regression(args) -> int:
     return 0 if hits == len(rows) else 1
 
 
-def run_golden(args) -> int:
+def run_golden(args, backend=None) -> int:
     """Step 1 관측만 돌려 필드별 일치율을 잰다. Step 2·3 은 호출하지 않는다."""
     sys.path.insert(0, str(Path(__file__).parent))
     from ragdiag.fixtures.observations import build
@@ -168,7 +237,7 @@ def run_golden(args) -> int:
         cases = cases[: args.limit]
 
     try:
-        backend = make_backend(args)
+        backend = backend or make_backend(args)
     except JudgeError as e:
         print(e, file=sys.stderr)
         return 2
@@ -251,7 +320,7 @@ def run_judge_golden(args, judge) -> int:
     return 0
 
 
-def main() -> int:
+def main(argv=None, backend=None) -> int:
     p = argparse.ArgumentParser(
         prog="python -m ragdiag",
         description="conv_eval 로그를 taxonomy case 로 분류",
@@ -274,7 +343,8 @@ def main() -> int:
     # 아래 기본값은 전부 None 이다. 설정과 CLI 를 구분하기 위해서다 -
     # argparse 기본값을 넣으면 "사용자가 준 것"과 "기본값"을 못 가린다.
     p.add_argument("--backend", choices=["local", "cli", "api"],
-                   help="local: OpenAI 호환 서버 / cli: claude -p (개발 장비 검증용)")
+                   help="local: OpenAI 호환 서버 / cli: claude -p "
+                        "(개발 장비 전용 — 저장소에 없다) / api: Anthropic SDK")
     p.add_argument("--base-url", help="LLM 주소 (또는 $LLM_API_URL)")
     p.add_argument("--api-key", help="(또는 $LLM_API_KEY)")
     p.add_argument("--model", help="생략하면 서버의 /v1/models 에서 자동 탐지")
@@ -291,7 +361,7 @@ def main() -> int:
     p.add_argument("--no-cache", action="store_true")
     p.add_argument("--dry-run", action="store_true",
                    help="합성 데이터 스모크. 필터까지만 적용하고 LLM 을 부르지 않는다")
-    args = p.parse_args()
+    args = p.parse_args(argv)
 
     # 설정은 계산 전에 읽고 검증한다. 30분 뒤에 키 하나로 죽으면 사이클 하나를 버린다.
     try:
@@ -304,9 +374,9 @@ def main() -> int:
         print(f"설정 {config.source} 적용: {', '.join(changed)}", file=sys.stderr)
 
     if args.golden:
-        return run_golden(args)
+        return run_golden(args, backend)
     if args.legacy_regression:
-        return run_legacy_regression(args)
+        return run_legacy_regression(args, backend)
 
     conv_data = args.conv_data or config.get("paths.conv_data")
 
@@ -342,8 +412,29 @@ def main() -> int:
     limit = args.limit or config.get("run.limit")
     history = args.history_turns if args.history_turns is not None else None
 
-    summary = RunSummary(version=version(), args=" ".join(sys.argv[1:]))
+    summary = RunSummary(version=version(),
+                         args=" ".join(argv if argv is not None else sys.argv[1:]))
     timer = Timer().__enter__()
+
+    # 무엇을 읽어 무엇으로 돌리는지. **계산을 시작하기 전에** 찍는다 - 다 돌고
+    # 나서 "모델이 그거였네"를 알면 이미 늦었다.
+    def origin(flag, key: str, flag_name: str) -> str:
+        if flag is not None:
+            return flag_name
+        if config.get(key) is not None:
+            return f"설정 {key}"
+        return "기본값"
+
+    conditions = Conditions()
+    conditions.add("설정", config.source,
+                   note=(f"{len(changed)}개 값을 덮어씀" if changed else "덮어쓴 값 없음"))
+    conditions.add("로그", str(conv_data) if conv_data else "(합성 데이터)",
+                   origin(args.conv_data, "paths.conv_data", "--conv-data"))
+    conditions.add("필터", str(filter_path) if filter_path else "(없음)",
+                   origin(args.filter_data, "paths.filter_data", "--filter-data"),
+                   "" if filter_path else "진단 가능한 후속 턴 전부")
+    conditions.add("출력", out_path,
+                   origin(args.out or args.output_dir, "paths.output_dir", "--output-dir"))
 
     # --- 계약 대조. 분류 전에 한다 -------------------------------------------
     # 여기서 나온 줄들이 사내에서 이쪽으로 돌아오는 포맷 정보의 전부다.
@@ -359,6 +450,7 @@ def main() -> int:
     report = contracts.check_log(payload)
     summary.contract_ok = report.n_ok
     summary.contract_mismatches = report.mismatches
+    summary.contract_notes = report.notes
 
     def finish(status: str, code: int) -> int:
         summary.status = status
@@ -380,6 +472,13 @@ def main() -> int:
     try:
         selection = load_and_select(conv_data, filter_path,
                                     history_turns=history, limit=limit)
+    except LabelTableMissing as e:
+        # 트레이스백을 그대로 던지면 사내에서 사이클 하나를 먹는다. 화면에
+        # 적힌 것이 전부인 환경이라 무엇을 하라는지가 그대로 보여야 한다.
+        print(f"\n{e}\n", file=sys.stderr)
+        summary.notes.append("라벨 실값이 없어 필터를 걸 수 없다. "
+                             "설정의 labels.query / labels.emotion 을 채울 것.")
+        return finish("FAILED (라벨)", 2)
     except (OSError, ValueError, KeyError) as e:
         summary.notes.append(f"로그를 읽지 못했다: {type(e).__name__}: {e}")
         return finish("FAILED (입력)", 2)
@@ -392,6 +491,11 @@ def main() -> int:
         return finish("NO DATA", 1)
 
     if args.dry_run:
+        conditions.add("백엔드", "(안 씀)", "--dry-run", "LLM 호출 없음")
+        conditions.hint = (f"{config.source} 를 고친다" if config.values else
+                           "configs/example.yaml 을 복사해 --config 로 준다")
+        print("\n" + conditions.render(), file=sys.stderr)
+        summary.setup = conditions.compact()
         print(f"\n분류 대상 {len(selection)}턴 (LLM 호출 없음)", file=sys.stderr)
         for sel, case in zip(selection.selected[:10], selection.cases[:10]):
             print(f"  {case.case_id}  turn {case.turn}  "
@@ -399,19 +503,35 @@ def main() -> int:
                   file=sys.stderr)
         return finish("DRY RUN", 0)
 
+    injected = backend is not None
     try:
-        backend = make_backend(args, config)
+        backend = backend or make_backend(args, config, trace=conditions)
     except JudgeError as e:
+        print(conditions.render(), file=sys.stderr)
         print(e, file=sys.stderr)
         summary.notes.append("LLM 백엔드를 만들지 못했다. 위 메시지를 옮겨 적을 것.")
         return finish("FAILED (백엔드)", 2)
 
-    detected = " (자동 탐지)" if getattr(backend, "discovered", False) else ""
-    print(f"\n분류 대상 {len(selection)}턴 · {backend.model}{detected} "
-          f"· 동시 {workers or 4}", file=sys.stderr)
-    summary.metrics.append(("model", f"{backend.model}"))
+    if injected:
+        # 백엔드를 밖에서 넣으면 make_backend 를 안 거쳐 이 줄들이 빈다.
+        # "무엇으로 돌리는지"가 이 블록의 존재 이유라 비워 둘 수 없다.
+        conditions.add("백엔드", type(backend).__name__, "주입됨 (tools/dev_run.py)")
+        conditions.add("모델", backend.model, "주입됨")
 
     use_cache = not args.no_cache and config.get("paths.cache") is not False
+    conditions.add("캐시", str(settings.CACHE_DIR) if use_cache else "(안 씀)",
+                   "--no-cache" if args.no_cache else
+                   origin(None, "paths.cache", ""))
+    conditions.add("동시", str(workers or settings.DEFAULT_WORKERS),
+                   origin(args.workers, "run.workers", "--workers"))
+    conditions.hint = (f"{config.source} 를 고친다" if config.values else
+                       "configs/example.yaml 을 복사해 --config 로 주거나 위 플래그로 덮어쓴다")
+    print("\n" + conditions.render(), file=sys.stderr)
+    print(f"분류 대상 {len(selection)}턴", file=sys.stderr)
+
+    summary.metrics.append(("model", f"{backend.model}"))
+    summary.setup = conditions.compact()
+
     judge = make_judge(backend, use_cache=use_cache)
     results = judge_cases(selection.cases, judge, workers=workers)
     outcome = build_outcome(selection.owners, results, selection.report)
@@ -425,9 +545,41 @@ def main() -> int:
     summary.metrics.append(("llm calls", f"{outcome.n_llm_calls:,}"))
     for case_id, n in _top_cases(outcome):
         summary.metrics.append(("", f"{case_id:<14} {n:,}"))
+    # 잘려서 조건을 바꿔 되살린 호출. 살아났어도 다음 실행에서는 처음부터
+    # 그 조건으로 도는 게 낫다는 신호다.
+    saved = getattr(backend, "fallbacks", [])
+    if saved:
+        for label, n in Counter(saved).most_common():
+            summary.metrics.append(("truncated", f"{n:,} recovered by {label}"))
+        summary.notes.append(
+            f"추론이 답에 도달 못 해 {len(saved)}건을 조건을 바꿔 다시 물었다. "
+            f"--thinking off 로 다시 돌릴 것.")
+    # case0 은 챗봇 지표가 아니라 **필터 지표**다. 필터가 재현율 쪽으로 넓게
+    # 잡아서 들어온 정상 턴이고, 필터는 사내 머신에 있어 여기서 못 고친다.
+    # 어떤 eval 라벨에 몰리는지가 그쪽으로 돌아가는 유일한 피드백이다.
+    #
+    # 0 건이라고 좋은 게 아니다. 필터가 너무 좁아 놓치고 있다는 뜻일 수도 있어서,
+    # 필터 리포트와 짝으로 읽어야 한다.
+    normal = [sel for sel, r in zip(selection.selected, results)
+              if r.classification and r.classification.primary_case == "case0"]
+    if normal:
+        share = 100 * len(normal) / max(1, len(results))
+        summary.metrics.append(("filter FP", f"{len(normal):,} / {len(results):,} "
+                                             f"({share:.0f}%) case0"))
+        for label, n in Counter(s.turn.eval_result for s in normal).most_common(3):
+            summary.metrics.append(("", f"{label[:20]:<20} {n:,}"))
+        summary.notes.append(
+            f"필터 오탐 후보 {len(normal)}건. 챗봇이 아니라 필터를 볼 것.")
+
     if outcome.n_failed:
         summary.notes.append(f"분류 실패 {outcome.n_failed}건. 결과 파일의 "
                              f"error 필드를 볼 것.")
+        # 어느 단계에서 깨졌는지. 관측에서 몰려 깨지면 프롬프트·토큰 문제고,
+        # 흩어져 깨지면 서버·입력 문제다. 조치가 갈린다.
+        stages = Counter(r.error.split("]")[0].lstrip("[")
+                         for r in results if r.error and r.error.startswith("["))
+        for stage, n in stages.most_common():
+            summary.metrics.append(("failed at", f"{stage:<14} {n:,}"))
     return finish("OK" if not outcome.n_failed else "PARTIAL",
                   1 if outcome.n_failed else 0)
 

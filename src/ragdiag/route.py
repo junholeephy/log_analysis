@@ -18,7 +18,7 @@ from typing import Optional
 from ragdiag import taxonomy
 from ragdiag.checks import Check
 from ragdiag.schema import GroundingCheck, Observation, SufficiencyJudgment
-from ragdiag.verify import CitationCheck
+from ragdiag.verify import CitationCheck, QuoteCheck
 
 
 @dataclass
@@ -114,6 +114,7 @@ def route(
     judgment: Optional[SufficiencyJudgment] = None,
     citation: Optional[CitationCheck] = None,
     grounding: Optional[GroundingCheck] = None,
+    complaint: Optional[QuoteCheck] = None,
 ) -> Classification:
     """관측 + 검증 → case. 값싸고 확실한 갈림길을 앞에 둔다."""
     extra = secondary_from(obs, checks)
@@ -141,6 +142,35 @@ def route(
     injection = _check(checks, "injection")
     if injection is not None and injection.violated:
         return done("case29", f"검색 문서의 지시를 답변이 수행함 — {injection.detail}")
+
+    # --- 1c. 애초에 불만이 아니었나 --------------------------------------------
+    # 필터는 재현율 쪽으로 넓게 잡는다. 그래서 그냥 다음을 묻는 턴이 섞여 들어온다.
+    # 이걸 실패로 세면 case20 이 부풀고, 그 숫자가 코퍼스 보강 목록이 되어
+    # 문서팀이 쓸 필요 없는 문서를 쓴다.
+    #
+    # 거절·인젝션보다 뒤에 두는 이유: 그 둘은 사용자가 지적했든 아니든 확인된
+    # 사실이다. 반대로 질문 모호성(1b)보다는 앞이다 - 사용자가 만족했다면 그
+    # 모호함은 실제로 문제가 되지 않았다는 뜻이고, 신호는 secondary(case4·case3)로
+    # 남는다.
+    if obs.complaint_target == "none":
+        # 인용을 못 대면 통과시키지 않는다. "문제 없음"은 가장 쉬운 답이라
+        # 열어두면 애매한 턴이 전부 그리로 샌다.
+        if complaint is not None and not complaint.verified:
+            result = done(taxonomy.UNCLASSIFIED,
+                          "불만이 아니라고 했으나 후속 발화에서 근거를 인용하지 못함",
+                          ["인용 검증 실패 — 판정자가 관용 쪽으로 기울었을 수 있다"])
+            result.confidence = "low"
+            return result
+        # 불만이 없다고 결함이 없는 건 아니다. 코드가 잡은 위반이 있으면
+        # 사용자가 지적하지 않았을 뿐이다.
+        violated = sorted(name for name, c in checks.items() if c.violated)
+        if violated:
+            return done(taxonomy.UNCLASSIFIED,
+                        f"불만은 없으나 코드 검증이 위반을 잡음 ({', '.join(violated)})",
+                        ["사용자가 지적하지 않은 결함 — 표본 검토 대상"])
+        return done("case0", "후속 발화가 앞 답변을 문제 삼지 않음",
+                    ["실패율 분모에서 뺄 것.",
+                     "쌓이면 챗봇이 아니라 필터를 좁힐 신호다."])
 
     # --- 1b. 질문 쪽 문제가 먼저다 --------------------------------------------
     # 챗봇이 낼 수 없는 형태를 요구했으면 답변을 탓할 수 없다.

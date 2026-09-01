@@ -1,8 +1,27 @@
 """llm_eval / llm_emotion 라벨 테이블.
 
-각 라벨에는 점수가 붙어 있고, 이 점수가 **만족도 대리 지표**다.
-명시적 부정 피드백(L)이 0점, 명시적 긍정 피드백(M)이 100점인 걸 보면 방향이 분명하다.
-낮은 점수 = 직전 답변이 만족스럽지 않았다는 신호이므로, 필터가 여기에 걸린다.
+**여기 있는 이름·점수는 자리표시자다.** 실제 라벨 이름과 점수는 사내 코드값이라
+저장소에 두지 않는다 (규격 §1.1 · C3 — "식별 가능한 코드값 목록은 적지 않는다").
+이 저장소는 public 이고, 라벨 집합은 그 자체로 사내 분류 체계를 드러낸다.
+
+실값은 설정으로 온다:
+
+    labels:
+      query:   configs/query_taxonomy.md
+      emotion: configs/emotion_taxonomy.md
+
+두 파일은 `.gitignore` 에 있고 사내에서는 `{AA}/configs/` 에 둔다. 형식은 그대로다
+(`A. 이름 -> 점수`) — 사내에 이미 있는 문서를 그대로 쓰라는 뜻이다.
+
+구조(글자 A~R / A~I, 개수)는 남긴다. 파서가 `llm_alternatives` 의 글자를 읽어야
+하고, 그건 값이 아니라 형식이다.
+
+**실값 없이 라벨 조건을 건 필터를 돌리면 조용히 0건이 나온다.** 가장 찾기 어려운
+실패라, `is_placeholder()` 로 그 조합을 계산 전에 막는다.
+
+각 라벨에는 점수가 붙어 있고, 이 점수가 **만족도 대리 지표**다. 명시적 부정
+피드백이 0점, 명시적 긍정 피드백이 100점인 척도라 방향이 분명하다. 낮은 점수 =
+직전 답변이 만족스럽지 않았다는 신호이므로, 필터가 여기에 걸린다.
 
 기록된 점수의 계산식(예시 데이터로 검증함):
 
@@ -40,56 +59,70 @@ class Label:
 def normalize_name(name: str) -> str:
     """라벨 이름 대조용 정규화.
 
-    필터 파일은 "I. 매우부정"(붙여쓰기), taxonomy 문서는 "매우 부정"(띄어쓰기),
-    로그의 llm_emotion_result 는 "매우 부정"으로 서로 다르다. 공백을 지우고 맞춘다.
-    이걸 안 하면 필터가 에러 없이 0건을 돌려준다 — 가장 찾기 어려운 실패다.
+    같은 라벨이 세 군데에서 다르게 적힌다. 필터 파일은 "I. 어떤라벨"(붙여쓰기),
+    taxonomy 문서는 "어떤 라벨"(띄어쓰기), 로그의 result 값은 또 다를 수 있다.
+    공백을 지우고 맞춘다 — 안 하면 필터가 에러 없이 0건을 돌려준다.
+    가장 찾기 어려운 실패다.
     """
     return re.sub(r"\s+", "", unicodedata.normalize("NFKC", name)).lower()
 
 
 # ---------------------------------------------------------------------------
-# 테이블 (query_taxonomy.md / emotion_taxonomy.md 와 일치해야 한다)
+# 자리표시자 테이블
+#
+# 개수와 글자만 실제와 같다. 이름·점수·그룹은 사내 값이라 여기 두지 않는다.
+# 점수를 균등하게 두는 것도 의도다 - 실값 없이 점수 조건을 걸면 결과가 무의미한데,
+# 그럴듯한 숫자가 박혀 있으면 무의미한 줄을 모른다.
 # ---------------------------------------------------------------------------
 
-QUERY_LABELS: dict[str, Label] = {
-    label.letter: label for label in [
-        Label("A", "심화 확장", 80, "정보 요구"),
-        Label("B", "맥락 추가", 50, "정보 요구"),
-        Label("C", "근거/출처 요구", 45, "정보 요구"),
-        Label("D", "예시 요청", 60, "정보 요구", aliases=("예시 요첟",)),
-        Label("E", "단순 연속 질문", 60, "정보 요구"),
-        Label("F", "조건 변경", 45, "속성 조정"),
-        Label("G", "조건 제외", 45, "속성 조정"),
-        Label("H", "형식 변경", 40, "속성 조정"),
-        Label("I", "범위 좁히기", 65, "속성 조정"),
-        Label("J", "범위 넓히기", 40, "속성 조정"),
-        Label("K", "명확화 요구", 25, "속성 조정"),
-        Label("L", "명시적 부정 피드백", 0, "메타 대화"),
-        Label("M", "명시적 긍정 피드백", 100, "메타 대화"),
-        Label("N", "후속 행동 요청", 75, "메타 대화"),
-        Label("O", "대화 종료", 70, "메타 대화"),
-        Label("P", "무관한 화제 전환", 50, "메타 대화"),
-        Label("Q", "단순 반복/확인", 40, "메타 대화"),
-        Label("R", "기타 메타 대화", 50, "메타 대화"),
-    ]
+QUERY_LETTERS = "ABCDEFGHIJKLMNOPQR"
+EMOTION_LETTERS = "ABCDEFGHI"
+
+_PLACEHOLDER_QUERY = {
+    letter: Label(letter, f"질의유형 {letter}", 50.0, "(자리표시자)")
+    for letter in QUERY_LETTERS
+}
+_PLACEHOLDER_EMOTION = {
+    letter: Label(letter, f"감정 {letter}", 50.0, "(자리표시자)")
+    for letter in EMOTION_LETTERS
 }
 
-EMOTION_LABELS: dict[str, Label] = {
-    label.letter: label for label in [
-        Label("A", "매우 긍정", 100.0),
-        Label("B", "긍정", 87.5),
-        Label("C", "약간 긍정", 75.0),
-        Label("D", "긍정적 중립", 62.5),
-        Label("E", "중립", 50.0),
-        Label("F", "부정적 중립", 37.5),
-        Label("G", "약간 부정", 25.0),
-        Label("H", "부정", 12.5),
-        Label("I", "매우 부정", 0.0),
-    ]
-}
+QUERY_LABELS: dict[str, Label] = dict(_PLACEHOLDER_QUERY)
+EMOTION_LABELS: dict[str, Label] = dict(_PLACEHOLDER_EMOTION)
 
 DEFAULT_QUERY_SCORES = {letter: label.score for letter, label in QUERY_LABELS.items()}
 DEFAULT_EMOTION_SCORES = {letter: label.score for letter, label in EMOTION_LABELS.items()}
+
+
+def is_placeholder() -> bool:
+    """실값이 아직 안 들어왔는가.
+
+    이걸 안 보고 라벨·점수 조건을 걸면 필터가 **에러 없이 0건**을 돌려준다.
+    로그에 적힌 실제 라벨 이름은 자리표시자 "질의유형 K" 와 절대 안 맞기 때문이다.
+    """
+    return (QUERY_LABELS == _PLACEHOLDER_QUERY
+            and EMOTION_LABELS == _PLACEHOLDER_EMOTION)
+
+
+def install(query: Optional[dict] = None, emotion: Optional[dict] = None) -> list[str]:
+    """실값 테이블을 끼운다. 무엇이 들어왔는지 돌려준다.
+
+    모듈 전역을 바꾸는 것은 config.apply() 와 같은 방식이다 - 필터·조사기가 이미
+    이 전역을 읽고 있어서, 그쪽을 전부 인자로 바꾸는 것보다 얕게 끝난다.
+    """
+    changed = []
+    for name, table, target in (("query", query, QUERY_LABELS),
+                                ("emotion", emotion, EMOTION_LABELS)):
+        if not table:
+            continue
+        target.clear()
+        target.update(table)
+        changed.append(f"labels.{name} ({len(table)}개)")
+    DEFAULT_QUERY_SCORES.clear()
+    DEFAULT_QUERY_SCORES.update({k: v.score for k, v in QUERY_LABELS.items()})
+    DEFAULT_EMOTION_SCORES.clear()
+    DEFAULT_EMOTION_SCORES.update({k: v.score for k, v in EMOTION_LABELS.items()})
+    return changed
 
 
 # ---------------------------------------------------------------------------
@@ -101,8 +134,8 @@ def resolve(spec: str, table: dict[str, Label]) -> Optional[Label]:
 
     받아들이는 형태:
       "I"              글자만
-      "I. 매우부정"     필터 파일 형태
-      "매우 부정"       로그의 result 값
+      "I. 어떤라벨"     필터 파일 형태 (붙여쓰기)
+      "어떤 라벨"       로그의 result 값 (띄어쓰기)
     """
     if not spec:
         return None

@@ -5,8 +5,8 @@
 두 가지를 특히 조심한다.
 
 **1. 라벨 이름 표기가 세 군데에서 다르다.**
-필터는 "I. 매우부정"(붙여쓰기), taxonomy 문서는 "매우 부정"(띄어쓰기),
-로그는 "매우 부정". 문자열을 그대로 비교하면 에러 없이 0건이 나온다.
+같은 라벨이 필터 파일·taxonomy 문서·로그에서 다르게 적힌다 (붙여쓰기 / 띄어쓰기 /
+또 다른 표기). 문자열을 그대로 비교하면 에러 없이 0건이 나온다.
 labels.resolve() 가 글자·붙여쓰기·띄어쓰기를 모두 받아준다.
 
 **2. 점수는 다시 계산한다.**
@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from ragdiag import settings
+from ragdiag import labels, settings
 from ragdiag.conv import Conversation, Turn
 from ragdiag.labels import (
     DEFAULT_QUERY_SCORES,
@@ -164,8 +164,29 @@ def parse_filter(raw: dict) -> FilterSpec:
     )
 
 
+class LabelTableMissing(RuntimeError):
+    """라벨 실값 없이 라벨·점수 조건을 걸었다."""
+
+
 def load_filter(path: str | Path) -> FilterSpec:
-    return parse_filter(json.loads(Path(path).read_text(encoding="utf-8")))
+    spec = parse_filter(json.loads(Path(path).read_text(encoding="utf-8")))
+
+    # 자리표시자 테이블로 라벨·점수 조건을 걸면 **에러 없이 0건**이 나온다.
+    # 로그에 적힌 실제 라벨 이름은 자리표시자 "질의유형 K" 와 절대 안 맞기 때문이다.
+    # 30분 뒤 빈 결과를 보고 원인을 찾는 것보다 여기서 죽는 편이 싸다.
+    uses_labels = bool(spec.eval_letters or spec.emotion_letters
+                       or spec.eval_range or spec.emotion_range)
+    if uses_labels and labels.is_placeholder():
+        raise LabelTableMissing(
+            f"{path} 가 라벨·점수 조건을 쓰는데 라벨 실값이 없습니다.\n"
+            "  이 저장소에는 자리표시자만 있습니다 — 실제 라벨 이름과 점수는\n"
+            "  사내 코드값이라 올리지 않습니다 (규격 §1.1 · C3).\n"
+            "  설정에 사내 taxonomy 문서를 가리키세요:\n"
+            "    labels:\n"
+            "      query:   configs/query_taxonomy.md\n"
+            "      emotion: configs/emotion_taxonomy.md\n"
+            "  그대로 두면 필터가 에러 없이 0건을 돌려줍니다.")
+    return spec
 
 
 # ---------------------------------------------------------------------------

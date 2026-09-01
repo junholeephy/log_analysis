@@ -21,6 +21,8 @@ import json
 import random
 from typing import Optional
 
+from ragdiag.labels import EMOTION_LABELS, QUERY_LABELS
+
 # ---------------------------------------------------------------------------
 # 문서 조각
 # ---------------------------------------------------------------------------
@@ -196,10 +198,15 @@ JOBS = {"해외영업팀": "해외영업", "IT인프라팀": "인프라운영", 
         "인사팀": "인사운영", "생산기술팀": "공정기술"}
 
 # 후속 질문의 성격 라벨. 불만이므로 낮은 점수대에 몰린다.
-FOLLOWUP = [("K", "명확화 요구", 25), ("L", "명시적 부정 피드백", 0),
-            ("F", "조건 변경", 45), ("C", "근거/출처 요구", 45),
-            ("Q", "단순 반복/확인", 40), ("H", "형식 변경", 40)]
-EMOTION = [("I", "매우 부정", 0.0), ("H", "부정", 12.5), ("G", "약간 부정", 25.0)]
+# 라벨 이름·점수는 사내 코드값이라 여기 적지 않는다 (규격 §1.1 · C3).
+# 현재 테이블에서 글자로 끌어온다 - 자리표시자면 자리표시자 이름이, 설정으로
+# 실값을 끼웠으면 실제 이름이 나온다. 합성 데이터가 그때그때 맞아떨어진다.
+def _pick(letters, table):
+    return [(x, table[x].name, table[x].score) for x in letters if x in table]
+
+
+FOLLOWUP_LETTERS = ("K", "L", "F", "C", "Q", "H")
+EMOTION_LETTERS = ("I", "H", "G")
 
 
 def generate(n: Optional[int] = None, seed: int = 0) -> dict:
@@ -275,9 +282,11 @@ def _turn(no, question, answer, docs, rng, followup, mild):
     if not followup:
         label = emotion = None
     elif mild:
-        label, emotion = ("E", "단순 연속 질문", 60), ("E", "중립", 50.0)
+        label = _pick(("E",), QUERY_LABELS)[0]
+        emotion = _pick(("E",), EMOTION_LABELS)[0]
     else:
-        label, emotion = rng.choice(FOLLOWUP), rng.choice(EMOTION)
+        label = rng.choice(_pick(FOLLOWUP_LETTERS, QUERY_LABELS))
+        emotion = rng.choice(_pick(EMOTION_LETTERS, EMOTION_LABELS))
 
     day = rng.randint(1, 28)
     return {

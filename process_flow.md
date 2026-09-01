@@ -16,15 +16,27 @@ python <저장소>/src/run.py \
 
 ---
 
-## 무엇으로 분류되나 — case 29개
+## 무엇으로 분류되나 — case 30개
 
-판정 대상은 **29개**이고 그중 **25개**에 라우팅이 도달한다. `✗` 넷은 로그에 필드가
+`taxonomy_v2.txt` 의 **29개** 중 **25개**에 라우팅이 도달하고, 여기에 우리가 더한
+`case0`(정상)이 붙어 실제로 나올 수 있는 라벨은 **26종**이다. `✗` 넷은 로그에 필드가
 없어 판정할 수 없다 — 목록에서 지우지 않은 이유는 "우리 분류에는 그런 게 없다"가
 되지 않게 하기 위해서다.
 
 라벨은 증상이 아니라 **누가 고치는가**로 묶인다. 같은 증상도 문서팀이 고칠 일과
 프롬프트 담당이 고칠 일은 다르다.
 
+
+**TYPE0 · 실패가 아님** — 고칠 곳: **필터** (챗봇이 아니다)
+
+| | case | 이름 | 신뢰도 |
+|---|---|---|---|
+|  | `case0` | 정상 — 불만 아님 | medium |
+
+`taxonomy_v2.txt` 에 없는 유일한 라벨이다. 필터는 재현율 쪽으로 넓게 잡으므로 그냥
+다음을 묻는 턴이 섞여 들어온다. 낼 자리가 없으면 그게 `content_missing` 으로 읽혀
+`case20` 을 부풀리고, 그 숫자가 코퍼스 보강 목록이 되어 문서팀이 **쓸 필요 없는
+문서**를 쓴다.
 
 **TYPE1 · 적절하지 않은 질문/요청** — 고칠 곳: 질문 유도 · UI
 
@@ -166,7 +178,7 @@ turn 4 의 `retrieved_data` 를 쓰면 "불만에 대한 재검색 결과"를 �
 | 필드 | 왜 안 쓰나 |
 |---|---|
 | `timestamp` | 지연 판정(case7)에 쓸 수 없다. 턴 시각 차이에는 사용자가 생각한 시간이 섞여 있다 |
-| `prev_question` | turn 순서로 직접 짝지으므로 불필요 |
+| `prev_question` | turn 순서로 직접 짝지으므로 불필요. 사내 로그에서는 `list` 로 온다 — 그게 서비스가 모델에 실제로 넘긴 히스토리라면 재확인이 필요하다 |
 | `trace_matched` | "2턴 이상"은 실제 턴 수로 판정한다. 선언값과 실제가 어긋난 로그를 본 적이 있다 |
 | `llm_eval_*` `llm_emotion_*` | ②에서만 쓰고 판정에는 넘기지 않는다 (아래) |
 
@@ -202,7 +214,7 @@ emotion_score (0.0, 30.0)           37
 
 ### 필터가 쓴 값을 판정에 넘기지 않는 이유
 
-`llm_eval_result`("명시적 부정 피드백")와 `llm_emotion_result`("매우 부정")는
+`llm_eval_result`(질의 유형 라벨)와 `llm_emotion_result`(감정 라벨)는
 **이미 다른 시스템이 내린 판정**이다. 이걸 ⑤에 넘기면 판정자가 그 라벨에 맞춰
 관측을 고른다 — 독립적인 두 번째 의견이어야 할 것이 첫 번째 의견의 확인 도장이 된다.
 
@@ -260,7 +272,8 @@ case 를 고르지 않는다.
 | `reasoning` | 자유 문장 | 불만과 질문을 어떻게 읽었는지 2~3문장 |
 | `resolved_question` | 자유 문장 | 대명사·생략을 푼, 그 자체로 이해되는 질문 |
 | `unmet_need` | 자유 문장 | 원했는데 못 받은 것. **요구하지 않은 것을 덧붙이지 않는다** |
-| `complaint_target` | `tone` `format` `language` `length` `content_missing` `content_wrong` `no_answer` `refusal` `inconsistency` `other` | 불만이 무엇을 향하나 |
+| `complaint_target` | `none` `tone` `format` `language` `length` `content_missing` `content_wrong` `no_answer` `refusal` `inconsistency` `other` | 불만이 무엇을 향하나. `none` 은 불만이 아니라는 뜻 |
+| `complaint_quote` | 후속 발화에서 따온 구절 | 그렇게 읽은 근거. `none` 일 때 필수이며 원문 대조를 거친다 |
 | `question_domain` | `domain` `general_knowledge` `calculation` `code` `tool_usage` `unclear` | 질문의 성격 |
 | `question_self_contained` | `true` / `false` | 그 문장만으로 검색 쿼리가 되나 (case4의 반대) |
 | `question_multi_intent` | `true` / `false` | 요구가 둘 이상 섞였나 (case3) |
@@ -295,19 +308,20 @@ case 를 고르지 않는다.
 `case9` 인 턴의 `evidence` 에는 `checks` 만 있고 `observation` 이 없다. 그게
 "LLM 을 안 거쳤다"는 표시이기도 하다.
 
-**(2) 17개를 내지만 결과 파일에는 7개만 실린다.**
+**(2) 18개를 내지만 결과 파일에는 8개만 실린다.**
 
 ```
-Step 1 이 내는 것        17개 (전부 필수. 기본값이 없어 LLM 이 반드시 채운다)
-결과 파일에 실리는 것      7개
+Step 1 이 내는 것        18개 (complaint_quote 만 기본값이 있고 나머지는 필수)
+결과 파일에 실리는 것      8개
 ```
 
-실리는 7개 —
+실리는 8개 —
 
 | 필드 | 왜 남기나 |
 |---|---|
 | `resolved_question` `unmet_need` | 무엇을 물었고 무엇을 못 받았나 |
 | `complaint_target` `question_domain` | 불만의 방향과 질문 성격 |
+| `complaint_quote` | 판정자가 그 불만 방향을 고른 근거. 인용 검증 결과와 함께 남는다 |
 | `question_self_contained` `question_multi_intent` `answer_refused` | 라우팅의 주요 갈림길 |
 
 나머지 10개(`answer_actionable` · `answer_used_history` · `answer_covers_all_intents` ·
@@ -479,9 +493,10 @@ question_domain == "domain"                          ⑤가 정한다 (LLM)
 ### `complaint_target` 은 둘만 통과한다
 
 `content_missing`(필요한 정보가 없음)과 `content_wrong`(담긴 정보가 틀림)뿐이다.
-`tone` `format` `language` `length` `no_answer` `refusal` `inconsistency` `other`
-여덟은 ⑦을 거치지 않는다 — 그 불만들은 문서가 아니라 답변의 형태를 향하고,
-⑥의 코드 검증기가 이미 판정한다.
+`none` `tone` `format` `language` `length` `no_answer` `refusal` `inconsistency`
+`other` 아홉은 ⑦을 거치지 않는다 — `none` 은 애초에 불만이 아니라 문서 충족도를
+따질 이유가 없고(그래서 LLM 호출도 아낀다), 나머지 여덟은 문서가 아니라 답변의
+형태를 향해서 ⑥의 코드 검증기가 이미 판정한다.
 
 **입력**
 
@@ -599,7 +614,7 @@ near-miss 가 전부 partial 로 새어 "문서는 어느 정도 있었다"가 �
 
 | 어디서 | 라우팅이 읽는 것 | 안 읽는 것 |
 |---|---|---|
-| ⑤ 관측 (17개 중 **10개**) | `complaint_target` `question_domain` `question_self_contained` `question_multi_intent` `question_answerable_as_asked` `answer_refused` `answer_covers_all_intents` `answer_actionable` `answer_used_history` `requests_unsupported_output` | `resolved_question` `unmet_need` `reasoning` `requested_language` `requested_length_kind` `requested_length_value` `requested_format` |
+| ⑤ 관측 (18개 중 **10개**) | `complaint_target` `question_domain` `question_self_contained` `question_multi_intent` `question_answerable_as_asked` `answer_refused` `answer_covers_all_intents` `answer_actionable` `answer_used_history` `requests_unsupported_output` | `resolved_question` `unmet_need` `reasoning` `requested_language` `requested_length_kind` `requested_length_value` `requested_format` `complaint_quote` |
 | ⑥ 검증기 (11종 중 **8종**) | `service_error` `truncated` `pii` `quoted_spans` `arithmetic` `injection` + `language` `length` `format` | `python_syntax` `sql_shape` (`case27` 안에서 함께 읽는다) |
 | ⑦ 충족도 | `verdict` | `evidence` `missing` `reasoning` |
 | ⑧ 인용 | `n_kept` `n_chunks` | `kept` `dropped` 의 내용 |
@@ -620,20 +635,29 @@ near-miss 가 전부 partial 로 새어 "문서는 어느 정도 있었다"가 �
 | 0 | 답변이 서비스 자원 부족 확정 문구인가 | 코드 | `case9` 서비스 자원 부족 응답 |
 | 1 | 답변이 정책·권한을 이유로 거절했나 | 관측 | `case28` 보안 정책상 답변 불가 |
 | 2 | 문서의 숨은 지시를 답변이 수행했나 | 코드 | `case29` 간접 프롬프트 인젝션 |
-| 3 | 챗봇이 낼 수 없는 형태를 요구했나 | 관측 | `case2` 지원하지 않는 포맷 요구 |
-| 4 | 질문만으로 답을 특정할 수 있나 | 관측 | `case1` 이해하기 어려운 질문 |
-| 5 | 답이 없거나 중간에 끊겼나 | 코드 | `case8` 출력 잘림 |
-| 6 | 언어·길이·포맷 요구를 지켰나 | 코드 | `case10` `case11` `case12` — 지켰는데도 불만이면 `case13` |
-| 7 | 말투·어조에 대한 불만인가 | 관측 | `case16` 말투·어조 불이행 |
-| 8 | 질문 성격이 도메인이 아닌가 | 관측 | `case25` `case26` `case27` |
-| 9 | `rag_chunks` 가 비어 있나 | 코드 | `case21` 검색 미수행 |
-| 10 | 문서가 요구를 충족했나 | LLM + 코드 | `case20` Retrieve 실패 |
-| 11 | 답변이 그 문서를 썼나 | LLM | 안 씀 `case22` · 어긋남 `case18` |
-| 12 | 문서도 답변도 멀쩡한데 불만 | 관측 | 실행 불가 `case17` · 의도 불일치 `case13` |
-| 13 | 남은 것 | 관측 | `case14` `case15` · 미분류 |
+| 3 | 애초에 불만이 아닌가 | 관측 + 코드 | `case0` 정상 — 불만 아님 |
+| 4 | 챗봇이 낼 수 없는 형태를 요구했나 | 관측 | `case2` 지원하지 않는 포맷 요구 |
+| 5 | 질문만으로 답을 특정할 수 있나 | 관측 | `case1` 이해하기 어려운 질문 |
+| 6 | 답이 없거나 중간에 끊겼나 | 코드 | `case8` 출력 잘림 |
+| 7 | 언어·길이·포맷 요구를 지켰나 | 코드 | `case10` `case11` `case12` — 지켰는데도 불만이면 `case13` |
+| 8 | 말투·어조에 대한 불만인가 | 관측 | `case16` 말투·어조 불이행 |
+| 9 | 질문 성격이 도메인이 아닌가 | 관측 | `case25` `case26` `case27` |
+| 10 | `rag_chunks` 가 비어 있나 | 코드 | `case21` 검색 미수행 |
+| 11 | 문서가 요구를 충족했나 | LLM + 코드 | `case20` Retrieve 실패 |
+| 12 | 답변이 그 문서를 썼나 | LLM | 안 씀 `case22` · 어긋남 `case18` |
+| 13 | 문서도 답변도 멀쩡한데 불만 | 관측 | 실행 불가 `case17` · 의도 불일치 `case13` |
+| 14 | 남은 것 | 관측 | `case14` `case15` · 미분류 |
 
-**왼쪽 위가 강한 증거다.** 0~5 는 코드나 단일 관측으로 확정되는 것들이고,
-10~13 으로 갈수록 LLM 판정과 인상에 의존한다.
+**왼쪽 위가 강한 증거다.** 0~6 은 코드나 단일 관측으로 확정되는 것들이고,
+11~14 로 갈수록 LLM 판정과 인상에 의존한다.
+
+**3번이 왜 거기인가.** 거절(1)과 인젝션(2)은 사용자가 지적했든 아니든 확인된
+사실이라 앞에 둔다. 반대로 질문 모호성(4·5)보다는 앞이다 — 사용자가 만족했다면 그
+모호함은 실제로 문제가 되지 않았다는 뜻이고, 신호는 `secondary_cases` 로 남는다.
+그리고 3번을 통과하려면 **인용 검증을 지나야 한다.** "문제 없음"은 판정자가 낼 수
+있는 가장 쉬운 답이라, 근거를 후속 발화에서 그대로 따오게 하지 않으면 애매한 턴이
+전부 그리로 샌다. 못 대면 `unclassified` 로 간다 — 코드가 잡은 위반이 있을 때도
+마찬가지다.
 
 ### 진리표 — 도메인 질문의 내용 불만 (9~12번)
 
@@ -680,11 +704,12 @@ near-miss 가 전부 partial 로 새어 "문서는 어느 정도 있었다"가 �
 0번이 맨 위인 것도 같은 이유다. 서비스 장애 문구를 관측에 넘기면 판정자가 거절로
 읽어 `case28` 로 보낸다 — 인프라 문제가 보안 정책 문제로 집계된다.
 
-**출력** — case 25개 + 미분류 2개
+**출력** — case 26개 + 미분류 2개
 
 | case | 이름 | 신뢰도 | 무엇이 정하나 |
 |---|---|---|---|
 |---|---|---|---|
+| `case0` | 정상 — 불만 아님 | medium | 관측 + 인용 검증 |
 | `case1` | 이해하기 어려운 질문 | medium | 관측 |
 | `case2` | 지원하지 않는 포맷 요구 | medium | 관측 |
 | `case3` | 복합 질문을 함 | medium | 관측 · **부가로만** |
@@ -713,7 +738,8 @@ near-miss 가 전부 partial 로 새어 "문서는 어느 정도 있었다"가 �
 | `unclassified` | 분류 실패 | — | **"문제 없음"이 아니라 수동 검토 대상** |
 | `out_of_taxonomy` | taxonomy 에 없는 유형 | — | 쌓이면 케이스를 추가하라는 신호 |
 
-29개 중 4개(`case5` `case7` `case19` `case23`)는 **라우팅이 절대 만들지 않는다.**
+`taxonomy_v2.txt` 의 29개 중 4개(`case5` `case7` `case19` `case23`)는
+**라우팅이 절대 만들지 않는다.**
 필드가 없어 판정할 수 없는 것들이고, 목록에서 지우지 않은 이유는 "우리 분류에는
 그런 게 없다"가 되지 않게 하기 위해서다.
 
