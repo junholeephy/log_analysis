@@ -151,6 +151,101 @@ def make_backend(args, config=None, trace=None):
     ))
 
 
+def _probe_case():
+    """점검용 최소 케이스. 문서에 답이 있는데 답변이 무시한 상황이라 정답은 ignored."""
+    from ragdiag.schema import Case
+
+    return Case(
+        case_id="probe", user_id="probe", dept="-", job_grade="-", job_name="-",
+        position_name="-", conversation_id="-", turn=0,
+        pre_queries=["국내 출장 식비 상한이 얼마인가요?"],
+        llm_ans_on_last_q="출장 식비는 회사 규정에 따라 지급되며 부서별로 다를 수 있습니다.",
+        current_query="정확한 금액이요.",
+        rag_chunks=["국내 출장 식비는 1일 3만원을 상한으로 한다.",
+                    "국내 출장 숙박비는 1박 8만원을 상한으로 한다."],
+    )
+
+
+def check_llm(args, config=None) -> int:
+    """로컬 LLM 서버가 붙는지, 구조화 출력을 어떻게 강제할 수 있는지 점검한다.
+
+    **에어갭 장비에서 가장 먼저 돌릴 것이다.** 거기서는 물어볼 데가 없으므로 스스로
+    진단이 되어야 하고, 전체를 돌리기 전에 서버 규약과 1회 소요시간을 확정해야
+    한다 - 그래야 전체가 몇 분인지 알고 시작한다.
+
+    이 함수는 로컬 서버만 본다. 개발 장비 전용 백엔드를 쓰지 않으므로 tools/ 가
+    아니라 여기 있다 (규격 §1.4).
+    """
+    import time
+
+    from ragdiag import prompts
+    from ragdiag.schema import GroundingCheck
+
+    try:
+        backend = make_backend(args, config)
+    except JudgeError as e:
+        print(e, file=sys.stderr)
+        return 2
+
+    print(f"서버 : {backend.base_url}")
+    print(f"모델 : {backend.model}" + ("   (자동 탐지)" if backend.discovered else ""))
+    if backend.discovered:
+        others = [m for m in backend.list_models() if m != backend.model]
+        if others:
+            print(f"       서버의 다른 모델: {', '.join(others)}")
+            print(f"       다른 걸 쓰려면 --model <이름>")
+    print(f"추론 모드 : {backend.thinking}   (auto = 서버 기본값 유지)")
+
+    try:
+        started = time.monotonic()
+        mode = backend.negotiate(GroundingCheck)
+        print(f"구조화 출력 강제 방식 : {mode}   ({time.monotonic() - started:.1f}s)")
+        if len(backend.negotiation_log) > 1:
+            print("  협상 과정:")
+            for line in backend.negotiation_log:
+                print(f"    {line}")
+    except JudgeError as e:
+        print(f"\n연결 실패:\n{e}", file=sys.stderr)
+        return 1
+
+    if mode == "none":
+        print("\n  경고: 이 서버는 구조화 출력을 강제하지 못합니다.")
+        print("  프롬프트만으로 JSON을 요구하게 되어 재시도가 잦아집니다.")
+        print("  프록시(LiteLLM 등)를 거치고 있다면 파라미터를 버리고 있을 수 있습니다.")
+
+    # 규약뿐 아니라 모델이 지시를 따르는지도 봐야 한다.
+    print("\n실제 판정 1회 시도...")
+    started = time.monotonic()
+    try:
+        result, usage = backend.complete(
+            prompts.GROUNDING_SYSTEM,
+            prompts.grounding_user_message(_probe_case()),
+            GroundingCheck,
+            prompts.output_contract(GroundingCheck),
+        )
+    except JudgeError as e:
+        print(f"\n판정 실패:\n{e}", file=sys.stderr)
+        return 1
+
+    elapsed = time.monotonic() - started
+    print(f"  answer_used_rag : {result.answer_used_rag}   (기대: ignored)")
+    print(f"  소요            : {elapsed:.1f}s")
+    print(f"  토큰            : 입력 {usage.input_tokens:,} / 출력 {usage.output_tokens:,}")
+    if result.answer_used_rag != "ignored":
+        print("\n  경고: 이 탐침은 'ignored' 가 정답입니다. 문서에 답이 있는데 답변이")
+        print("  일반론으로 때운 경우입니다. 모델이 지시를 못 따르고 있을 수 있습니다.")
+
+    if backend.fallbacks:
+        print(f"\n  추론이 답에 도달 못 해 {len(backend.fallbacks)}회 폴백했습니다.")
+        print("  전체 실행은 --thinking off 로 시작하는 편이 낫습니다.")
+
+    workers = args.workers or settings.DEFAULT_WORKERS
+    print(f"\n턴 1건당 LLM 호출은 최대 3회다. 1,000턴이면 대략 "
+          f"{elapsed * 1000 * 2 / max(workers, 1) / 60:.0f}분 "
+          f"(호출 2,000회 가정, 동시 {workers}).")
+    return 0
+
+
 def run_legacy_regression(args, backend=None) -> int:
     """구 회귀셋을 새 파이프라인으로 돌려 판별력이 유지되는지 본다.
 
@@ -342,6 +437,9 @@ def main(argv=None, backend=None) -> int:
 
     # 아래 기본값은 전부 None 이다. 설정과 CLI 를 구분하기 위해서다 -
     # argparse 기본값을 넣으면 "사용자가 준 것"과 "기본값"을 못 가린다.
+    p.add_argument("--check-llm", action="store_true",
+                   help="로컬 LLM 서버 점검 — 모델·강제방식·1회 소요시간. "
+                        "사내에서 전체를 돌리기 전에 먼저 돌린다")
     p.add_argument("--backend", choices=["local", "cli", "api"],
                    help="local: OpenAI 호환 서버 / cli: claude -p "
                         "(개발 장비 전용 — 저장소에 없다) / api: Anthropic SDK")
@@ -373,6 +471,8 @@ def main(argv=None, backend=None) -> int:
     if changed:
         print(f"설정 {config.source} 적용: {', '.join(changed)}", file=sys.stderr)
 
+    if args.check_llm:
+        return check_llm(args, config)
     if args.golden:
         return run_golden(args, backend)
     if args.legacy_regression:

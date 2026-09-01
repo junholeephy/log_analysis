@@ -324,6 +324,35 @@ SPEC = pathlib.Path(
     or ROOT.parent / "general_implementation" / "IMPLEMENTATION_SPEC.md")
 
 
+def test_internal_command_sequence_only_uses_what_ships():
+    """사내 순서에 반입 안 되는 것이 등장하면 거기서 사이클이 하나 날아간다.
+
+    실제로 README 가 `tools/legacy_run.py --check-llm` 을 시키고 있었다. tools/ 는
+    export-ignore 라 사내에 없다 - 물어볼 데도 없는 장비에서 command not found 를
+    만나게 된다. 그래서 순서 블록은 archive 에 실제로 담기는 것만 참조해야 한다.
+    """
+    doc = (ROOT / "README.md").read_text(encoding="utf-8")
+    block = doc.split("<!-- BEGIN 사내 순서 -->")[1].split("<!-- END 사내 순서 -->")[0]
+
+    ignored = [l.split()[0].rstrip("/") for l in
+               (ROOT / ".gitattributes").read_text(encoding="utf-8").splitlines()
+               if l.strip() and not l.strip().startswith("#") and "export-ignore" in l]
+    hits = [name for name in ignored if f"{name}/" in block]
+    assert not hits, f"사내에 없는 것을 시키고 있다: {hits}"
+
+    # 진입점과 점검 순서가 실제로 있는지.
+    for needed in ("scripts/sync.sh", "src/run.py --check-llm", "--dry-run"):
+        assert needed in block, f"순서에 {needed} 가 없다"
+
+
+def test_check_llm_lives_in_the_shipped_entry_point():
+    """에어갭에서 가장 먼저 돌릴 것이다. tools/ 에 있으면 거기서는 못 돈다."""
+    from ragdiag.__main__ import check_llm  # noqa: F401
+
+    source = (ROOT / "src/ragdiag/__main__.py").read_text(encoding="utf-8")
+    assert "--check-llm" in source
+
+
 def test_gitattributes_has_no_end_of_line_comments():
     """git 은 .gitattributes 에서 줄 끝 주석을 지원하지 않는다.
 

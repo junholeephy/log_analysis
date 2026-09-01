@@ -625,19 +625,70 @@ python tools/dev_run.py --backend api --legacy-regression
 `anthropic`·`openai` import 를 실제로 잡으므로 다시 새어 들어가면 태그를 내기 전에
 걸린다.
 
+<!-- BEGIN 사내 순서 -->
 ```bash
-pip install pydantic                      # 사내 미러
+# ── 0. 최초 1회만 ────────────────────────────────────────────────────────
+cd {AA}
+git clone <remote> .staging/log_analysis
+
+# ── 1. 매번 ──────────────────────────────────────────────────────────────
+cd {AA}
+bash .staging/log_analysis/scripts/sync.sh v0.27
+#   태그를 fetch·checkout 하고 log_analysis/ 를 통째로 교체한다.
+#   이식 표면 점검에 걸리면 사본을 지우고 실패로 끝낸다.
+
+# ── 2. 환경 ──────────────────────────────────────────────────────────────
+source <기존 venv>/bin/activate
+python -m pip install --dry-run -r log_analysis/requirements.txt && python -m pip check
+python -m pip install -r log_analysis/requirements.txt
+#   --upgrade / --force-reinstall 금지. 공용 venv 를 조용히 깨뜨린다.
+#   충돌하면 고치지 말고 메시지를 인사이트로 가지고 나온다.
+
 export LLM_API_URL=http://<서버>:8000
 export LLM_API_KEY=<키>
 
-python tools/legacy_run.py --check-llm      # 1. 서버 규약 확정 (모델·강제방식·소요시간)
-python -m pytest tests/ -q                   # 2. LLM 없이 도는 부분
-python src/run.py --dry-run                  # 3. 합성 데이터로 끝까지 도는지
-python src/run.py --conv-data data/conv_eval.json --limit 20   # 4. 실데이터 일부
-```
+# ── 3. 사내 실값 (v0.26 부터 필요) ───────────────────────────────────────
+#   {AA}/configs/ 에 사내 taxonomy 문서 두 개를 둔다. log_analysis/ 안이 아니다 —
+#   그 디렉터리는 sync 때마다 지워진다.
+#     {AA}/configs/query_taxonomy.md      형식: A. 이름 -> 점수
+#     {AA}/configs/emotion_taxonomy.md
+#   그리고 configs/local.yaml 에:
+#     labels:
+#       query:   configs/query_taxonomy.md
+#       emotion: configs/emotion_taxonomy.md
 
-`--model`은 서버가 여러 모델을 서빙하고 첫 번째가 아닌 걸 쓰고 싶을 때만 필요하다.
-`--check-llm`이 서버의 다른 모델 목록도 함께 보여준다.
+# ── 4. 점검 — 위에서부터. 앞이 깨지면 뒤는 볼 필요 없다 ──────────────────
+python log_analysis/src/run.py --check-llm
+#   서버 규약·모델·1회 소요시간. 전체가 몇 분인지 여기서 나온다.
+
+python -m pytest log_analysis/tests -q
+#   LLM 없이 도는 부분. 실패하면 반입 자체가 잘못된 것이다.
+
+python log_analysis/src/run.py --dry-run
+#   합성 데이터로 끝까지. 여기서 깨지면 환경 문제이지 데이터 문제가 아니다.
+
+# ── 5. 실데이터 ──────────────────────────────────────────────────────────
+python log_analysis/src/run.py --config configs/local.yaml \
+    --conv-data <실데이터> --filter-data <필터> --limit 50
+#   RUN SUMMARY 의 contract 줄이 첫 사이클의 실제 수확이다.
+#   계약이 깨끗해진 뒤에 전체로 간다 — 틀린 계약 위의 숫자는 믿을 수 없다.
+
+python log_analysis/src/run.py --config configs/local.yaml \
+    --conv-data <실데이터> --filter-data <필터>
+#   결과는 ./output 에 끝난 시각이 붙어 쌓인다.
+
+# ── 6. 화면으로 보기 (선택) ──────────────────────────────────────────────
+python -m pip install -r log_analysis/requirements-dashboard.txt
+python -m streamlit run log_analysis/src/dashboard.py
+#   --result 를 안 주면 ./output 의 가장 최근 결과를 고른다.
+```
+<!-- END 사내 순서 -->
+
+**`tools/` 는 반입본에 없다.** 위 명령에 `tools/` 가 등장하면 그건 사내에서 안 도는
+명령이다 (`tests/test_spec_compliance.py` 가 이 블록을 검사한다).
+
+`--model` 은 서버가 여러 모델을 서빙하고 첫 번째가 아닌 걸 쓰고 싶을 때만 필요하다.
+`--check-llm` 이 서버의 다른 모델 목록도 함께 보여준다.
 
 **3번이 이 장비에서 가장 중요하다.** 개발 장비의 Claude Opus 5 기준선은 라벨 23/23이다.
 로컬 모델이 크게 낮으면 프롬프트를 못 따르고 있다는 뜻이고, 실데이터 결과를 믿을 수 없다.
