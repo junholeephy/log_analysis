@@ -156,18 +156,25 @@ sync_into_aa() {
 
   mkdir -p outputs notebooks
 
-  local ex="$DEST/configs/example.yaml"
+  local ex="$DEST/configs/env.example.yaml"
   if [[ -f "$ex" ]]; then
     mkdir -p configs
-    if [[ ! -f configs/local.yaml ]]; then
-      cp "$ex" configs/local.yaml
-      log "configs/local.yaml 생성 — 운영 실값을 채우세요"
+    if [[ ! -f configs/env.yaml ]]; then
+      # 옛 이름을 쓰던 작업 폴더가 있다. 그대로 두면 채워둔 실값이 무시된 채
+      # 빈 env.yaml 로 돌아서, 설정을 고쳤는데 안 먹는 상태가 된다.
+      # 자동으로 옮기지 않는다 - 실값이 든 유일한 파일이라 사람이 확인해야 한다.
+      if [[ -f configs/local.yaml ]]; then
+        warn "configs/local.yaml 이 있습니다. 이름이 env.yaml 로 바뀌었습니다:"
+        warn "    mv configs/local.yaml configs/env.yaml"
+      fi
+      cp "$ex" configs/env.yaml
+      log "configs/env.yaml 생성 — 운영 실값을 채우세요"
     else
-      log "configs/local.yaml exists — kept"
+      log "configs/env.yaml exists — kept"
       local missing
-      missing=$(comm -23 <(yaml_keys "$ex") <(yaml_keys configs/local.yaml) | tr '\n' ' ')
+      missing=$(comm -23 <(yaml_keys "$ex") <(yaml_keys configs/env.yaml) | tr '\n' ' ')
       missing="${missing%"${missing##*[! ]}"}"
-      [[ -z "$missing" ]] || warn "example.yaml 에만 있는 키: $missing"
+      [[ -z "$missing" ]] || warn "env.example.yaml 에만 있는 키: $missing"
     fi
   fi
 

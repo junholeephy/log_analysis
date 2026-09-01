@@ -23,8 +23,8 @@ logs/
 taxonomy*.txt
 
 # 운영 실값
-configs/local.yaml
-configs/local.example.yaml
+configs/env.yaml
+configs/local.env.example.yaml
 .env
 
 # 이식 중계 clone (AA 쪽에서 쓰지만 여기서도 막아 둔다)

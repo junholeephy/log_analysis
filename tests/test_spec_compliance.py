@@ -56,7 +56,7 @@ def test_no_json_fixtures_are_tracked():
 
 def test_local_config_is_not_tracked():
     """운영 실값이 밖으로 나가면 안 된다."""
-    bad = [f for f in tracked() if "local.yaml" in f or f.endswith(".env")]
+    bad = [f for f in tracked() if "env.yaml" in f or f.endswith(".env")]
     assert not bad, f"운영 설정이 추적되고 있다: {bad}"
 
 
@@ -97,7 +97,7 @@ def test_run_summary_lines_fit_eighty_columns():
     from ragdiag.summary import Conditions, RunSummary, display_width
 
     cond = Conditions()
-    cond.add("설정", "configs/local.yaml", note="4개 값을 덮어씀")
+    cond.add("설정", "configs/env.yaml", note="4개 값을 덮어씀")
     cond.add("백엔드", "local", "설정 llm.backend")
     cond.add("주소", "http://some-rather-long-internal-host.example:8000", "환경변수 LLM_API_URL")
     cond.add("모델", "qwen3.5-397b-a17b-instruct-2507", "설정 llm.model")
@@ -230,7 +230,7 @@ def test_version_is_never_blank():
 # ---------------------------------------------------------------------------
 
 def test_example_config_is_committed():
-    assert "configs/example.yaml" in tracked()
+    assert "configs/env.example.yaml" in tracked()
 
 
 def test_sync_script_is_committed_and_executable():
@@ -287,7 +287,7 @@ def _fake_repo(tmp_path, with_launcher=True, extra_req=""):
     (bb / "src" / "somepkg").mkdir(parents=True)
     (bb / "src" / "somepkg" / "__init__.py").write_text("", encoding="utf-8")
     (bb / "configs").mkdir()
-    (bb / "configs" / "example.yaml").write_text("a: 1\n", encoding="utf-8")
+    (bb / "configs" / "env.example.yaml").write_text("a: 1\n", encoding="utf-8")
     (bb / "requirements.txt").write_text("pydantic>=2.0\n" + extra_req, encoding="utf-8")
     (bb / "scripts" / "sync.sh").write_text(
         (ROOT / "scripts/sync.sh").read_text(encoding="utf-8"), encoding="utf-8")
@@ -469,15 +469,15 @@ def test_sync_keeps_local_yaml_and_names_the_new_keys(tmp_path):
     subprocess.run(["git", "-C", str(bb), "tag", "v1"], check=True)
     aa = _fresh_aa(tmp_path, bb)
     _sync(aa, bb, "v1")
-    (aa / "configs" / "local.yaml").write_text("a: 운영 환경실값\n", encoding="utf-8")
+    (aa / "configs" / "env.yaml").write_text("a: 운영 환경실값\n", encoding="utf-8")
 
-    (bb / "configs" / "example.yaml").write_text("a: 1\nb: 2\n", encoding="utf-8")
+    (bb / "configs" / "env.example.yaml").write_text("a: 1\nb: 2\n", encoding="utf-8")
     for a in (["add", "-A"], ["commit", "-q", "-m", "key"], ["tag", "v2"]):
         subprocess.run(["git", "-C", str(bb), *a], check=True)
 
     out = _sync(aa, bb, "v2")
     assert out.returncode == 0, out.stderr
-    assert (aa / "configs" / "local.yaml").read_text(encoding="utf-8") == "a: 운영 환경실값\n"
+    assert (aa / "configs" / "env.yaml").read_text(encoding="utf-8") == "a: 운영 환경실값\n"
     assert "b" in out.stderr, "example 에만 있는 키를 알려줘야 한다\n" + out.stderr
 
 

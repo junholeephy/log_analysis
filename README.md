@@ -30,7 +30,7 @@
 | | 무엇 |
 |---|---|
 | `src/ragdiag/contracts.py` | **입력 계약.** 운영 환경에서 회수한 포맷 정보가 도착하는 유일한 지점 |
-| `configs/example.yaml` | **모든 설정 키.** 운영 실값은 `AA/configs/local.yaml` |
+| `configs/env.example.yaml` | **모든 설정 키.** 운영 실값은 `AA/configs/env.yaml` |
 | `src/ragdiag/fixtures/synth.py` | **가짜 데이터는 파일이 아니라 코드.** `generate(n, seed)` 가 런타임에 만든다 |
 | `scripts/sync.sh` | 이식. `.git` 도 데이터도 넘기지 않는다 (규격 부록 A 전문) |
 | `docs/insights/` | 운영 환경에서 본 것을 적어 오는 자리 |
@@ -54,7 +54,7 @@ labels:
   emotion: configs/emotion_taxonomy.md
 ```
 
-두 파일은 `.gitignore` 에 있다. 운영 환경에서는 `{AA}/configs/` 에 두고 `local.yaml` 이
+두 파일은 `.gitignore` 에 있다. 운영 환경에서는 `{AA}/configs/` 에 두고 `env.yaml` 이
 가리키게 한다 — `sync.sh` 가 `{AA}/{BB}` 를 통째로 지웠다 다시 만들기 때문에
 **운영 자산은 `{AA}/{BB}` 밖에 둬야 한다.**
 
@@ -75,7 +75,7 @@ labels:
 
 ```bash
 python src/run.py --conv-data <로그> --filter-data <필터> --output-dir <출력>
-python src/run.py --config configs/local.yaml --dry-run   # 설정 파일로도 된다
+python src/run.py --config configs/env.yaml --dry-run   # 설정 파일로도 된다
 python src/run.py --golden                                # 3단계 판정 품질
 python src/run.py --legacy-regression                     # 회귀 기준선
 python -m pytest tests/ -q                                # LLM 없이 도는 전부
@@ -145,14 +145,14 @@ output/run_summary_20260831-153708.txt     RUN SUMMARY 사본
 대시보드는 `--result` 를 생략하면 `--output-dir` 에서 **가장 최근 것**을 고르고,
 다른 실행이 몇 건 더 있는지 화면에 적는다.
 
-경로를 매번 치기 싫으면 설정에 넣고 `--config configs/local.yaml` 만 준다.
+경로를 매번 치기 싫으면 설정에 넣고 `--config configs/env.yaml` 만 준다.
 CLI 인자가 설정을 덮어쓰므로 한 번만 다르게 돌려볼 때도 섞어 쓸 수 있다.
 
 규격이 적은 `PYTHONPATH` 형태도 그대로 된다. `src/run.py` 가 하는 일이 그것뿐이라
 둘은 같은 것이다.
 
 ```bash
-PYTHONPATH=log_analysis/src python -m ragdiag --config configs/local.yaml
+PYTHONPATH=log_analysis/src python -m ragdiag --config configs/env.yaml
 ```
 
 **어느 쪽이든 패키지를 venv 에 설치하지 않는다.** 공용 venv 를 오염시키지 않고 사본
@@ -169,7 +169,7 @@ PYTHONPATH=log_analysis/src python -m ragdiag --config configs/local.yaml
 | `.cache/` | **LLM 판정 응답.** 실데이터에서 뽑은 관측·인용이 그대로 들어 있다 | 판단 필요 |
 | `data/` | 실데이터 | 대개 아니다 |
 | `output/` | 분류 결과 · RUN SUMMARY (파일명에 시각) | 남기고 싶을 수 있다 |
-| `configs/local.yaml` | 운영 실값 (경로·주소) | 판단 필요 |
+| `configs/env.yaml` | 운영 실값 (경로·주소) | 판단 필요 |
 
 `AA/log_analysis` 사본이 커밋되는 것은 목적이지만 — "어떤 코드로 돌렸는지"가
 남는 유일한 형태다 — 나머지는 의도한 것만 남기는 편이 낫다. 특히 `.cache/` 는
@@ -186,7 +186,7 @@ EOF
 **태그 없이 실행하지 않는다.** 결과 파일이 반출되지 않으므로 운영 환경에 남은 사본이
 "어떤 코드로 돌렸는지"를 알려주는 유일한 형태다.
 
-`sync.sh` 가 지키는 것 — `configs/local.yaml` 은 있으면 **절대 건드리지 않고**
+`sync.sh` 가 지키는 것 — `configs/env.yaml` 은 있으면 **절대 건드리지 않고**
 example 에만 있는 키를 경고한다(모르고 지나가면 조용히 기본값으로 돈다).
 데이터 파일이 사본에 섞이면 **사본을 지우고** 실패로 끝낸다.
 
@@ -653,7 +653,7 @@ export LLM_API_KEY=<키>
 #   그 디렉터리는 sync 때마다 지워진다.
 #     {AA}/configs/query_taxonomy.md      형식: A. 이름 -> 점수
 #     {AA}/configs/emotion_taxonomy.md
-#   그리고 configs/local.yaml 에:
+#   그리고 configs/env.yaml 에:
 #     labels:
 #       query:   configs/query_taxonomy.md
 #       emotion: configs/emotion_taxonomy.md
@@ -669,14 +669,14 @@ python log_analysis/src/run.py --dry-run
 #   합성 데이터로 끝까지. 여기서 깨지면 환경 문제이지 데이터 문제가 아니다.
 
 # ── 5. 실데이터 ──────────────────────────────────────────────────────────
-python log_analysis/src/run.py --config configs/local.yaml \
+python log_analysis/src/run.py --config configs/env.yaml \
     --conv-data <실데이터> --turns <고른_턴_목록> --limit 50
 #   --turns 는 필터를 그쪽에 두고 고른 턴만 받는 경로다 (filter.md).
 #   이 저장소의 필터를 쓸 거면 --filter-data <필터> 로 바꾼다.
 #   RUN SUMMARY 의 contract 줄이 첫 사이클의 실제 수확이다.
 #   계약이 깨끗해진 뒤에 전체로 간다 — 틀린 계약 위의 숫자는 믿을 수 없다.
 
-python log_analysis/src/run.py --config configs/local.yaml \
+python log_analysis/src/run.py --config configs/env.yaml \
     --conv-data <실데이터> --turns <고른_턴_목록>
 #   결과는 ./output 에 끝난 시각이 붙어 쌓인다.
 
@@ -899,7 +899,7 @@ scripts/
   sync.sh          이식 (규격 부록 A 전문 + 안내 문구만 갈라짐)
   legacy_run.py    구 파이프라인 (회귀 기준선)
 
-configs/example.yaml   모든 설정 키
+configs/env.example.yaml   모든 설정 키
 docs/insights/         운영 환경에서 본 것을 적어 오는 자리
 ```
 

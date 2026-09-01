@@ -177,7 +177,7 @@ def load(path: Optional[str | Path]) -> Config:
     if not file.exists():
         raise ConfigError(
             f"설정 파일이 없습니다: {file}\n"
-            f"  configs/example.yaml 을 복사해 쓰세요.")
+            f"  configs/env.example.yaml 을 복사해 쓰세요.")
 
     try:
         import yaml

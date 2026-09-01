@@ -42,7 +42,7 @@ def restore_settings():
 
 
 def write(tmp_path, text: str):
-    path = tmp_path / "local.yaml"
+    path = tmp_path / "env.yaml"
     path.write_text(textwrap.dedent(text), encoding="utf-8")
     return path
 
@@ -55,7 +55,7 @@ def test_missing_config_file_names_the_path(tmp_path):
     with pytest.raises(ConfigError) as e:
         load(tmp_path / "없는파일.yaml")
     assert "없는파일.yaml" in str(e.value)
-    assert "example.yaml" in str(e.value), "어떻게 만들지 알려줘야 한다"
+    assert "env.example.yaml" in str(e.value), "어떻게 만들지 알려줘야 한다"
 
 
 def test_unknown_key_is_rejected_with_a_suggestion(tmp_path):
@@ -226,15 +226,15 @@ def test_example_yaml_passes_its_own_validation():
     """커밋된 예시가 스스로 통과하지 못하면 복사해 쓸 수 없다."""
     import pathlib
 
-    example = pathlib.Path(__file__).resolve().parents[1] / "configs" / "example.yaml"
-    assert example.exists(), "configs/example.yaml 이 있어야 한다"
+    example = pathlib.Path(__file__).resolve().parents[1] / "configs" / "env.example.yaml"
+    assert example.exists(), "configs/env.example.yaml 이 있어야 한다"
     tree = yaml.safe_load(example.read_text(encoding="utf-8"))
     problems = validate(flatten(tree))
     assert not problems, "\n".join(problems)
 
 
 def test_example_yaml_lists_every_key():
-    """규격: 모든 키가 example.yaml 에 등장한다.
+    """규격: 모든 키가 env.example.yaml 에 등장한다.
 
     없는 키는 운영 환경에서 "코드 한 줄만 고치면 되는데" 가 되는 자리다.
     """
@@ -242,11 +242,11 @@ def test_example_yaml_lists_every_key():
 
     from ragdiag.config import SPEC
 
-    example = pathlib.Path(__file__).resolve().parents[1] / "configs" / "example.yaml"
+    example = pathlib.Path(__file__).resolve().parents[1] / "configs" / "env.example.yaml"
     tree = yaml.safe_load(example.read_text(encoding="utf-8"))
     listed = set(flatten(tree))
     missing = set(SPEC) - listed
-    assert not missing, f"example.yaml 에 없는 키: {sorted(missing)}"
+    assert not missing, f"env.example.yaml 에 없는 키: {sorted(missing)}"
 
 
 def test_example_defaults_match_settings():
@@ -258,7 +258,7 @@ def test_example_defaults_match_settings():
 
     from ragdiag.config import TO_SETTINGS
 
-    example = pathlib.Path(__file__).resolve().parents[1] / "configs" / "example.yaml"
+    example = pathlib.Path(__file__).resolve().parents[1] / "configs" / "env.example.yaml"
     tree = yaml.safe_load(example.read_text(encoding="utf-8"))
     values = flatten(tree)
     mismatched = []

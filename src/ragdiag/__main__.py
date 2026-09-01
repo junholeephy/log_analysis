@@ -69,7 +69,7 @@ def make_backend(args, config=None, trace=None):
     """CLI 인자 > 설정 > 환경변수 순으로 고른다.
 
     trace(Conditions)를 주면 각 값이 **어디서 왔는지** 함께 적는다. 값만 찍으면
-    "왜 저 값이지"를 못 푼다 - 운영 환경에는 .bashrc 의 환경변수, AA/configs/local.yaml,
+    "왜 저 값이지"를 못 푼다 - 운영 환경에는 .bashrc 의 환경변수, AA/configs/env.yaml,
     CLI 플래그가 겹쳐 있고 셋 다 화면에 안 보인다. 어느 쪽이 이겼는지가 안 보이면
     설정을 고쳐도 안 먹는 이유를 알 수 없다.
     """
@@ -423,7 +423,7 @@ def main(argv=None, backend=None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    p.add_argument("--config", help="설정 YAML. configs/example.yaml 참고")
+    p.add_argument("--config", help="설정 YAML. configs/env.example.yaml 참고")
 
     p.add_argument("--conv-data", help="conv_eval JSON 경로 (설정을 덮어쓴다)")
     p.add_argument("--golden", action="store_true",
@@ -537,6 +537,15 @@ def main(argv=None, backend=None) -> int:
         return "기본값"
 
     conditions = Conditions()
+    # 지금 어느 파이썬으로 도는지. venv 경로는 설정 파일에 적을 수 없다 - 이미
+    # 돌고 있는 파이썬 안에서 venv 를 바꿀 수는 없어서다. 대신 여기 찍어두면
+    # 다음 사이클에 이 줄을 그대로 복사해서 activate 하면 된다.
+    # VIRTUAL_ENV 는 activate 해야 생긴다. venv 의 python 을 경로로 직접 부르면
+    # 비어 있어서 "venv 밖"으로 잘못 찍힌다 - prefix 로 본다.
+    in_venv = sys.prefix != sys.base_prefix
+    conditions.add("파이썬", sys.executable,
+                   f"venv {Path(sys.prefix).name}" if in_venv else "시스템 파이썬",
+                   "" if in_venv else "공용 환경을 건드리고 있을 수 있다")
     conditions.add("설정", config.source,
                    note=(f"{len(changed)}개 값을 덮어씀" if changed else "덮어쓴 값 없음"))
     conditions.add("로그", str(conv_data) if conv_data else "(합성 데이터)",
@@ -621,7 +630,7 @@ def main(argv=None, backend=None) -> int:
     if args.dry_run:
         conditions.add("백엔드", "(안 씀)", "--dry-run", "LLM 호출 없음")
         conditions.hint = (f"{config.source} 를 고친다" if config.values else
-                           "configs/example.yaml 을 복사해 --config 로 준다")
+                           "configs/env.example.yaml 을 복사해 --config 로 준다")
         print("\n" + conditions.render(), file=sys.stderr)
         summary.setup = conditions.compact()
         print(f"\n분류 대상 {len(selection)}턴 (LLM 호출 없음)", file=sys.stderr)
@@ -653,7 +662,7 @@ def main(argv=None, backend=None) -> int:
     conditions.add("동시", str(workers or settings.DEFAULT_WORKERS),
                    origin(args.workers, "run.workers", "--workers"))
     conditions.hint = (f"{config.source} 를 고친다" if config.values else
-                       "configs/example.yaml 을 복사해 --config 로 주거나 위 플래그로 덮어쓴다")
+                       "configs/env.example.yaml 을 복사해 --config 로 주거나 위 플래그로 덮어쓴다")
     print("\n" + conditions.render(), file=sys.stderr)
     print(f"분류 대상 {len(selection)}턴", file=sys.stderr)
 

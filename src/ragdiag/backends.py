@@ -248,6 +248,17 @@ class OpenAICompatBackend:
         if json_mode not in ("auto",) + JSON_MODES:
             raise JudgeError(f"알 수 없는 json_mode: {json_mode}")
         self.base_url = normalize_base_url(base_url)
+        # HTTP 헤더는 latin-1 로만 인코딩된다. 키에 한글이나 전각 문자가 섞이면
+        # 요청을 보내는 순간 UnicodeEncodeError 트레이스백이 그대로 튄다 -
+        # 설정 파일에 주석을 한글로 달다 값에 붙는 경우가 실제로 생긴다.
+        try:
+            str(api_key).encode("latin-1")
+        except UnicodeEncodeError:
+            bad = [c for c in str(api_key) if ord(c) > 255][:3]
+            raise JudgeError(
+                f"API 키에 쓸 수 없는 문자가 있습니다: {' '.join(bad)}\n"
+                "  HTTP 헤더는 ASCII 계열만 담을 수 있습니다. 설정의 llm.key 나 "
+                "LLM_API_KEY 를 확인하세요 (따옴표 안에 주석이 섞였을 수 있습니다).") from None
         self.api_key = api_key
         self.timeout = timeout
         # 사용자가 줘야 할 것을 URL과 키 두 개로 줄인다. 모델은 서버가 알고 있다.
@@ -562,10 +573,16 @@ def backend_from_env(
     url = base_url or env_first(URL_VARS)
     if not url:
         raise JudgeError(
-            "LLM 주소가 없습니다. 필요한 건 이 두 개뿐입니다:\n"
-            "  export LLM_API_URL=http://<서버>:8000\n"
-            "  export LLM_API_KEY=<키>\n"
-            f"  (인식하는 이름: {', '.join(URL_VARS)} / {', '.join(KEY_VARS)})"
+            "LLM 주소가 없습니다. 둘 중 하나로 주면 됩니다:\n\n"
+            "  1) 설정 파일 (한 번 적어두면 매번 export 하지 않아도 된다)\n"
+            "       llm:\n"
+            "         url: http://<서버>:8000\n"
+            "         key: <키>\n\n"
+            "  2) 환경변수\n"
+            "       export LLM_API_URL=http://<서버>:8000\n"
+            "       export LLM_API_KEY=<키>\n"
+            f"     (인식하는 이름: {', '.join(URL_VARS)}\n"
+            f"                    {', '.join(KEY_VARS)})"
         )
     return OpenAICompatBackend(
         base_url=url,
