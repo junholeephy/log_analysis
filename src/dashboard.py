@@ -264,7 +264,26 @@ def main() -> None:
     st.set_page_config(page_title="대화 로그 실패 분류", layout="wide")
     args = parse_args()
 
+    st.title("대화 로그 실패 분류")
+
+    # 결과는 실행마다 쌓인다 (파일 이름에 끝난 시각). 최신만 볼 수 있으면 설정을
+    # 바꿔가며 돌린 것들을 나란히 못 본다 - 대시보드를 다시 띄우지 않고 고른다.
+    runs = sorted(Path(args.output_dir).glob("conv_parsed_*.json"), reverse=True)
     path = Path(args.result)
+    with st.sidebar:
+        names = [str(r) for r in runs]
+        # --result 로 지목한 것이 이 디렉터리 밖일 수 있다. 목록에 없다고 최신으로
+        # 갈아치우면 인자가 조용히 무시된다 - 맨 앞에 넣어 그것이 기본이 되게 한다.
+        if str(path) not in names:
+            names.insert(0, str(path))
+        if names:
+            picked = st.selectbox(
+                "실행 결과", names, index=0,
+                format_func=lambda n: Path(n).stem.replace("conv_parsed_", ""),
+                help="파일 이름의 시각이 분류가 끝난 시각이다. 최신이 위에 온다")
+            path = Path(picked)
+        st.divider()
+
     if not path.exists():
         st.error(f"결과 파일이 없습니다: {path}\n\n"
                  "먼저 src/run.py 로 분류를 돌리세요.")
@@ -276,8 +295,7 @@ def main() -> None:
         st.warning("분류된 턴이 없습니다.")
         st.stop()
 
-    st.title("대화 로그 실패 분류")
-    others = len(sorted(Path(args.output_dir).glob("conv_parsed_*.json"))) - 1
+    others = len(runs) - 1
     stamp = f"  ·  다른 실행 {others}건 더 있음" if others > 0 else ""
     source = getattr(args, "config_source", "(기본값)")
     st.caption(f"{path}  ·  {len(df)}건{stamp}  ·  설정 {source}")
@@ -430,6 +448,26 @@ def main() -> None:
         st.warning(f"지어낸 인용이 {dropped}건 있다. 해당 케이스의 판정을 먼저 확인할 것.")
 
     # --- 분포 ---------------------------------------------------------------
+    # 절을 탭으로 가른다. 한 화면에 다 쌓으면 태블릿에서 계속 스크롤해야 하고,
+    # 어디가 끝이고 어디가 시작인지 알 수 없다. 사이드바 필터는 탭과 무관하게
+    # 계속 걸리므로 탭을 옮겨도 보고 있던 범위가 유지된다.
+    #
+    # **판정 건강은 탭 밖에 둔다.** 탭 안에 넣으면 건너뛸 수 있는데, 그 숫자가
+    # 나쁘면 나머지 집계를 믿을 수 없다는 것이 이 화면의 전제다.
+    tab_dist, tab_org, tab_gap, tab_case = st.tabs(
+        ["분포", "조직", "코퍼스 보강", "개별 케이스"])
+
+    with tab_dist:
+        _distribution(view)
+    with tab_org:
+        _by_org(view, org)
+    with tab_gap:
+        _corpus_gaps(view)
+    with tab_case:
+        _cases(view)
+
+
+def _distribution(view: pd.DataFrame) -> None:
     st.subheader("무엇이 얼마나")
     left, right = st.columns(2)
     with left:
@@ -441,7 +479,8 @@ def main() -> None:
         st.caption("type 별")
         st.bar_chart(view["type"].replace("", "(미분류)").value_counts(), horizontal=True)
 
-    # --- 교차표 -------------------------------------------------------------
+
+def _by_org(view: pd.DataFrame, org: dict) -> None:
     st.subheader("어느 팀이 무엇을 겪나")
     st.caption(
         "**이 표가 이 도구의 핵심이다.** case20(Retrieve 실패)는 '검색기가 못 찾음'과 "
@@ -490,12 +529,15 @@ def main() -> None:
             lambda _: share.map(heat), axis=None),
         use_container_width=True, column_config=case_tooltips(share.columns, numeric=False))
 
-    # --- 코퍼스 보강 목록 ---------------------------------------------------
-    #
-    # 부서로 먼저 묶으면 같은 요구가 부서 수만큼 쪼개진다. 그런데 **여러 부서가
-    # 같은 것에 막혔다는 사실이 가장 강한 신호다** - 실제로 "연차 이월 예외 조건"이
-    # 세 부서에서 나왔는데 부서별로 나누면 세 줄로 흩어져 안 보인다.
-    # 문서팀이 받는 것은 "쓸 문서 목록"이므로 요구를 축으로 세운다.
+
+def _corpus_gaps(view: pd.DataFrame) -> None:
+    """문서에 없어서 답할 수 없었던 것.
+
+    부서로 먼저 묶으면 같은 요구가 부서 수만큼 쪼개진다. 그런데 **여러 부서가
+    같은 것에 막혔다는 사실이 가장 강한 신호다** - "연차 이월 예외 조건"이 세
+    부서에서 나왔는데 부서별로 나누면 세 줄로 흩어져 안 보인다.
+    문서팀이 받는 것은 "쓸 문서 목록"이므로 요구를 축으로 세운다.
+    """
     gaps = view[view["case"].isin(["case20"]) & (view["없던것"] != "")]
     grouped = (gaps.groupby("원한것")
                .agg(건수=("질문", "size"),
@@ -507,26 +549,33 @@ def main() -> None:
 
     st.subheader(f"코퍼스 보강 목록 ({len(grouped)}종)")
     st.caption("문서에 없어서 답할 수 없었던 것. 문서팀에 그대로 넘길 수 있는 목록이다. "
-               "**여러 부서가 막힌 것이 위로 온다** — 그게 우선순위다.")
+               "**막힌 부서 수**로 정렬돼 있다 — 여러 부서가 같은 것에 막혔으면 "
+               "특정 부서 업무가 아니라 공통 문서가 비어 있다는 뜻이고, 그게 우선순위다.")
     if grouped.empty:
         st.info("해당 케이스가 없습니다.")
-    else:
-        if len(gaps) > len(grouped):
-            st.caption(f"턴 {len(gaps)}건이 요구 {len(grouped)}종으로 묶였다. "
-                       "판정자가 같은 요구를 조금 다르게 적으면 따로 잡히므로, "
-                       "비슷한 항목이 이웃해 있으면 한 문서로 묶어 볼 것.")
-        for _, row in grouped.iterrows():
-            tally = f" `×{row['건수']}`" if row["건수"] > 1 else ""
-            multi = " 🔥" if row["부서수"] > 1 else ""
-            st.markdown(
-                f"- **{row['원한것']}**{tally}{multi}  \n"
-                f"  <sub>{row['부서']} · 질문: {row['질문']}</sub>",
-                unsafe_allow_html=True)
-        if (grouped["부서수"] > 1).any():
-            st.caption("🔥 는 여러 부서가 같은 것에 막혔다는 뜻이다. "
-                       "특정 부서 업무가 아니라 **공통 문서가 비어 있다**는 신호다.")
+        return
 
-    # --- 케이스 사전 --------------------------------------------------------
+    if len(gaps) > len(grouped):
+        st.caption(f"턴 {len(gaps)}건이 요구 {len(grouped)}종으로 묶였다. "
+                   "판정자가 같은 요구를 조금 다르게 적으면 따로 잡히므로, "
+                   "비슷한 항목이 이웃해 있으면 한 문서로 묶어 볼 것.")
+
+    # 마크다운 목록이었다. 항목이 스무 개면 회색 잔글씨 마흔 줄이 되어 읽히지
+    # 않고, 정렬도 검색도 복사도 안 된다. 문서팀에 그대로 넘기는 목록이라
+    # 표가 맞다 - 정렬 축(막힌 부서 수)이 곧 우선순위다.
+    st.dataframe(
+        grouped[["원한것", "부서수", "건수", "부서", "질문"]],
+        use_container_width=True, hide_index=True,
+        column_config={
+            "원한것": st.column_config.TextColumn("필요한 문서", width="medium"),
+            "부서수": st.column_config.NumberColumn(
+                "막힌 부서", help="여러 부서가 같은 것에 막혔으면 공통 문서가 비어 있다"),
+            "건수": st.column_config.NumberColumn("턴"),
+            "부서": st.column_config.TextColumn("어느 부서", width="medium"),
+            "질문": st.column_config.TextColumn("대표 질문", width="large")})
+
+
+def _cases(view: pd.DataFrame) -> None:
     with st.expander(f"케이스 설명 — 이 데이터에 나온 {view['case'].nunique()}종"):
         st.caption("무엇이 아닌가까지 적었다. 헷갈리는 쌍(case3/case15, case4/case14, "
                    "case13/case17, case20/case22, case2/case12)에서 라벨이 갈린다.")
@@ -540,24 +589,88 @@ def main() -> None:
             for cid, n in counts.items()
         ]), use_container_width=True, hide_index=True)
 
-    # --- 개별 케이스 --------------------------------------------------------
     st.subheader("개별 케이스")
-    st.caption("집계만 보고 근거를 못 보면 '왜 이 라벨이지'에서 막힌다.")
-    table_view = view[["부서", "직급", "대화", "턴", "case", "case명",
-                       "신뢰도", "충족도", "근거활용", "질문"]]
-    # case 열은 값이 case3 이라 머리글에 툴팁을 달아도 소용없다. 값마다 다르므로
-    # 옆의 case명 열이 그 역할을 하고, 아래 "케이스 설명"이 전문을 편다.
-    st.dataframe(table_view, use_container_width=True, height=280,
-                 column_config={
-                     "case명": st.column_config.TextColumn(
-                         "case명", help="무엇이 아닌가까지는 아래 '케이스 설명'에 있다"),
-                     "질문": st.column_config.TextColumn("질문", width="large")})
+    st.caption("**행을 누르면** 그 케이스의 판정 근거가 아래에 펼쳐진다. "
+               "집계만 보고 근거를 못 보면 '왜 이 라벨이지'에서 막힌다.")
 
-    labels = [f"{r['대화']}:{r['턴']}  {tx.label(r['case'])}  {r['질문'][:40]}"
-              for _, r in view.iterrows()]
-    picked = st.selectbox("근거 펼쳐보기", range(len(labels)),
-                          format_func=lambda i: labels[i])
-    detail(view.iloc[picked])
+    # 열 열 개를 늘어놓으면 좁은 화면에서 질문이 끝까지 밀려 안 보인다.
+    # 고르는 데 필요한 것만 남기고 나머지는 아래 상세가 편다.
+    total = len(view)
+    state = st.session_state
+    state.setdefault("case_idx", 0)
+    # 표를 새 위젯으로 만들면 선택이 지워진다. 버튼으로 옮겼는데 표에는 옛 행이
+    # 계속 칠해져 있으면 어느 쪽이 지금 보고 있는 것인지 알 수 없다.
+    state.setdefault("case_nonce", 0)
+    # 필터가 바뀌면 행 수가 준다. 손대지 않으면 없는 행을 가리킨다.
+    state.case_idx = max(0, min(state.case_idx, total - 1))
+
+    # st.dataframe 의 선택은 **프로그램으로 못 옮긴다** - session_state 에 넣어도
+    # 조용히 무시된다(실제로 확인했다). 버튼으로 옮긴 자리에 표시가 따라오게
+    # 하려면 체크 상태를 우리가 쥐고 있어야 해서 data_editor 를 쓴다.
+    compact = view[["부서", "턴", "case명", "신뢰도", "질문"]].copy()
+    compact.insert(0, "보기", False)
+    compact.iloc[state.case_idx, 0] = True
+
+    edited = st.data_editor(
+        compact, use_container_width=True, height=280, hide_index=True,
+        key=f"cases-{state.case_nonce}",
+        disabled=[c for c in compact.columns if c != "보기"],
+        column_config={
+            "보기": st.column_config.CheckboxColumn(
+                "보기", help="체크한 행이 아래에 펼쳐진다. 이전/다음 버튼도 여기를 옮긴다"),
+            "case명": st.column_config.TextColumn("무엇이", width="medium"),
+            "신뢰도": st.column_config.TextColumn(
+                "신뢰도", help="낮음은 판정자의 사전지식에 의존한다"),
+            "질문": st.column_config.TextColumn(
+                "질문(정리)", width="large",
+                help="대명사와 생략을 푼 것. 사용자가 실제로 친 말은 아래 상세에 있다")})
+
+    # 새로 체크한 행이 있으면 그쪽으로 간다. 한 번에 하나만 켜지도록, 다음 실행에
+    # 데이터를 다시 만들면서 나머지가 꺼진다.
+    checked = [i for i, on in enumerate(edited["보기"]) if on]
+    moved_by_click = [i for i in checked if i != state.case_idx]
+    if moved_by_click:
+        state.case_idx = moved_by_click[0]
+        state.case_nonce += 1
+        st.rerun()
+
+    # 표에서 고르는 것만으로는 스무 건을 훑을 수 없다. 한 건 보고 다음 건으로
+    # 가는 것이 이 화면에서 가장 잦은 동작이라 버튼을 둔다.
+    if _navigate(state, total, "top"):
+        st.rerun()
+
+    detail(view.iloc[state.case_idx])
+
+    # 상세를 다 읽고 나면 화면 맨 아래다. 다음 건으로 가려고 표까지 다시 올라가는
+    # 것이 이 화면에서 제일 잦은 왕복이라 여기도 둔다.
+    st.divider()
+    if _navigate(state, total, "bottom"):
+        st.rerun()
+
+
+def _navigate(state, total: int, where: str) -> bool:
+    """이전 / 위치 / 다음. 눌렸으면 True.
+
+    같은 버튼을 위아래에 두므로 key 를 나눈다 - 라벨이 같은 위젯 둘은
+    streamlit 이 거절한다.
+    """
+    back, position, forward = st.columns([1, 2, 1])
+    moved = False
+    if back.button("← 이전", key=f"prev-{where}", use_container_width=True,
+                   disabled=state.case_idx <= 0):
+        state.case_idx -= 1
+        moved = True
+    position.markdown(f"**{state.case_idx + 1} / {total}**")
+    if forward.button("다음 →", key=f"next-{where}", use_container_width=True,
+                      disabled=state.case_idx >= total - 1):
+        state.case_idx += 1
+        moved = True
+    if moved:
+        # 표를 새 위젯으로 만든다. data_editor 는 사용자가 만진 것을 위젯 상태에
+        # 들고 있어서, 새로 그린 데이터보다 그쪽이 이긴다 - 그러면 버튼으로
+        # 옮겨도 체크가 옛 행에 남는다.
+        state.case_nonce += 1
+    return moved
 
 
 def detail(row: pd.Series) -> None:
@@ -579,6 +692,34 @@ def detail(row: pd.Series) -> None:
                    help=f"이번 실행의 LLM 호출 {row['LLM호출']}회. "
                         "0 이면 캐시에 있었거나 코드만으로 판정된 것이다.")
 
+    # 판정 대상인 답변과 사용자의 불만은 접어두면 안 된다. 이 패널은 "왜 이
+    # 라벨이지"에 답하는 자리인데, 무엇을 보고 판정했는지가 없으면 답이 안 된다.
+    # 전에는 "원본 로그" 접힘 상자 안에 있어서 한 번 더 눌러야 나왔다.
+    original = row["_원본"]
+    prior = original.get("pre_queries") or []
+
+    # 한 턴의 이야기를 시간순으로 늘어놓는다: 물었다 → 답했다 → 불만이다.
+    # 앞 질문을 caption 으로 흘리면 배경으로 읽혀서, 답변이 무엇에 대한
+    # 답이었는지가 안 보인다. 셋 다 상자에 넣되 색으로 역할을 가른다.
+    # 셋 중 답변이 제일 길고, 판정 대상이기도 하다. 같은 폭을 주면 답변만
+    # 여러 줄로 접히고 양옆은 비어서, 정작 봐야 할 것이 제일 읽기 나쁘다.
+    asked, said, complained = st.columns([1, 3, 1])
+    with asked:
+        st.markdown("**앞 질문**")
+        st.caption("이 질문에 대한 답이 판정 대상이다")
+        with st.container(border=True):
+            st.write(prior[-1] if prior else "—")
+        if len(prior) > 1:
+            st.caption(f"그 앞에 {len(prior) - 1}개 더 (아래 접힘 상자)")
+    with said:
+        st.markdown("**비판받은 답변**")
+        st.caption("이것이 판정 대상이다")
+        st.info(original.get("llm_ans_on_last_q", "") or "—")
+    with complained:
+        st.markdown("**사용자의 불만**")
+        st.caption("이 발화가 라벨을 정한다")
+        st.warning(original.get("current_query", "") or "—")
+
     st.info(f"**판정 근거** — {row['판정근거']}")
     if row["부가"]:
         st.caption(f"부가 케이스: {', '.join(row['부가'])} "
@@ -586,7 +727,7 @@ def detail(row: pd.Series) -> None:
     for note in row["주의"]:
         st.warning(note, icon="⚠️")
 
-    left, right = st.columns(2)
+    left, right, third = st.columns(3)
     with left:
         st.markdown("**Step 1 · 관측** — 문서를 주지 않고 사용자 쪽 신호만 본다")
         st.json({"정리된 질문": row["질문"], "원한 것": row["원한것"],
@@ -604,23 +745,39 @@ def detail(row: pd.Series) -> None:
                 st.caption(f"없던 것: {row['없던것']}")
         else:
             st.caption("도메인 질문이 아니거나 내용 불만이 아니어서 판정하지 않았다.")
+    with third:
+        # Step 1·2 는 자기 칸이 있는데 Step 3 만 지표 하나로 끝났다. 무엇을
+        # 봤고 무슨 뜻인지가 없으면 case22 와 case18 이 왜 갈렸는지 알 수 없다.
+        st.markdown("**Step 3 · 근거 활용** — 질문과 불만을 주지 않고 답변과 문서만 본다")
+        used = row["근거활용"]
+        meaning = {"used": "문서를 썼다. 그런데도 불만이면 기대와 다른 것이다",
+                   "ignored": "문서에 답이 있는데 답변이 쓰지 않았다 (case22)",
+                   "contradicted": "답변이 문서와 어긋나는 주장을 했다 (case18)"}
+        if used:
+            st.metric("answer_used_rag", used)
+            st.caption(meaning.get(used, ""))
+        else:
+            st.caption("충족도가 sufficient 이고 인용이 살아남았을 때만 돈다. "
+                       "여기까지 오지 않았다.")
 
     if row["검증"]:
         st.markdown("**코드 검증** — LLM 없이 판정된 것들")
         st.dataframe(pd.DataFrame(row["검증"]), use_container_width=True)
 
-    with st.expander("원본 로그"):
-        original = row["_원본"]
-        st.markdown("**이전 질문들**")
-        for q in original.get("pre_queries", []):
-            st.markdown(f"- {q}")
-        st.markdown("**비판받은 답변**")
-        st.code(original.get("llm_ans_on_last_q", ""), language=None)
-        st.markdown("**사용자의 불만**")
-        st.code(original.get("current_query", ""), language=None)
-        st.markdown(f"**그때 검색된 문서** ({len(original.get('chunk_data', []))}개)")
-        for i, chunk in enumerate(original.get("chunk_data", [])):
-            st.markdown(f"`{i}` {chunk}")
+    # 답변·불만은 위로 올렸다. 여기 남는 것은 부피가 큰 것들이다.
+    chunks = original.get("chunk_data", [])
+    with st.expander(f"그때 검색된 문서 {len(chunks)}개 · 이전 질문 {len(prior)}개"):
+        if prior:
+            st.markdown("**이전 질문들**")
+            for q in prior:
+                st.markdown(f"- {q}")
+        if chunks:
+            st.markdown("**검색된 문서** — Step 2 가 이것만 보고 충족도를 판정했다")
+            for i, chunk in enumerate(chunks):
+                st.markdown(f"`{i}` {chunk}")
+        else:
+            st.caption("검색 결과가 0건이다. 서비스가 '검색 없이 답할 수 있다'고 "
+                       "판단했을 수 있다 (case21).")
 
 
 if __name__ == "__main__":

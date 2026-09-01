@@ -532,3 +532,266 @@ def test_ratio_table_shows_the_count_too(result_file):
     assert ratios, f"비율에 건수가 없다. 본 것: {sorted(set(cells))[:12]}"
     # 0 건은 0% 로 채우지 않는다 - 빈 칸이 많으면 눈이 갈 데를 못 찾는다.
     assert "0% (0)" not in cells
+
+
+# ---------------------------------------------------------------------------
+# 화면 배치 — 태블릿에서 읽히는가
+# ---------------------------------------------------------------------------
+
+def test_sections_are_split_into_tabs(result_file):
+    """한 화면에 다 쌓으면 계속 스크롤해야 하고 어디가 끝인지 알 수 없다."""
+    at = render(result_file)
+    assert not at.exception
+    assert [t.label for t in at.tabs] == ["분포", "조직", "코퍼스 보강", "개별 케이스"]
+
+
+def test_health_metrics_stay_outside_the_tabs(result_file):
+    """탭 안에 넣으면 건너뛸 수 있다. 이 숫자가 나쁘면 나머지를 믿을 수 없다는
+    것이 이 화면의 전제다."""
+    at = render(result_file)
+    labels = [m.label for m in at.metric]
+    assert "분류된 턴" in labels and "지어낸 인용" in labels
+
+    # 탭 안에서 렌더된 지표는 그 탭의 자식으로 잡힌다. 건강 지표는 아니어야 한다.
+    in_tabs = {m.label for t in at.tabs for m in t.metric}
+    assert "지어낸 인용" not in in_tabs, "건강 지표가 탭 안으로 들어갔다"
+
+
+def test_individual_cases_open_by_row_selection(result_file):
+    """행을 눌러 펼친다. 열 열 개를 늘어놓으면 질문이 끝까지 밀려 안 보인다."""
+    at = render(result_file)
+    assert not at.exception
+
+    frames = [f for t in at.tabs for f in t.dataframe]
+    picked = [f for f in frames if "질문" in getattr(f.value, "columns", [])]
+    assert picked, "개별 케이스 표를 못 찾았다"
+
+    columns = list(picked[0].value.columns)
+    assert len(columns) <= 7, f"열이 너무 많다: {columns}"
+    assert "충족도" not in columns, "상세가 펼 것을 표에 다시 넣었다"
+
+    # 아무것도 안 골라도 상세는 펼쳐져 있어야 한다 - 빈 화면이면 여기서
+    # 무엇을 하는 곳인지 알 수 없다.
+    assert any("판정 근거" in i.value for t in at.tabs for i in t.info), (
+        "첫 행 상세가 안 펼쳐졌다")
+
+
+def test_corpus_list_is_a_table_not_a_wall_of_text(result_file):
+    """마크다운 목록이면 항목 스무 개가 회색 잔글씨 마흔 줄이 된다.
+
+    문서팀에 그대로 넘기는 목록이라 정렬·검색·복사가 되는 표가 맞다.
+    """
+    at = render(result_file)
+    frames = [f for t in at.tabs for f in t.dataframe]
+    gap_tables = [f for f in frames
+                  if "부서수" in getattr(f.value, "columns", [])]
+    # 표가 있거나(케이스가 있을 때), 없으면 안내가 있어야 한다.
+    assert gap_tables or any("해당 케이스가 없" in i.value
+                             for t in at.tabs for i in t.info)
+
+    # 원시 HTML 을 쓰지 않는다. 잔글씨로 밀어넣기 시작하면 좁은 화면에서
+    # 읽히지 않는 것이 늘어난다 - st.caption 이 같은 일을 한다.
+    source = (ROOT / "src" / "dashboard.py").read_text(encoding="utf-8")
+    assert "unsafe_allow_html" not in source, "원시 HTML 이 남아 있다"
+
+
+def test_detail_shows_what_was_judged_without_a_click(result_file):
+    """이 패널은 "왜 이 라벨이지"에 답하는 자리다.
+
+    판정 대상인 답변과, 라벨을 정한 사용자 발화가 접힘 상자 안에 있으면
+    한 번 더 눌러야 나온다. 그 둘 없이는 답이 안 된다.
+    """
+    at = render(result_file)
+    assert not at.exception
+
+    texts = [b.value for t in at.tabs
+             for b in list(t.info) + list(t.warning) + list(t.markdown)]
+    joined = "\n".join(texts)
+    # 한 턴의 이야기가 시간순으로 서 있어야 한다: 물었다 → 답했다 → 불만이다.
+    assert "앞 질문" in joined, "답변이 무엇에 대한 답이었는지 안 보인다"
+    assert "비판받은 답변" in joined, "판정 대상이 안 보인다"
+    assert "사용자의 불만" in joined, "라벨을 정한 발화가 안 보인다"
+    assert "판정 근거" in joined
+
+    # 세 스텝이 다 자기 자리를 갖는다. Step 3 만 지표 하나로 끝나면
+    # case22 와 case18 이 왜 갈렸는지 알 수 없다.
+    for step in ("Step 1 · 관측", "Step 2 · 충족도", "Step 3 · 근거 활용"):
+        assert step in joined, f"{step} 이 없다"
+
+
+def test_bulky_things_stay_folded(result_file):
+    """검색된 문서는 부피가 크다. 펼쳐 두면 그 아래가 안 보인다."""
+    at = render(result_file)
+    labels = [e.label for t in at.tabs for e in t.expander]
+    assert any("검색된 문서" in l for l in labels), labels
+
+
+def test_prev_and_next_walk_the_cases(result_file):
+    """표에서 고르는 것만으로는 스무 건을 훑을 수 없다.
+
+    한 건 보고 다음 건으로 가는 것이 이 화면에서 가장 잦은 동작이다.
+    """
+    at = render(result_file)
+    tab = at.tabs[3]
+
+    def position():
+        return next(m.value for m in at.tabs[3].markdown
+                    if m.value.startswith("**") and "/" in m.value)
+
+    def button(key):
+        return next(b for b in at.tabs[3].button if b.key == key)
+
+    assert position().startswith("**1 /")
+    assert button("prev-top").disabled, "첫 건에서 이전이 눌린다"
+
+    button("next-top").click(); at.run()
+    assert position().startswith("**2 /")
+    button("next-top").click(); at.run()
+    assert position().startswith("**3 /")
+    button("prev-top").click(); at.run()
+    assert position().startswith("**2 /")
+
+    # 상세를 다 읽고 나면 화면 맨 아래다. 거기서도 옮길 수 있어야 한다.
+    button("next-bottom").click(); at.run()
+    assert position().startswith("**3 /")
+    # 위아래가 같은 자리를 가리킨다 - 따로 놀면 어느 것이 맞는지 알 수 없다.
+    shown = [m.value for m in at.tabs[3].markdown
+             if m.value.startswith("**") and "/" in m.value]
+    assert len(shown) == 2 and shown[0] == shown[1], shown
+
+
+def test_last_case_disables_next(result_file):
+    """끝에서 다음을 누르면 없는 행을 가리킨다."""
+    at = render(result_file)
+
+    def button(key):
+        return next(b for b in at.tabs[3].button if b.key == key)
+
+    for _ in range(50):
+        if button("next-top").disabled:
+            break
+        button("next-top").click(); at.run()
+    assert button("next-top").disabled, "끝인데 다음이 계속 눌린다"
+    assert button("next-bottom").disabled, "위아래 버튼 상태가 다르다"
+    assert not at.exception
+
+
+def test_result_file_can_be_picked_from_the_sidebar(result_file, tmp_path):
+    """실행마다 결과가 쌓인다. 최신만 볼 수 있으면 설정을 바꿔가며 돌린 것을
+    나란히 못 본다 - 대시보드를 다시 띄우지 않고 고른다."""
+    import shutil
+    import sys
+
+    import streamlit as st
+
+    out = tmp_path / "output"
+    out.mkdir()
+    for stamp in ("20260101-000000", "20260901-120000", "20260501-090000"):
+        shutil.copy(result_file, out / f"conv_parsed_{stamp}.json")
+
+    saved = sys.argv
+    sys.argv = ["dashboard.py", "--output-dir", str(out)]
+    try:
+        st.cache_data.clear()
+        at = AppTest.from_file(str(DASHBOARD), default_timeout=120)
+        at.run()
+    finally:
+        sys.argv = saved
+
+    assert not at.exception, [f"{e.type}: {e.message}" for e in at.exception]
+    picker = next(w for w in at.sidebar.selectbox if w.label == "실행 결과")
+    # 최신이 위에 오고 기본값이다 - 대개 방금 돌린 것을 본다.
+    assert picker.options[0] == "20260901-120000", picker.options
+    assert picker.value.endswith("conv_parsed_20260901-120000.json")
+
+
+def test_explicit_result_is_not_replaced_by_the_picker(result_file, tmp_path):
+    """--result 로 지목한 것이 --output-dir 밖일 수 있다.
+
+    목록에 없다고 최신으로 갈아치우면 인자가 조용히 무시된다 - 실제로 그랬고,
+    빈 결과를 넘겼는데 다른 실행이 떠서 테스트 둘이 깨졌다.
+    """
+    import json
+    import sys
+
+    import streamlit as st
+
+    outside = tmp_path / "따로_둔_결과.json"
+    outside.write_text(result_file.read_text(encoding="utf-8"), encoding="utf-8")
+
+    saved = sys.argv
+    sys.argv = ["dashboard.py", "--result", str(outside)]
+    try:
+        st.cache_data.clear()
+        at = AppTest.from_file(str(DASHBOARD), default_timeout=120)
+        at.run()
+    finally:
+        sys.argv = saved
+
+    assert not at.exception, [f"{e.type}: {e.message}" for e in at.exception]
+    picker = next(w for w in at.sidebar.selectbox if w.label == "실행 결과")
+    assert picker.value == str(outside), f"인자가 무시됐다: {picker.value}"
+    assert any(str(outside) in c.value for c in at.caption), "무엇을 보고 있는지 안 적혔다"
+
+
+def _checked_row(at):
+    frame = next(f.value for f in at.tabs[3].dataframe
+                 if "보기" in getattr(f.value, "columns", []))
+    return [i for i, on in enumerate(frame["보기"]) if on]
+
+
+def test_buttons_move_the_check_mark(result_file):
+    """버튼으로 옮겼는데 체크가 옛 행에 남으면 어느 쪽이 지금인지 알 수 없다.
+
+    st.dataframe 의 선택은 프로그램으로 못 옮긴다 - session_state 에 넣어도
+    조용히 무시된다. 그래서 체크 상태를 우리가 쥐는 data_editor 를 쓴다.
+    """
+    at = render(result_file)
+
+    def button(key):
+        return next(b for b in at.tabs[3].button if b.key == key)
+
+    assert _checked_row(at) == [0]
+
+    button("next-top").click(); at.run()
+    assert _checked_row(at) == [1], "위 버튼이 체크를 안 옮겼다"
+
+    button("next-bottom").click(); at.run()
+    assert _checked_row(at) == [2], "아래 버튼이 체크를 안 옮겼다"
+
+    button("prev-top").click(); at.run()
+    assert _checked_row(at) == [1]
+
+    # 체크·위치·펼쳐진 케이스가 한 곳을 가리켜야 한다.
+    position = next(m.value for m in at.tabs[3].markdown
+                    if m.value.startswith("**") and "/" in m.value)
+    assert position.startswith("**2 /"), position
+
+
+def test_only_one_row_is_checked(result_file):
+    """여러 개가 켜져 있으면 무엇이 펼쳐진 것인지 알 수 없다."""
+    at = render(result_file)
+
+    def button(key):
+        return next(b for b in at.tabs[3].button if b.key == key)
+
+    for _ in range(3):
+        if button("next-top").disabled:
+            break
+        button("next-top").click(); at.run()
+        assert len(_checked_row(at)) == 1, _checked_row(at)
+
+
+def test_the_judged_answer_gets_the_widest_column(result_file):
+    """셋 중 답변이 제일 길고 판정 대상이기도 하다.
+
+    같은 폭을 주면 답변만 여러 줄로 접히고 양옆은 비어서, 정작 봐야 할 것이
+    제일 읽기 나쁘다.
+    """
+    at = render(result_file)
+    assert not at.exception
+
+    weights = [round(c.proto.weight, 3) for c in at.tabs[3].get("column")
+               if getattr(getattr(c, "proto", None), "weight", None)]
+    assert [0.2, 0.6, 0.2] in [weights[i:i + 3] for i in range(len(weights) - 2)], (
+        f"1:3:1 인 줄이 없다: {weights}")
