@@ -5,7 +5,7 @@
 #   본 머신 ({BB} 저장소 루트에서)   bash scripts/sync.sh <tag>
 #       → 태그의 archive 를 임시로 풀어 점검만 한다. push 전에 돌린다
 #
-#   사내   ({AA} 루트에서)           bash .staging/{BB}/scripts/sync.sh <tag>
+#   운영     ({AA} 루트에서)           bash .staging/{BB}/scripts/sync.sh <tag>
 #       → 이식(교체·VERSION·디렉터리)을 하고 같은 점검을 한 번 더 한다
 #
 # {AA}·{BB} 의 실제 이름은 프로젝트마다 다르다. {BB} 는 이 스크립트의 위치에서 유도하고
@@ -58,7 +58,7 @@ scan() {  # scan <dir> <regex>
   grep -rInE "$2" "$1" 2>/dev/null | grep -v "^$1/scripts/sync\.sh:" | sed "s|^$1/||" || true
 }
 
-# 이식 표면 점검. 인자로 받은 디렉터리는 "실제로 사내에 도착할 것"이어야 한다.
+# 이식 표면 점검. 인자로 받은 디렉터리는 "실제로 운영 환경에 도착할 것"이어야 한다.
 # 두 모드가 이 함수를 공유하므로 검사 기준이 한 벌뿐이다.
 inspect_tree() {
   local d="$1" bad=0 hits f
@@ -77,7 +77,7 @@ inspect_tree() {
 
   hits=$(scan "$d" '^[[:space:]]*(import|from)[[:space:]]+(anthropic|openai)')
   if [[ -n "$hits" ]]; then
-    warn "사내에서 쓸 수 없는 API import (C8):"; printf '%s\n' "$hits" >&2; bad=1
+    warn "운영 환경에서 쓸 수 없는 API import (C8):"; printf '%s\n' "$hits" >&2; bad=1
   fi
 
   if [[ -f "$d/requirements.txt" ]]; then
@@ -132,7 +132,7 @@ next:
 EOF
 }
 
-# 사내 — 이식하고 같은 점검을 한 번 더 한다
+# 운영 환경 — 이식하고 같은 점검을 한 번 더 한다
 sync_into_aa() {
   local tag="$1"
 
@@ -161,7 +161,7 @@ sync_into_aa() {
     mkdir -p configs
     if [[ ! -f configs/local.yaml ]]; then
       cp "$ex" configs/local.yaml
-      log "configs/local.yaml 생성 — 사내 실값을 채우세요"
+      log "configs/local.yaml 생성 — 운영 실값을 채우세요"
     else
       log "configs/local.yaml exists — kept"
       local missing
@@ -204,7 +204,7 @@ main() {
   else
     die "실행 위치가 맞지 않습니다. 둘 중 하나여야 합니다:
        본 머신:  cd <{BB} 저장소> && bash scripts/sync.sh <tag>
-       사내:     cd <{AA}>        && bash .staging/$NAME/scripts/sync.sh <tag>
+       운영:     cd <{AA}>        && bash .staging/$NAME/scripts/sync.sh <tag>
      현재 cwd: $cwd"
   fi
 }
