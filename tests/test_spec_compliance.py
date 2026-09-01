@@ -76,6 +76,43 @@ def test_synth_is_deterministic():
     assert generate(seed=0) != generate(seed=1)
 
 
+def test_synth_default_stays_small_enough_for_a_smoke_run():
+    """`--dry-run` 이 이걸 쓴다. 기본을 키우면 운영 환경의 첫 점검이 수백 번의
+    LLM 호출로 바뀌고, 거기서는 그 비용을 되돌릴 방법이 없다.
+    """
+    from ragdiag.fixtures.synth import generate
+
+    payload = generate(seed=0)
+    turns = payload["metadata"]["total_turns"]
+    assert turns < 500, (
+        f"기본 합성 데이터가 {turns}턴이다. 규모는 cases= 로 키운다 - "
+        "기본값은 스모크가 감당할 크기여야 한다.")
+
+
+def test_synth_scales_without_losing_the_planted_signal():
+    """규모를 키워도 부서 편중이 남아야 한다.
+
+    화면에서 읽어낼 것이 있으려면 분포가 고르면 안 된다. 규모를 키우는 코드가
+    성향을 평평하게 만들면 500건짜리 화면이 7건짜리보다 오히려 말을 덜 한다.
+    """
+    from ragdiag.fixtures.synth import generate
+
+    big = generate(seed=0, cases=500)
+    turns = big["metadata"]["total_turns"]
+    assert turns > 500, f"cases=500 인데 {turns}턴뿐이다"
+
+    # 해외영업팀에 검색 실패를 몰아 두었다. 그 부서의 질문에는 해외 규정 문서가
+    # 붙고, 그 문서에는 답이 없다 - 그게 코퍼스 보강 화면이 세는 신호다.
+    def questions(dept):
+        return [t["user_question"] for u in big["users"] if u["db_dept_name"] == dept
+                for c in u["conversations"] for t in c["turns"]]
+
+    oversea = sum("해외" in q or "유럽" in q or "미주" in q for q in questions("해외영업팀"))
+    control = sum("해외" in q or "유럽" in q or "미주" in q for q in questions("인사팀"))
+    assert oversea > control * 2, (
+        f"해외영업팀 {oversea}건 vs 인사팀 {control}건 - 편중이 사라졌다")
+
+
 def test_synth_output_satisfies_the_contract():
     """계약이 바뀌면 합성 데이터도 따라 바뀌어야 한다.
 

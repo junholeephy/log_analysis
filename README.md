@@ -31,7 +31,7 @@
 |---|---|
 | `src/ragdiag/contracts.py` | **입력 계약.** 운영 환경에서 회수한 포맷 정보가 도착하는 유일한 지점 |
 | `configs/env.example.yaml` | **모든 설정 키.** 운영 실값은 `AA/configs/env.yaml` |
-| `src/ragdiag/fixtures/synth.py` | **가짜 데이터는 파일이 아니라 코드.** `generate(n, seed)` 가 런타임에 만든다 |
+| `src/ragdiag/fixtures/synth.py` | **가짜 데이터는 파일이 아니라 코드.** `generate(n, seed, cases)` 가 런타임에 만든다 |
 | `scripts/sync.sh` | 이식. `.git` 도 데이터도 넘기지 않는다 (규격 부록 A 전문) |
 | `docs/insights/` | 운영 환경에서 본 것을 적어 오는 자리 |
 | **[`TODO.md`](TODO.md)** | **작업 폴더에서 만들어야 하는 것.** 실행 전에 여기부터 |
@@ -903,6 +903,29 @@ python -m streamlit run log_analysis/src/dashboard.py -- \
 `--dept-class` · `--job-class` 는 없어도 돌아간다 — 부서·직급이 대분류로
 접히지 않고 로그 원본 값으로 나올 뿐이다.
 
+### 실데이터 없이 화면을 볼 때
+
+화면의 쓸모는 **분량에 달려 있다.** 몇 건으로는 필터가 좁히는지, 표가 읽히는지,
+훑어보기가 버티는지 알 수 없다 - 실제로 7건으로 보다가 다 괜찮아 보였다.
+
+```bash
+python - <<'EOF'
+import json, sys; sys.path.insert(0, "src")
+from ragdiag.fixtures.synth import generate
+json.dump(generate(seed=0, cases=500), open("demo_log.json", "w"), ensure_ascii=False)
+EOF
+
+python src/run.py --conv-data demo_log.json --output-dir output
+python -m streamlit run src/dashboard.py -- --dept-class <체계> --job-class <체계>
+```
+
+`cases` 는 **판정 대상 턴 수**, 곧 화면에 뜰 행 수다. 부서별 실패 성향은 규모와
+무관하게 유지되므로 500건에서도 "해외영업팀에 검색 실패가 몰린다"가 그대로 보인다.
+
+판정 캐시(`.cache/`)가 있으면 두 번째부터는 LLM 호출이 거의 없다. 500건이 쓰는
+서로 다른 프롬프트는 113개뿐이다 - 같은 질문에 여러 사람이 부딪히는 모양이라
+그렇고, 그 반복이 곧 코퍼스 보강 화면이 세는 신호다.
+
 `src/run.py` 와 같은 이유로 **`src/` 직하**에 있다. streamlit 은 스크립트가 있는
 디렉터리를 `sys.path[0]` 에 넣으므로, `src/ragdiag/` 안에 두면 그 디렉터리가
 올라가고 `src/` 는 안 올라가서 `import ragdiag` 가 자기 자신을 못 찾는다.
@@ -934,7 +957,7 @@ src/
     report.py      구 리포트 (회귀 기준선용)
 
     fixtures/
-      synth.py         generate(n, seed) — 가짜 데이터는 파일이 아니라 코드
+      synth.py         generate(n, seed, cases) — 가짜 데이터는 파일이 아니라 코드
       observations.py  Step 1 관측 골든셋 44건 (필드별 양성·음성)
       judgments.py     Step 2·3 판정 골든셋 18건 (충족도 10 · 근거 활용 8)
       synthetic.py     구 회귀셋 23건 + 구→신 case 매핑
