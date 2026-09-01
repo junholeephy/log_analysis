@@ -522,6 +522,66 @@ def test_config_inside_a_copy_is_refused(tmp_path, monkeypatch):
     assert f"cd {work}" in message, "실행 위치도 알려줘야 한다"
 
 
+def test_work_folder_config_is_found_without_the_flag(tmp_path):
+    """--config 를 안 줘도 작업 폴더의 설정을 쓴다.
+
+    운영 환경에서는 sync.sh 가 {AA}/configs/env.yaml 을 만들어 둔다. 그걸 매번
+    --config 로 가리키게 하면 한 번 빼먹는 순간 조용히 기본값으로 돈다.
+    """
+    from ragdiag.fixtures.synth import generate
+
+    log = tmp_path / "conv.json"
+    log.write_text(json.dumps(generate(n=1, seed=0), ensure_ascii=False), encoding="utf-8")
+    (tmp_path / "configs").mkdir()
+    (tmp_path / "configs" / "env.yaml").write_text("run:\n  workers: 6\n",
+                                                   encoding="utf-8")
+
+    proc = _run_entry(["--conv-data", "conv.json", "--dry-run"], cwd=tmp_path)
+    assert proc.returncode == 0, proc.stderr[-500:]
+    assert "자동 (작업 폴더)" in proc.stderr, proc.stderr[-400:]
+    assert "동시" in proc.stderr and "6" in proc.stderr
+
+
+def test_missing_work_folder_config_is_visible(tmp_path):
+    """없으면 기본값으로 도는 것은 그대로다. 다만 없다는 사실이 화면에 남아야 한다."""
+    from ragdiag.fixtures.synth import generate
+
+    log = tmp_path / "conv.json"
+    log.write_text(json.dumps(generate(n=1, seed=0), ensure_ascii=False), encoding="utf-8")
+
+    proc = _run_entry(["--conv-data", "conv.json", "--dry-run"], cwd=tmp_path)
+    assert proc.returncode == 0, proc.stderr[-500:]
+    assert "configs/env.yaml 이 없다" in proc.stderr, proc.stderr[-400:]
+
+
+def test_both_entry_points_look_in_the_same_place():
+    """run.py 가 못 찾으면 venv 를 안 갈아탄 채로 그 설정이 적용된다."""
+    import importlib.util
+
+    from ragdiag.__main__ import DEFAULT_CONFIG as from_main
+
+    spec = importlib.util.spec_from_file_location("_entry", ROOT / "src" / "run.py")
+    entry = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(entry)
+    assert str(from_main) == entry.DEFAULT_CONFIG
+
+
+def test_cli_flag_beats_the_config(tmp_path):
+    """CLI 가 최상위다. 한 번만 다르게 돌려보는 길이 막히면 안 된다."""
+    from ragdiag.fixtures.synth import generate
+
+    log = tmp_path / "conv.json"
+    log.write_text(json.dumps(generate(n=1, seed=0), ensure_ascii=False), encoding="utf-8")
+    (tmp_path / "configs").mkdir()
+    (tmp_path / "configs" / "env.yaml").write_text("run:\n  workers: 6\n",
+                                                   encoding="utf-8")
+
+    proc = _run_entry(["--conv-data", "conv.json", "--workers", "3", "--dry-run"],
+                      cwd=tmp_path)
+    assert proc.returncode == 0, proc.stderr[-500:]
+    assert "--workers" in proc.stderr, "어느 쪽이 이겼는지 화면에 남아야 한다"
+
+
 def test_no_config_means_defaults():
     config = load(None)
     assert config.values == {}

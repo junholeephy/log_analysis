@@ -80,6 +80,15 @@ python src/run.py --legacy-regression       # 회귀 기준선
 python -m pytest tests/ -q                  # LLM 없이 도는 전부
 ```
 
+> **우선순위는 CLI > 설정 > 환경변수 > 기본값이다.** `--config` 를 안 줘도
+> 실행 위치의 `configs/env.yaml` 을 자동으로 쓴다 — 작업 폴더에서 돌리면
+> `{AA}/configs/env.yaml` 이다. 매번 `--config` 로 가리키게 하면 한 번 빼먹는
+> 순간 조용히 기본값으로 돈다. 어느 쪽이 이겼는지는 실행 조건의 `←` 에 나온다.
+>
+> 환경변수(`LLM_API_URL` 등)는 설정보다 아래다. `.bashrc` 에 남은 옛 주소가
+> 설정을 이기면 안 되기 때문이다. CLI 는 위다 — 한 번만 다르게 돌려보는 길은
+> 열어 둔다.
+
 > **`paths.venv` 를 적으면 그 파이썬으로 갈아타서 실행한다.** `activate` 를 잊고
 > 시스템 파이썬으로 쳐도 알아서 넘어간다 — 갈아타기는 `src/run.py` 가 `ragdiag` 를
 > import 하기 **전에** 한다. 그러지 않으면 `pydantic` import 에서 먼저 죽어서

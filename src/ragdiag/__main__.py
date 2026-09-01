@@ -64,6 +64,10 @@ from ragdiag.summary import (
 # 작업 폴더 아래에 생긴다.
 DEFAULT_OUTPUT_DIR = "output"
 
+# --config 를 안 줬을 때 찾아보는 자리. 실행 위치 기준이라 작업 폴더에서 돌리면
+# {AA}/configs/env.yaml 이 된다 - 설정은 언제나 거기 둔다.
+DEFAULT_CONFIG = Path("configs/env.yaml")
+
 
 # 재실행 루프 방지. 갈아탄 파이썬이 또 다른 prefix 를 보고하면 무한히 돈다.
 _REEXEC_FLAG = "RAGDIAG_VENV_SWITCHED"
@@ -503,7 +507,12 @@ def main(argv=None, backend=None) -> int:
 
     # 설정은 계산 전에 읽고 검증한다. 30분 뒤에 키 하나로 죽으면 사이클 하나를 버린다.
     try:
-        config = load_config(args.config)
+        # --config 를 안 줘도 작업 폴더의 설정을 쓴다. 운영 환경에서는 sync.sh 가
+        # 거기 만들어 두므로, 이러면 실질적으로 필수가 되면서 아무것도 안 깨진다.
+        # 없으면 기본값으로 도는 것도 그대로다 - 다만 없다는 사실이 화면에 남는다.
+        config_path = args.config or (str(DEFAULT_CONFIG)
+                                      if DEFAULT_CONFIG.exists() else None)
+        config = load_config(config_path)
     except ConfigError as e:
         print(e, file=sys.stderr)
         return 2
@@ -594,8 +603,11 @@ def main(argv=None, backend=None) -> int:
         ("설정 paths.venv" if want_venv else
          (f"venv {Path(sys.prefix).name}" if in_venv else "시스템 파이썬")),
         "" if (in_venv or want_venv) else "공용 환경을 건드리고 있을 수 있다")
-    conditions.add("설정", config.source,
-                   note=(f"{len(changed)}개 값을 덮어씀" if changed else "덮어쓴 값 없음"))
+    conditions.add(
+        "설정", config.source,
+        "--config" if args.config else
+        ("자동 (작업 폴더)" if config.values else f"{DEFAULT_CONFIG} 이 없다"),
+        (f"{len(changed)}개 값을 덮어씀" if changed else "덮어쓴 값 없음"))
     conditions.add("로그", str(conv_data) if conv_data else "(합성 데이터)",
                    origin(args.conv_data, "paths.conv_data", "--conv-data"))
     if turns_path:
@@ -608,6 +620,13 @@ def main(argv=None, backend=None) -> int:
                        "" if filter_path else "진단 가능한 후속 턴 전부")
     conditions.add("출력", out_path,
                    origin(args.out or args.output_dir, "paths.output_dir", "--output-dir"))
+    # 캐시·동시는 --dry-run 에서도 적용된다. 백엔드 뒤에 두면 그때 블록이 반쪽이 된다.
+    use_cache = not args.no_cache and config.get("paths.cache") is not False
+    conditions.add("캐시", str(settings.CACHE_DIR) if use_cache else "(안 씀)",
+                   "--no-cache" if args.no_cache else
+                   origin(None, "paths.cache", ""))
+    conditions.add("동시", str(workers or settings.DEFAULT_WORKERS),
+                   origin(args.workers, "run.workers", "--workers"))
 
     # --- 계약 대조. 분류 전에 한다 -------------------------------------------
     # 여기서 나온 줄들이 운영 환경에서 이쪽으로 돌아오는 포맷 정보의 전부다.
@@ -703,12 +722,6 @@ def main(argv=None, backend=None) -> int:
         conditions.add("백엔드", type(backend).__name__, "주입됨 (tools/dev_run.py)")
         conditions.add("모델", backend.model, "주입됨")
 
-    use_cache = not args.no_cache and config.get("paths.cache") is not False
-    conditions.add("캐시", str(settings.CACHE_DIR) if use_cache else "(안 씀)",
-                   "--no-cache" if args.no_cache else
-                   origin(None, "paths.cache", ""))
-    conditions.add("동시", str(workers or settings.DEFAULT_WORKERS),
-                   origin(args.workers, "run.workers", "--workers"))
     conditions.hint = (f"{config.source} 를 고친다" if config.values else
                        "configs/env.example.yaml 을 복사해 --config 로 주거나 위 플래그로 덮어쓴다")
     print("\n" + conditions.render(), file=sys.stderr)

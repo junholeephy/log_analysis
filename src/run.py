@@ -27,13 +27,18 @@ from pathlib import Path
 _SWITCH_FLAG = "RAGDIAG_VENV_SWITCHED"
 
 
+# --config 를 안 줬을 때 찾아보는 자리. ragdiag.__main__ 과 같은 값이어야 한다 -
+# 여기서만 못 찾으면 venv 를 안 갈아탄 채로 그 설정이 적용된다.
+DEFAULT_CONFIG = "configs/env.yaml"
+
+
 def _config_path(argv: list[str]) -> str:
     for i, arg in enumerate(argv):
         if arg == "--config" and i + 1 < len(argv):
             return argv[i + 1]
         if arg.startswith("--config="):
             return arg.split("=", 1)[1]
-    return ""
+    return DEFAULT_CONFIG if Path(DEFAULT_CONFIG).exists() else ""
 
 
 def _peek_venv(path: str) -> str:
