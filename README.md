@@ -74,11 +74,19 @@ labels:
 검증된 기준선을 지우면 같은 종류의 회귀를 다음에 못 잡는다.
 
 ```bash
-python src/run.py --conv-data <로그> --filter-data <필터> --output-dir <출력>
-python src/run.py --config configs/env.yaml --dry-run   # 설정 파일로도 된다
-python src/run.py --golden                                # 3단계 판정 품질
-python src/run.py --legacy-regression                     # 회귀 기준선
-python -m pytest tests/ -q                                # LLM 없이 도는 전부
+python src/run.py --conv-data <로그> --turns <턴 목록> --output-dir <출력>
+python src/run.py --golden                  # 3단계 판정 품질
+python src/run.py --legacy-regression       # 회귀 기준선
+python -m pytest tests/ -q                  # LLM 없이 도는 전부
+```
+
+**설정 파일은 저장소에 없다.** `configs/env.yaml` 은 커밋되지 않으므로
+(`.gitignore`) 갓 clone 한 사본에는 예시만 있다. 매번 인자를 치기 싫으면 복사해서
+쓴다 — 개발 장비에서는 선택이고, 운영 환경에서는 `sync.sh` 가 알아서 만들어 준다.
+
+```bash
+cp configs/env.example.yaml configs/env.yaml   # 개발 장비에서는 직접 복사
+python src/run.py --config configs/env.yaml --dry-run
 ```
 
 ## 운영 장비에서

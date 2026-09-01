@@ -229,6 +229,26 @@ def test_version_is_never_blank():
 # 1.3 — 바뀔 만한 값이 전부 설정에 있다
 # ---------------------------------------------------------------------------
 
+def test_readme_does_not_hand_out_a_command_that_needs_an_uncommitted_file():
+    """갓 clone 한 사본에서 그대로 쳐서 실패하는 명령을 적어두지 않는다.
+
+    실제로 `--config configs/env.yaml` 을 그냥 적어 두었었다. 그 파일은 커밋되지
+    않으므로 clone 직후에는 없다. 이런 줄은 "설정을 안 만들었나" 가 아니라
+    "문서가 틀렸나" 를 먼저 의심하게 만든다.
+    """
+    doc = (ROOT / "README.md").read_text(encoding="utf-8")
+    for block in doc.split("```bash")[1:]:
+        block = block.split("```")[0]
+        if "--config configs/env.yaml" not in block:
+            continue
+        # log_analysis/ 를 경로에 두는 블록은 작업 폴더({AA}) 기준이다. 거기서는
+        # sync.sh 가 env.yaml 을 만들어 주므로 복사 단계가 필요 없다.
+        in_work_folder = "log_analysis/" in block or "{AA}" in block
+        assert "cp configs/env.example.yaml" in block or in_work_folder, (
+            "clone 직후에 없는 파일을 쓰는 명령이다. 복사 단계를 함께 적을 것:\n"
+            + block.strip()[:300])
+
+
 def test_only_the_example_config_is_committed():
     """운영 실값이 든 설정이 저장소에 들어오면 그게 유출이다 (C3).
 
