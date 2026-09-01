@@ -116,8 +116,6 @@ def flatten(tree: dict, prefix: str = "") -> dict[str, Any]:
 class Config:
     values: dict[str, Any] = field(default_factory=dict)
     source: str = "(기본값)"
-    # 죽을 정도는 아니지만 알려야 하는 것. 호출자가 화면에 찍는다.
-    warnings: list[str] = field(default_factory=list)
 
     def get(self, key: str, default: Any = None) -> Any:
         value = self.values.get(key)
@@ -237,14 +235,20 @@ def load(path: Optional[str | Path]) -> Config:
             "계산을 시작하지 않았습니다.\n"
             + "\n".join(f"  - {p}" for p in problems))
 
-    config = Config(values=values, source=str(file))
     copy = synced_copy_root(file)
     if copy is not None:
-        config.warnings.append(
-            f"이 설정은 사본 안에 있습니다 ({file}).\n"
-            f"    다음 sync 때 사본이 통째로 교체되면서 **지워집니다.**\n"
-            f"    작업 폴더로 옮기세요: {copy.parent / 'configs' / file.name}")
-    return config
+        # 경고로 끝내면 이번 실행은 돌고 다음 sync 에 사라진다. 그 사이에 값이
+        # {AA} 쪽과 갈라져도 알 방법이 없다 - 설정은 언제나 {AA} 에 둔다.
+        raise ConfigError(
+            f"설정이 사본 안에 있습니다: {file}\n"
+            f"  {copy} 는 sync 때마다 통째로 교체됩니다. 여기 둔 설정은 다음\n"
+            f"  교체에 사라지고, 그때까지 {copy.parent / 'configs' / file.name} 와\n"
+            f"  갈라져 있어도 드러나지 않습니다.\n\n"
+            f"  설정은 언제나 작업 폴더에 둡니다:\n"
+            f"    mv {file} {copy.parent / 'configs' / file.name}\n"
+            f"    cd {copy.parent}\n"
+            f"    python {copy.name}/src/run.py --config configs/{file.name} ...")
+    return Config(values=values, source=str(file))
 
 
 def _install_labels(config: "Config") -> list[str]:

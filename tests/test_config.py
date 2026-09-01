@@ -438,8 +438,11 @@ def test_dev_repo_is_not_treated_as_a_copy(tmp_path):
     assert synced_copy_root(repo / "configs" / "env.yaml", root=repo) is None
 
 
-def test_config_inside_a_copy_warns_but_still_loads(tmp_path, monkeypatch):
-    """죽이지는 않는다. 이번 실행은 멀쩡히 돌고, 다음 sync 때 사라진다는 것만 알린다."""
+def test_config_inside_a_copy_is_refused(tmp_path, monkeypatch):
+    """설정은 언제나 {AA} 에 둔다. 경고로 끝내면 이번 실행은 돌고 다음에 사라진다.
+
+    그 사이에 {AA} 쪽 값과 갈라져도 드러나지 않는다 - 계산을 시작하기 전에 죽는다.
+    """
     import ragdiag.config as mod
 
     work, copy = _fake_copy(tmp_path)
@@ -450,12 +453,13 @@ def test_config_inside_a_copy_warns_but_still_loads(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, "synced_copy_root",
                         lambda path, root=None: real(path, root=copy))
 
-    config = mod.load(cfg)
-    assert config.get("run.workers") == 2, "이번 실행은 돌아야 한다"
-    assert config.warnings, "지워진다는 것을 알려야 한다"
-    assert "지워집니다" in config.warnings[0]
-    assert str(work / "configs" / "env.yaml") in config.warnings[0], (
-        "어디로 옮기라는지까지 적어야 한다\n" + config.warnings[0])
+    with pytest.raises(ConfigError) as e:
+        mod.load(cfg)
+    message = str(e.value)
+    assert "사본 안에 있습니다" in message
+    assert f"mv {cfg} {work / 'configs' / 'env.yaml'}" in message, (
+        "어디로 옮기라는지 명령 그대로 적어야 한다\n" + message)
+    assert f"cd {work}" in message, "실행 위치도 알려줘야 한다"
 
 
 def test_no_config_means_defaults():
