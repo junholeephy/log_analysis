@@ -233,10 +233,66 @@ def main() -> None:
     st.caption(f"{path}  ·  {len(df)}건{stamp}")
 
     # --- 필터 ---------------------------------------------------------------
+    def _keep_valid(chosen: list[str], options: list[str]) -> list[str]:
+        """위층을 바꿔 후보에서 사라진 선택을 흘려보낸다.
+
+        대분류를 A 에서 B 로 갈면 A 밑에서 고른 중분류는 후보에 없다. 그대로
+        두면 아무 데이터에도 안 맞아 0건이 나오는데, 화면에는 여전히 선택된
+        것처럼 보인다.
+        """
+        return [c for c in chosen if c in options]
+
+    def cascade(label: str) -> "set[str] | None":
+        """대분류 → 중분류 → 소분류 로 좁혀 고른다. 각 층은 복수 선택.
+
+        위층을 고르면 아래층 후보가 거기 매인다. 팀이 수십 개일 때 소분류만
+        평평하게 늘어놓으면 고를 수 없기 때문이다.
+
+        분류 체계가 안 붙은 축은 원래대로 값 하나만 고르게 둔다 - 없는 층을
+        만들어 보여주면 고를 수 있는 것처럼 보인다.
+        """
+        from ragdiag.org import allowed_values, level_options, observed_tree
+
+        info = org.get(label)
+        table = info["table"] if info and info["field"] else None
+        values = [str(v) for v in df[label].unique()]
+
+        if table is None:
+            chosen = st.multiselect(label, sorted(values))
+            return set(chosen) if chosen else None
+
+        tree = observed_tree(table, values)
+
+        # 한 축의 세 층을 한 상자에 담는다. 층이 늘어날수록 사이드바가 길어지는데,
+        # 상자가 없으면 "직급 소분류" 가 부서 것인지 직급 것인지 스크롤하며 세게 된다.
+        # 라벨에서 축 이름을 뺄 수 있는 것도 이득이다 - 좁은 화면에서 줄바꿈이 준다.
+        with st.container(border=True):
+            st.markdown(f"**{label}**")
+
+            # 아래층은 위층을 고른 뒤에만 보인다. 셋을 한꺼번에 늘어놓으면 무엇이
+            # 무엇에 매이는지 안 보이고, 소분류만 골랐을 때 위층이 비어 있는
+            # 조합이 생겨 "왜 이것만 나오지"가 된다.
+            majors = st.multiselect("대분류", level_options(tree, [], [])[0],
+                                    key=f"{label}:대분류")
+
+            middles: list[str] = []
+            if majors:
+                options = level_options(tree, majors, [])[1]
+                middles = _keep_valid(
+                    st.multiselect("중분류", options, key=f"{label}:중분류"), options)
+
+            items: list[str] = []
+            if middles:
+                options = level_options(tree, majors, middles)[2]
+                items = _keep_valid(
+                    st.multiselect("소분류", options, key=f"{label}:소분류"), options)
+
+        return allowed_values(tree, majors, middles, items)
+
     with st.sidebar:
         st.header("좁히기")
-        depts = st.multiselect("부서", sorted(df["부서"].unique()))
-        grades = st.multiselect("직급", sorted(df["직급"].unique()))
+        depts = cascade("부서")
+        grades = cascade("직급")
         # 번호만 보고 무엇인지 아는 사람은 없다. 고르는 자리에 이름을 붙이고,
         # 고른 뒤에는 옆 케이스와 가르는 기준까지 펼쳐 준다.
         cases = st.multiselect("case", sorted(df["case"].unique()),
@@ -266,9 +322,11 @@ def main() -> None:
                  "다른 케이스와 같은 무게로 집계하면 안 되는 값이다.")
 
     view = df
+    # None 은 "안 좁혔다", 빈 집합은 "골랐는데 해당 없음"이다. 둘을 같게 다루면
+    # 조건을 걸었는데 전체가 나온다.
     for column, chosen in [("부서", depts), ("직급", grades),
-                           ("case", cases), ("신뢰도", confs)]:
-        if chosen:
+                           ("case", cases or None), ("신뢰도", confs or None)]:
+        if chosen is not None:
             view = view[view[column].isin(chosen)]
     if hide_low:
         view = view[view["신뢰도"] != "low"]

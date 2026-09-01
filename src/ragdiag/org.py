@@ -101,6 +101,65 @@ def load_classification(path: str | Path) -> Classification:
 
 
 # ---------------------------------------------------------------------------
+# 층으로 좁혀 고르기 — 대분류 → 중분류 → 소분류
+#
+# 팀이 수십 개면 소분류를 평평하게 늘어놓은 목록에서 고를 수 없다. 위층을 고르면
+# 아래층 후보가 거기 매이게 한다. 각 층은 여러 개를 동시에 고를 수 있다.
+#
+# 이 로직을 화면 밖에 두는 이유: streamlit 없이 시험할 수 있어야 한다. 고르는
+# 규칙이 틀리면 표가 조용히 다른 것을 세는데, 그건 화면만 봐서는 안 보인다.
+# ---------------------------------------------------------------------------
+
+
+def observed_tree(table: Optional["Classification"],
+                  values: list[str]) -> dict[str, dict[str, list[str]]]:
+    """대분류 → 중분류 → 소분류. **로그에 실제로 나온 값만** 담는다.
+
+    체계 전부를 늘어놓으면 이 데이터에 없는 팀까지 고르게 되어, 고른 뒤 0건이
+    나오고 사람은 필터를 의심한다. 체계에 없는 값은 UNMAPPED 로 모은다 -
+    버리면 "그 조직은 문제가 없다"로 잘못 읽힌다.
+    """
+    tree: dict[str, dict[str, list[str]]] = {}
+    for value in sorted({v for v in values if v}):
+        node = table.lookup(value) if table else None
+        major, middle = (node.major, node.middle) if node else (UNMAPPED, UNMAPPED)
+        tree.setdefault(major, {}).setdefault(middle, [])
+        if value not in tree[major][middle]:
+            tree[major][middle].append(value)
+    return tree
+
+
+def level_options(tree: dict, majors: list[str],
+                  middles: list[str]) -> tuple[list[str], list[str], list[str]]:
+    """각 층에 보여줄 후보. 위층에서 고른 것이 있으면 거기 매인다."""
+    major_options = sorted(tree)
+    live_majors = [m for m in (majors or major_options) if m in tree]
+
+    middle_options = sorted({mid for m in live_majors for mid in tree[m]})
+    live_middles = [m for m in (middles or middle_options) if m in middle_options]
+
+    item_options = sorted({item for m in live_majors
+                           for mid, items in tree[m].items() if mid in live_middles
+                           for item in items})
+    return major_options, middle_options, item_options
+
+
+def allowed_values(tree: dict, majors: list[str], middles: list[str],
+                   items: list[str]) -> Optional[set[str]]:
+    """세 층의 선택을 통과하는 **원본 값**들. 아무것도 안 골랐으면 None(전체).
+
+    None 과 빈 집합은 다르다 - 전자는 "안 좁혔다"이고 후자는 "골랐는데 해당 없음"
+    이다. 둘을 같게 다루면 조건을 걸었는데 전체가 나오는 일이 생긴다.
+    """
+    if not (majors or middles or items):
+        return None
+    if items:
+        return set(items)
+    _, _, candidates = level_options(tree, majors, middles)
+    return set(candidates)
+
+
+# ---------------------------------------------------------------------------
 # 진단 — 붙이기 전에 붙을지부터 본다
 # ---------------------------------------------------------------------------
 

@@ -249,3 +249,128 @@ def test_dashboard_picks_the_newest_result(tmp_path):
     shown = " ".join(c.value for c in at.caption)
     assert "20260831-153018" in shown, f"최신을 안 골랐다: {shown[:120]}"
     assert "다른 실행 2건" in shown, "몇 건이 더 있는지 알려줘야 한다"
+
+
+def test_sidebar_offers_three_levels_when_a_classification_is_given(result_file, tmp_path):
+    """대 → 중 → 소 로 좁혀 고른다. 팀이 수십 개면 평평한 목록에서는 못 고른다."""
+    import json
+    import sys
+
+    import streamlit as st
+
+    # 결과에 실제로 있는 부서로 체계를 만든다. 안 그러면 매칭률이 낮아
+    # detect_field 가 필드를 못 고르고 층이 아예 안 뜬다.
+    payload = json.loads(result_file.read_text(encoding="utf-8"))
+    depts = sorted({u.get("db_dept_name", "") for u in payload["analysis_results"]})
+    depts = [d for d in depts if d]
+    scheme = tmp_path / "dept.json"
+    scheme.write_text(json.dumps({"dept_classes": [
+        {"id": 1, "name": "본부A", "subclasses": [
+            {"name": "중분류A", "items": depts}]}]}, ensure_ascii=False),
+        encoding="utf-8")
+
+    saved = sys.argv
+    sys.argv = ["dashboard.py", "--result", str(result_file),
+                "--dept-class", str(scheme)]
+    # 다시 돌리는 것까지 argv 를 물고 있어야 한다. finally 뒤에서 at.run() 을
+    # 부르면 --dept-class 가 사라져 분류 체계가 안 붙고, 그러면 이 테스트는
+    # 계층이 아니라 평평한 선택기를 재게 된다.
+    try:
+        st.cache_data.clear()
+        at = AppTest.from_file(str(DASHBOARD), default_timeout=120)
+        at.run()
+        assert not at.exception, [f"{e.type}: {e.message}" for e in at.exception]
+        _check_levels(at)
+    finally:
+        sys.argv = saved
+
+
+def _check_levels(at):
+    # 축마다 상자 하나다. 라벨은 "대분류"로 같으므로 key 로 찾는다 - 그래서
+    # 위젯에 key 를 준 것이기도 하다 (같은 라벨 둘은 streamlit 이 거절한다).
+    def keys():
+        return {w.key for w in at.sidebar.multiselect}
+
+    def pick(key):
+        return next(w for w in at.sidebar.multiselect if w.key == key)
+
+    # 아래층은 위층을 고른 뒤에만 보인다. 셋을 한꺼번에 늘어놓으면 무엇이
+    # 무엇에 매이는지 안 보인다.
+    assert "부서:대분류" in keys()
+    assert "부서:중분류" not in keys(), "고르기 전부터 중분류가 보인다"
+
+    pick("부서:대분류").set_value([pick("부서:대분류").options[0]]); at.run()
+    assert "부서:중분류" in keys()
+    assert "부서:소분류" not in keys(), "중분류를 고르기 전부터 소분류가 보인다"
+
+    pick("부서:중분류").set_value([pick("부서:중분류").options[0]]); at.run()
+    assert "부서:소분류" in keys()
+
+    # 다른 축은 영향을 받지 않는다 - 상자를 나눈 이유다.
+    assert "직급:중분류" not in keys(), "부서를 골랐는데 직급 층이 열렸다"
+
+    # 위층을 비우면 아래층도 접힌다 - 안 그러면 안 보이는 조건이 남아 거른다.
+    pick("부서:대분류").set_value([]); at.run()
+    assert "부서:중분류" not in keys() and "부서:소분류" not in keys()
+
+
+def test_switching_the_major_drops_a_middle_that_no_longer_exists(result_file, tmp_path):
+    """대분류를 A 에서 B 로 갈면 A 밑에서 고른 중분류는 후보에 없다.
+
+    그대로 두면 아무 데이터에도 안 맞아 0건이 나오는데, 화면에는 여전히 선택된
+    것처럼 보인다. 조건을 걸었는데 결과가 비는 것보다 나쁜 건 왜 비는지 모르는 것이다.
+    """
+    import json
+    import sys
+
+    import streamlit as st
+
+    # 합성 생성기는 사용자를 부서별로 몰아서 내므로 앞쪽 몇 건은 한 부서다.
+    # 갈아치우는 상황을 보려면 부서가 둘이어야 해서, 한 사용자를 복제해 부서만 바꾼다.
+    payload = json.loads(result_file.read_text(encoding="utf-8"))
+    users = payload["analysis_results"]
+    twin = json.loads(json.dumps(users[0]))
+    twin["user_id"] = twin.get("user_id", "u") + "-twin"
+    twin["db_dept_name"] = "복제부서"
+    payload["analysis_results"] = users + [twin]
+
+    two_dept = tmp_path / "two_dept.json"
+    two_dept.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    first = users[0].get("db_dept_name", "")
+
+    scheme = tmp_path / "dept2.json"
+    scheme.write_text(json.dumps({"dept_classes": [
+        {"id": 1, "name": "본부A", "subclasses": [{"name": "중A", "items": [first]}]},
+        {"id": 2, "name": "본부B", "subclasses": [{"name": "중B", "items": ["복제부서"]}]},
+    ]}, ensure_ascii=False), encoding="utf-8")
+
+    saved = sys.argv
+    sys.argv = ["dashboard.py", "--result", str(two_dept), "--dept-class", str(scheme)]
+    try:
+        st.cache_data.clear()
+        at = AppTest.from_file(str(DASHBOARD), default_timeout=120)
+        at.run()
+
+        def pick(k):
+            return next(w for w in at.sidebar.multiselect if w.key == k)
+
+
+        pick("부서:대분류").set_value(["본부A"]); at.run()
+        pick("부서:중분류").set_value(["중A"]); at.run()
+        pick("부서:대분류").set_value(["본부B"]); at.run()
+
+        assert not at.exception, [f"{e.type}: {e.message}" for e in at.exception]
+        assert pick("부서:중분류").options == ["중B"]
+        assert at.metric[0].value != 0, "사라진 선택이 남아 0건이 됐다"
+    finally:
+        sys.argv = saved
+
+
+def test_sidebar_stays_flat_without_a_classification(result_file):
+    """체계가 없는 축에 없는 층을 만들어 보여주면 고를 수 있는 것처럼 보인다."""
+    at = render(result_file)
+    assert not at.exception
+    labels = [w.label for w in at.sidebar.multiselect]
+    keys = {w.key for w in at.sidebar.multiselect}
+    assert "부서" in labels, labels
+    assert "부서:대분류" not in keys
