@@ -13,6 +13,7 @@
 `def f(n=settings.X)` 는 나중에 settings.X 를 바꿔도 안 먹는다.
 """
 
+import json
 import textwrap
 from pathlib import Path
 
@@ -356,6 +357,45 @@ def test_filter_without_labels_runs_on_placeholders(tmp_path, placeholder_labels
     path = tmp_path / "f.json"
     path.write_text(json.dumps({"state": {"turn": "2-"}}), encoding="utf-8")
     assert load_filter(path).turn_buckets, "턴 조건만 쓰는 필터는 통과해야 한다"
+
+
+def test_must_fill_keys_are_marked_in_the_example():
+    """반드시 채울 넷만 표시한다. 경로는 실행할 때 --conv-data 로 줘도 된다.
+
+    30개 키가 대부분 null 인 파일에서 반드시 채울 것이 묻히면, 안 채운 채
+    돌리고 30분 뒤에 알게 된다.
+    """
+    text = (ROOT / "configs/env.example.yaml").read_text(encoding="utf-8")
+    marked = [l.split(":")[0].strip() for l in text.splitlines()
+              if "← 채우세요" in l and ":" in l and not l.strip().startswith("#")]
+    assert marked == ["venv", "url", "key", "model"], marked
+
+
+def test_configured_venv_is_compared_with_the_running_one(tmp_path, capsys):
+    """활성화는 못 한다. 다르다는 사실만 알린다.
+
+    공용 환경에서 activate 를 잊으면 다른 패키지 버전으로 돌면서 **결과만
+    조용히 달라진다** - 에러가 안 나는 것이 문제다.
+    """
+    import subprocess
+    import sys
+    from pathlib import Path as _Path
+
+    root = _Path(__file__).resolve().parents[1]
+    from ragdiag.fixtures.synth import generate
+
+    log = tmp_path / "conv.json"
+    log.write_text(json.dumps(generate(n=1, seed=0), ensure_ascii=False), encoding="utf-8")
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text("paths:\n  venv: /어딘가/없는/venv\n", encoding="utf-8")
+
+    proc = subprocess.run(
+        [sys.executable, str(root / "src" / "run.py"), "--conv-data", str(log),
+         "--config", str(cfg), "--dry-run"],
+        capture_output=True, text=True, cwd=tmp_path)
+    assert "설정과 다름" in proc.stderr, proc.stderr[-600:]
+    assert "activate" in proc.stderr, "무엇을 하라는지 적어야 한다"
+    assert "venv 가 아니다" in proc.stdout + proc.stderr, "RUN SUMMARY 에도 남겨야 한다"
 
 
 def test_no_config_means_defaults():

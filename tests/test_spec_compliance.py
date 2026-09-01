@@ -229,6 +229,33 @@ def test_version_is_never_blank():
 # 1.3 — 바뀔 만한 값이 전부 설정에 있다
 # ---------------------------------------------------------------------------
 
+def test_only_the_example_config_is_committed():
+    """운영 실값이 든 설정이 저장소에 들어오면 그게 유출이다 (C3).
+
+    실제로 한 번 뚫렸다. .gitignore 에 파일 이름을 하나씩 적어 두었는데 그중
+    하나가 일괄 치환으로 망가지면서 무시가 풀렸고, `git add -A` 가 그걸 그대로
+    커밋했다. 이름을 나열하는 대신 configs/*.yaml 을 막고 예시만 예외로 둔다.
+    """
+    committed = {f for f in tracked() if f.startswith("configs/") and f.endswith(".yaml")}
+    assert committed == {"configs/env.example.yaml"}, (
+        f"예시 말고 다른 설정이 커밋돼 있다: {sorted(committed - {'configs/env.example.yaml'})}")
+
+
+def test_ignore_rule_is_an_allowlist_not_a_namelist():
+    """이름을 하나씩 적으면 오타 한 번에 무시가 풀린다. 그때 조용히 커밋된다."""
+    rules = (ROOT / ".gitignore").read_text(encoding="utf-8")
+    assert "configs/*.yaml" in rules, "설정은 전부 막고 예시만 예외로 둘 것"
+    assert "!configs/env.example.yaml" in rules
+
+    # git 에게 직접 물어본다. 적어 놓은 것과 적용되는 것은 다를 수 있다.
+    for path, want_ignored in (("configs/env.yaml", True),
+                               ("configs/아무거나.yaml", True),
+                               ("configs/env.example.yaml", False)):
+        ignored = subprocess.run(["git", "check-ignore", "-q", "--no-index", path],
+                                 cwd=ROOT).returncode == 0
+        assert ignored is want_ignored, f"{path}: 무시={ignored}, 기대={want_ignored}"
+
+
 def test_example_config_is_committed():
     assert "configs/env.example.yaml" in tracked()
 

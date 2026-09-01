@@ -1,9 +1,0 @@
-# 이 장비에서 시험할 때 쓰는 설정. 사내에서는 AA/configs/local.yaml 이 이 자리다.
-paths:
-  conv_data: outputs/pseudo_conv_eval.json
-  filter: outputs/demo_filter.json
-  out: outputs/conv_parsed.json
-llm:
-  backend: cli
-run:
-  workers: 4

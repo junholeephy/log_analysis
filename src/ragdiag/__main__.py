@@ -543,9 +543,19 @@ def main(argv=None, backend=None) -> int:
     # VIRTUAL_ENV 는 activate 해야 생긴다. venv 의 python 을 경로로 직접 부르면
     # 비어 있어서 "venv 밖"으로 잘못 찍힌다 - prefix 로 본다.
     in_venv = sys.prefix != sys.base_prefix
-    conditions.add("파이썬", sys.executable,
-                   f"venv {Path(sys.prefix).name}" if in_venv else "시스템 파이썬",
-                   "" if in_venv else "공용 환경을 건드리고 있을 수 있다")
+    want_venv = config.get("paths.venv")
+    if want_venv and Path(want_venv).resolve() != Path(sys.prefix).resolve():
+        # 활성화까지는 못 한다. 다르다는 사실만 알린다 - 공용 환경에서
+        # activate 를 잊으면 다른 패키지 버전으로 돌면서 결과만 조용히 달라진다.
+        conditions.add("파이썬", sys.executable, "설정과 다름",
+                       f"설정은 {want_venv} — activate 를 잊었을 수 있다")
+        summary.notes.append(
+            f"설정의 venv 가 아니다. 설정 {want_venv} / 지금 {sys.prefix}")
+    else:
+        conditions.add("파이썬", sys.executable,
+                       "설정 paths.venv 와 일치" if want_venv else
+                       (f"venv {Path(sys.prefix).name}" if in_venv else "시스템 파이썬"),
+                       "" if (in_venv or want_venv) else "공용 환경을 건드리고 있을 수 있다")
     conditions.add("설정", config.source,
                    note=(f"{len(changed)}개 값을 덮어씀" if changed else "덮어쓴 값 없음"))
     conditions.add("로그", str(conv_data) if conv_data else "(합성 데이터)",
