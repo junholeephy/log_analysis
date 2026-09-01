@@ -472,13 +472,24 @@ def main() -> None:
     st.dataframe(table, use_container_width=True,
                  column_config=case_tooltips(table.columns))
 
-    share = table.drop(columns="계").div(table["계"], axis=0)
-    st.caption("행 내 비율 — 절대 건수가 아니라 성향을 본다 · "
-               "열 머리글에 마우스를 올리면 무슨 문제인지 나온다")
-    st.dataframe(share.style.format("{:.0%}").map(heat), use_container_width=True,
-                 column_config=case_tooltips(share.columns))
+    counts_only = table.drop(columns="계")
+    share = counts_only.div(table["계"], axis=0)
 
-    # --- 코퍼스 보강 목록 ---------------------------------------------------
+    # 비율만 있으면 "50%" 가 2건 중 1건인지 40건 중 20건인지 알 수 없다. 성향을
+    # 보려고 비율을 쓰지만, 몇 건 위에서 나온 비율인지 모르면 그 성향을 믿을
+    # 수 없다. 색은 비율이 정하고 괄호가 표본 크기를 말한다.
+    def with_count(ratio, count):
+        return pd.Series(
+            ["—" if not c else f"{p:.0%} ({int(c)})" for p, c in zip(ratio, count)],
+            index=ratio.index)
+
+    st.caption("행 내 비율 · 괄호는 건수 — 몇 건 위에서 나온 비율인지 함께 본다 · "
+               "열 머리글에 마우스를 올리면 무슨 문제인지 나온다")
+    st.dataframe(
+        share.combine(counts_only, with_count).style.apply(
+            lambda _: share.map(heat), axis=None),
+        use_container_width=True, column_config=case_tooltips(share.columns, numeric=False))
+
     # --- 코퍼스 보강 목록 ---------------------------------------------------
     #
     # 부서로 먼저 묶으면 같은 요구가 부서 수만큼 쪼개진다. 그런데 **여러 부서가

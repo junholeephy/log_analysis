@@ -511,3 +511,24 @@ def test_heatmap_headers_get_the_tooltip(result_file):
     # 제일 헷갈리는 열이다. "분류 실패"를 "문제 없음"으로 읽으면 집계를 잘못 읽는다.
     if "unclassified" in tips:
         assert "문제 없음" in tips["unclassified"], tips["unclassified"]
+
+
+def test_ratio_table_shows_the_count_too(result_file):
+    """35% 가 2건 중 1건인지 40건 중 20건인지 모르면 그 성향을 믿을 수 없다."""
+    import re
+
+    at = render(result_file)
+    assert not at.exception
+
+    # 열 이름으로 표를 고르지 않는다 - 데이터에 따라 case 열이 하나도 없고
+    # unclassified 만 있을 수 있다. 모든 표의 셀을 훑는다.
+    cells = []
+    for frame in at.dataframe:
+        data = frame.value
+        data = data.data if hasattr(data, "data") else data
+        cells += [str(v) for row in data.values for v in row]
+
+    ratios = [c for c in cells if re.fullmatch(r"\d+% \(\d+\)", c)]
+    assert ratios, f"비율에 건수가 없다. 본 것: {sorted(set(cells))[:12]}"
+    # 0 건은 0% 로 채우지 않는다 - 빈 칸이 많으면 눈이 갈 데를 못 찾는다.
+    assert "0% (0)" not in cells
