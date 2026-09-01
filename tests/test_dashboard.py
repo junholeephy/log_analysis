@@ -59,20 +59,32 @@ def render(result_file, *extra, monkeypatch=None):
     그냥 새 속성을 만들 뿐 아무 일도 하지 않는다 - 그렇게 짰다가 모든 테스트가
     기본 경로(outputs/conv_parsed.json)를 읽고 있었다. 통과했지만 재고 있던
     것이 아니었다.
+
+    **at.run() 은 한 번이 아니다.** 테스트가 버튼을 누를 때마다 스크립트가 처음부터
+    다시 돌고, 그때도 인자를 다시 읽는다. 첫 실행 뒤에 sys.argv 를 되돌리면 두
+    번째부터는 인자 없이 돌아서 output/ 의 최신 파일을 집는다 - 표는 fixture 인데
+    버튼은 다른 파일을 넘기는 상태가 된다. 실제로 그렇게 통과하고 있었고, output/
+    에 482행짜리 결과가 생기고 나서야 드러났다. 그래서 run 마다 인자를 끼운다.
     """
     import sys
 
     import streamlit as st
 
-    saved = sys.argv
-    sys.argv = ["dashboard.py", "--result", str(result_file), *extra]
-    try:
-        st.cache_data.clear()   # 같은 프로세스에서 여러 번 돈다
-        at = AppTest.from_file(str(DASHBOARD), default_timeout=120)
-        at.run()
-        return at
-    finally:
-        sys.argv = saved
+    argv = ["dashboard.py", "--result", str(result_file), *extra]
+    st.cache_data.clear()   # 같은 프로세스에서 여러 번 돈다
+    at = AppTest.from_file(str(DASHBOARD), default_timeout=120)
+    bare_run = at.run
+
+    def run_with_args(*a, **kw):
+        saved, sys.argv = sys.argv, argv
+        try:
+            return bare_run(*a, **kw)
+        finally:
+            sys.argv = saved
+
+    at.run = run_with_args
+    at.run()
+    return at
 
 
 def test_dashboard_lives_directly_under_src():
@@ -658,6 +670,29 @@ def test_prev_and_next_walk_the_cases(result_file):
     shown = [m.value for m in at.tabs[3].markdown
              if m.value.startswith("**") and "/" in m.value]
     assert len(shown) == 2 and shown[0] == shown[1], shown
+
+
+def test_navigation_stays_on_the_file_under_test(result_file):
+    """버튼을 누른 뒤에도 같은 파일을 보고 있어야 한다.
+
+    at.run() 은 스크립트를 처음부터 다시 돌리고 인자를 다시 읽는다. 인자가
+    빠지면 대시보드는 output/ 의 최신 결과로 갈아타는데, 표는 fixture 를 그린
+    채라 화면만 보면 알아채기 어렵다 - 실제로 그 상태로 통과하고 있었고,
+    output/ 에 큰 결과가 생기고서야 드러났다.
+    """
+    at = render(result_file)
+
+    def total():
+        shown = next(m.value for m in at.tabs[3].markdown
+                     if m.value.startswith("**") and "/" in m.value)
+        return shown.split("/")[1].strip(" *")
+
+    before = total()
+    next(b for b in at.tabs[3].button if b.key == "next-top").click()
+    at.run()
+    assert total() == before, (
+        f"버튼 한 번에 대상이 {before}건에서 {total()}건으로 바뀌었다 - "
+        "재실행에서 --result 가 빠져 다른 파일을 읽고 있다")
 
 
 def test_last_case_disables_next(result_file):
