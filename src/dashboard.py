@@ -531,17 +531,20 @@ def main() -> None:
     #
     # **판정 건강은 탭 밖에 둔다.** 탭 안에 넣으면 건너뛸 수 있는데, 그 숫자가
     # 나쁘면 나머지 집계를 믿을 수 없다는 것이 이 화면의 전제다.
-    tab_dist, tab_org, tab_gap, tab_case = st.tabs(
-        ["분포", "조직", "코퍼스 보강", "개별 케이스"])
+    # 순서가 곧 훑는 순서다: 무엇이 얼마나 -> 어디가 -> 그 한 건 -> (문서팀에 넘길 것).
+    # 코퍼스 보강은 결과물을 넘기는 자리라 다른 셋과 성격이 다르고, 넘길 때만
+    # 열면 되므로 끝에 둔다.
+    tab_dist, tab_org, tab_case, tab_gap = st.tabs(
+        ["분포", "조직", "개별 케이스", "코퍼스 보강"])
 
     with tab_dist:
         _distribution(view)
     with tab_org:
         _by_org(view, org)
-    with tab_gap:
-        _corpus_gaps(view)
     with tab_case:
         _cases(view)
+    with tab_gap:
+        _corpus_gaps(view)
 
 
 def bar_height(bars: int) -> int:
@@ -575,6 +578,25 @@ def _distribution(view: pd.DataFrame) -> None:
     head[2].metric("판정 실패", f"{int(is_unjudged.sum()):,}건",
                    help="어느 유형인지 모르는 턴. 유형별 집계에 넣으면 "
                         "'없는 유형'이 하나 생긴 것처럼 읽힌다.")
+
+    # 분모에서 뺐는데 볼 방법이 없으면 "필터를 고치라" 는 신호가 숫자로만 남는다.
+    # 어떤 발화가 오탐인지 봐야 필터의 어느 조건이 넓은지 알 수 있다. 탭을
+    # 프로그램으로 바꿀 수 없어 여기서 편다.
+    if is_zero.any():
+        with st.expander(f"필터 오탐 {int(is_zero.sum()):,}건 — 어떤 발화가 걸렸나"):
+            st.caption("앞 답변을 문제 삼지 않은 후속 발화다. 챗봇이 아니라 "
+                       "필터의 어느 조건이 이걸 골랐는지를 본다.")
+            st.dataframe(
+                pd.DataFrame({
+                    "부서": view.loc[is_zero, "부서"],
+                    "앞 답변": view.loc[is_zero, "_원본"].map(
+                        lambda o: str(o.get("llm_ans_on_last_q", ""))[:120]),
+                    "후속 발화": view.loc[is_zero, "_원본"].map(
+                        lambda o: str(o.get("current_query", ""))),
+                }), use_container_width=True, hide_index=True,
+                column_config={
+                    "후속 발화": st.column_config.TextColumn("후속 발화", width="large"),
+                    "앞 답변": st.column_config.TextColumn("앞 답변", width="medium")})
 
     if failures.empty:
         st.info("실패로 분류된 턴이 없습니다.")
@@ -640,6 +662,29 @@ BASELINE = "■ 전체"
 # 개별 케이스 탭에서 "유형을 안 좁혔다"를 뜻하는 값. case id 와 겹치지 않는다.
 ALL_CASES = "(전체)"
 
+
+def _suspect_first(view: pd.DataFrame) -> pd.DataFrame:
+    """판정을 믿기 어려운 순서.
+
+    폐기된 인용이 있으면 판정자가 문서에 없는 문장을 지어냈다는 뜻이라 제일 먼저
+    본다. 그 다음이 신뢰도 낮음(사전지식 의존), 분류 실패, 부가 케이스가 붙은 것.
+    """
+    return view.assign(_의심=(view["폐기인용"].fillna(0) * 4
+                             + (view["신뢰도"] == "low") * 3
+                             + view["case"].isin([tx.UNCLASSIFIED,
+                                                  tx.OUT_OF_TAXONOMY]) * 2
+                             + view["부가"].map(bool))
+                       ).sort_values("_의심", ascending=False).drop(columns="_의심")
+
+
+# 훑는 순서. 기본은 파일 순서 - 로그에 있던 그대로다.
+CASE_ORDERS = {
+    "로그 순서": lambda v: v,
+    "의심스러운 순": _suspect_first,
+    "부서 순": lambda v: v.sort_values(["부서", "case"]),
+    "case 순": lambda v: v.sort_values("case", key=lambda c: c.map(tx.sort_key)),
+}
+
 # 관측÷기대가 이 값이면 색이 꽉 찬다. 2배까지는 흔하고 3배부터가 눈에 띄는
 # 편중이라, 여기서 포화시켜야 상위가 다 같은 색으로 뭉개지지 않는다.
 LIFT_FULL = 3.0
@@ -685,8 +730,12 @@ def _by_org(view: pd.DataFrame, org: dict) -> None:
         # case 는 열이 열일곱 개라 한 화면에 안 들어오고, 옆 칸과 한 건씩 나뉘어
         # 편중이 흐려진다. type 으로 묶으면 일곱 열이라 다 보이고 표본도 커져서
         # 배수가 덜 흔들린다 - "TYPE5 가 통째로 많다" 는 case 단위로는 잘 안 보인다.
-        grouping = st.radio("묶기", ["case별", "type별"], horizontal=True,
-                            label_visibility="collapsed")
+        #
+        # 다른 조직 축을 열로 두면 축 두 개가 교차한다. "특정 직급이 특정 부서에서"
+        # 는 한 축씩 봐서는 안 보인다 - 다만 칸이 잘게 쪼개지므로 건수를 함께 본다.
+        grouping = st.selectbox(
+            "묶기", ["case별", "type별"] + [f"{a}별" for a in ORG_AXES if a != axis],
+            label_visibility="collapsed")
     org_for_axis = org.get(axis)
     level_label = {"major": "대분류", "middle": "중분류", "item": "소분류"}
     if org_for_axis and org_for_axis["field"]:
@@ -704,9 +753,13 @@ def _by_org(view: pd.DataFrame, org: dict) -> None:
         if org_for_axis:
             st.caption("이 축에 붙는 분류 체계를 찾지 못해 원래 값으로 표시한다.")
 
-    to_column = column_label if grouping == "case별" else type_label
-    table = crosstab(table_source.assign(_열=table_source["case"].map(to_column)),
-                     axis, "_열")
+    crossed = grouping[:-1] if grouping.endswith("별") else grouping
+    if crossed in ORG_AXES:
+        source = table_source.assign(_열=table_source[crossed])
+    else:
+        to_column = column_label if grouping == "case별" else type_label
+        source = table_source.assign(_열=table_source["case"].map(to_column))
+    table = crosstab(source, axis, "_열")
     counts = table.drop(columns="계")
     share = counts.div(table["계"], axis=0)
     ratio = counts / expected(counts)
@@ -747,7 +800,7 @@ def _by_org(view: pd.DataFrame, org: dict) -> None:
         use_container_width=True,
         column_config=case_tooltips(body.columns, numeric=False))
 
-    _outliers(counts, ratio, axis)
+    _outliers(counts, ratio, axis, crossed if crossed in ORG_AXES else "무엇이")
 
 
 def _ones(like: pd.DataFrame) -> pd.Series:
@@ -783,13 +836,14 @@ def baseline_row(table, row):
     return pd.concat([head, table])
 
 
-def _outliers(counts: pd.DataFrame, ratio: pd.DataFrame, axis: str) -> None:
+def _outliers(counts: pd.DataFrame, ratio: pd.DataFrame, axis: str,
+              column_name: str = "무엇이") -> None:
     """유독 많은 것만 뽑아 목록으로.
 
     코퍼스 탭은 문서팀에 그대로 넘길 목록을 낸다. 이 탭은 표만 냈다 - 285칸을
     눈으로 훑어 편중을 찾는 일이 읽는 사람 몫이었는데, 그건 계산할 수 있는 것이다.
     """
-    found = [{axis: group, "무엇이": tx.label(case),
+    found = [{axis: group, column_name: tx.label(case) if tx.get(case_of(case)) else case,
               "배수": round(float(ratio.loc[group, case]), 1),
               "턴": int(counts.loc[group, case]),
               "전사에서는": f"{_global_share(counts)[case]:.0%}"}
@@ -895,14 +949,36 @@ def _cases(view: pd.DataFrame) -> None:
         format_func=lambda c: (f"전체 ({whole:,}건)" if c == ALL_CASES
                                else f"{tx.label(c)} ({per_case[c]:,}건)"),
         label_visibility="collapsed")
-    if picked != state.get("case_pick"):
-        # 고른 유형이 바뀌면 행이 통째로 달라진다. 자리를 그대로 두면 엉뚱한
-        # 케이스를 보고 있게 되고, 표의 체크는 옛 자리에 남는다.
-        state.case_pick = picked
-        state.case_idx = 0
-        state.case_nonce = state.get("case_nonce", 0) + 1
     if picked != ALL_CASES:
         view = view[view["case"] == picked]
+
+    # 503건에서 특정 대화를 찾는 방법이 이전/다음뿐이었다. "출입증 관련 사례" 를
+    # 보려면 쉰 번을 눌러야 한다. 사람이 친 말(불만)까지 훑어야 찾아진다 -
+    # 정리된 질문은 판정자가 다시 쓴 것이라 원래 표현이 남아 있지 않다.
+    found = st.text_input("찾기", placeholder="질문 · 불만 · 부서 · 라벨에서 찾기",
+                          label_visibility="collapsed")
+    if found:
+        needle = found.strip().lower()
+        hay = (view["질문"].fillna("") + " " + view["부서"].fillna("")
+               + " " + view["case명"].fillna("") + " " + view["case"].fillna("")
+               + " " + view["_원본"].map(lambda o: str(o.get("current_query", ""))))
+        view = view[hay.str.lower().str.contains(needle, regex=False)]
+        if view.empty:
+            st.info(f"'{found}' 에 걸리는 케이스가 없습니다.")
+            return
+
+    # 파일 순서는 사실상 무작위다. 이 화면을 여는 이유의 절반이 "라벨이 맞나"
+    # 인데, 그렇다면 의심스러운 것부터 훑는 편이 같은 시간에 더 많이 잡는다.
+    order = st.selectbox(
+        "정렬", list(CASE_ORDERS), label_visibility="collapsed",
+        help="의심스러운 순: 인용이 폐기된 것 · 신뢰도 낮음 · 분류 실패 · 부가 케이스")
+    view = CASE_ORDERS[order](view)
+
+    if (found, order, picked) != state.get("case_scope"):
+        # 목록이 통째로 달라졌다. 자리를 그대로 두면 엉뚱한 케이스를 보게 된다.
+        state.case_scope = (found, order, picked)
+        state.case_idx = 0
+        state.case_nonce = state.get("case_nonce", 0) + 1
 
     # 열 열 개를 늘어놓으면 좁은 화면에서 질문이 끝까지 밀려 안 보인다.
     # 고르는 데 필요한 것만 남기고 나머지는 아래 상세가 편다.
@@ -1104,8 +1180,18 @@ def detail(row: pd.Series) -> None:
                        "여기까지 오지 않았다.")
 
     if row["검증"]:
-        st.markdown("**코드 검증** — LLM 없이 판정된 것들")
-        st.dataframe(pd.DataFrame(row["검증"]), use_container_width=True)
+        st.markdown("**코드 검증** — LLM 없이, 코드가 본 것")
+        st.caption("case6(질문 속 개인정보) · case8(출력 잘림) · case9(서비스 자원 부족)는 "
+                   "**여기서** 판정된다. 신뢰도가 high 인 이유이고, LLM 판정이 "
+                   "무엇을 말하든 이쪽이 이긴다.")
+        checks = pd.DataFrame(row["검증"])
+        st.dataframe(
+            checks, use_container_width=True, hide_index=True,
+            column_config={
+                "name": st.column_config.TextColumn("무엇을"),
+                "verdict": st.column_config.TextColumn(
+                    "결과", help="violated 면 그 case 로 확정된다"),
+                "detail": st.column_config.TextColumn("근거", width="large")})
 
     # 답변·불만은 위로 올렸다. 여기 남는 것은 부피가 큰 것들이다.
     chunks = original.get("chunk_data", [])

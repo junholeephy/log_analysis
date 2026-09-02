@@ -623,10 +623,14 @@ def test_ratio_table_shows_the_count_too(result_file, tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_sections_are_split_into_tabs(result_file):
-    """한 화면에 다 쌓으면 계속 스크롤해야 하고 어디가 끝인지 알 수 없다."""
+    """한 화면에 다 쌓으면 계속 스크롤해야 하고 어디가 끝인지 알 수 없다.
+
+    순서가 곧 훑는 순서다: 무엇이 얼마나 -> 어디가 -> 그 한 건. 코퍼스 보강은
+    문서팀에 넘길 결과물이라 성격이 다르고 넘길 때만 열면 되므로 끝이다.
+    """
     at = render(result_file)
     assert not at.exception
-    assert [t.label for t in at.tabs] == ["분포", "조직", "코퍼스 보강", "개별 케이스"]
+    assert [t.label for t in at.tabs] == ["분포", "조직", "개별 케이스", "코퍼스 보강"]
 
 
 def test_health_metrics_stay_outside_the_tabs(result_file):
@@ -716,14 +720,14 @@ def test_prev_and_next_walk_the_cases(result_file):
     한 건 보고 다음 건으로 가는 것이 이 화면에서 가장 잦은 동작이다.
     """
     at = render(result_file)
-    tab = at.tabs[3]
+    tab = at.tabs[2]
 
     def position():
-        return next(m.value for m in at.tabs[3].markdown
+        return next(m.value for m in at.tabs[2].markdown
                     if m.value.startswith("**") and "/" in m.value)
 
     def button(key):
-        return next(b for b in at.tabs[3].button if b.key == key)
+        return next(b for b in at.tabs[2].button if b.key == key)
 
     assert position().startswith("**1 /")
     assert button("prev-top").disabled, "첫 건에서 이전이 눌린다"
@@ -739,7 +743,7 @@ def test_prev_and_next_walk_the_cases(result_file):
     button("next-bottom").click(); at.run()
     assert position().startswith("**3 /")
     # 위아래가 같은 자리를 가리킨다 - 따로 놀면 어느 것이 맞는지 알 수 없다.
-    shown = [m.value for m in at.tabs[3].markdown
+    shown = [m.value for m in at.tabs[2].markdown
              if m.value.startswith("**") and "/" in m.value]
     assert len(shown) == 2 and shown[0] == shown[1], shown
 
@@ -755,12 +759,12 @@ def test_navigation_stays_on_the_file_under_test(result_file):
     at = render(result_file)
 
     def total():
-        shown = next(m.value for m in at.tabs[3].markdown
+        shown = next(m.value for m in at.tabs[2].markdown
                      if m.value.startswith("**") and "/" in m.value)
         return shown.split("/")[1].strip(" *")
 
     before = total()
-    next(b for b in at.tabs[3].button if b.key == "next-top").click()
+    next(b for b in at.tabs[2].button if b.key == "next-top").click()
     at.run()
     assert total() == before, (
         f"버튼 한 번에 대상이 {before}건에서 {total()}건으로 바뀌었다 - "
@@ -772,7 +776,7 @@ def test_last_case_disables_next(result_file):
     at = render(result_file)
 
     def button(key):
-        return next(b for b in at.tabs[3].button if b.key == key)
+        return next(b for b in at.tabs[2].button if b.key == key)
 
     for _ in range(50):
         if button("next-top").disabled:
@@ -842,7 +846,7 @@ def test_explicit_result_is_not_replaced_by_the_picker(result_file, tmp_path):
 
 
 def _checked_row(at):
-    frame = next(f.value for f in at.tabs[3].dataframe
+    frame = next(f.value for f in at.tabs[2].dataframe
                  if "보기" in getattr(f.value, "columns", []))
     return [i for i, on in enumerate(frame["보기"]) if on]
 
@@ -856,7 +860,7 @@ def test_buttons_move_the_check_mark(result_file):
     at = render(result_file)
 
     def button(key):
-        return next(b for b in at.tabs[3].button if b.key == key)
+        return next(b for b in at.tabs[2].button if b.key == key)
 
     assert _checked_row(at) == [0]
 
@@ -870,7 +874,7 @@ def test_buttons_move_the_check_mark(result_file):
     assert _checked_row(at) == [1]
 
     # 체크·위치·펼쳐진 케이스가 한 곳을 가리켜야 한다.
-    position = next(m.value for m in at.tabs[3].markdown
+    position = next(m.value for m in at.tabs[2].markdown
                     if m.value.startswith("**") and "/" in m.value)
     assert position.startswith("**2 /"), position
 
@@ -880,7 +884,7 @@ def test_only_one_row_is_checked(result_file):
     at = render(result_file)
 
     def button(key):
-        return next(b for b in at.tabs[3].button if b.key == key)
+        return next(b for b in at.tabs[2].button if b.key == key)
 
     for _ in range(3):
         if button("next-top").disabled:
@@ -964,7 +968,7 @@ def test_org_can_group_by_type(result_file, tmp_path):
     columns = list(at.tabs[1].get("dataframe")[0].value.columns)
     assert "TYPE5/case20" in columns and "TYPE5/case22" in columns, columns
 
-    next(r for r in at.tabs[1].radio if "type별" in r.options).set_value("type별")
+    next(x for x in at.tabs[1].selectbox if "type별" in x.options).set_value("type별")
     at.run()
 
     tab = at.tabs[1]
@@ -979,6 +983,26 @@ def test_org_can_group_by_type(result_file, tmp_path):
     counts = tab.get("dataframe")[0].value
     a_type5 = [c for c in grouped if c.startswith("TYPE5")][0]
     assert int(counts.loc["A팀", a_type5]) == 12, counts
+
+
+def test_org_can_cross_two_organisation_axes(result_file, tmp_path):
+    """"특정 직급이 특정 부서에서" 는 한 축씩 봐서는 안 보인다."""
+    log = _org_payload(result_file, tmp_path, [
+        ("A팀", "case20", 6), ("B팀", "case12", 6)])
+    payload = json.loads(Path(log).read_text(encoding="utf-8"))
+    for i, user in enumerate(payload["analysis_results"]):
+        user["db_position_name"] = ["과장", "사원"][i % 2]
+    log.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    at = render(log)
+    picker = next(x for x in at.tabs[1].selectbox if "type별" in x.options)
+    assert "직급별" in picker.options, picker.options
+    # 행으로 잡은 축은 열로 또 쓸 수 없다 - 대각선만 남는다.
+    assert "부서별" not in picker.options, picker.options
+
+    picker.set_value("직급별"); at.run()
+    columns = list(at.tabs[1].get("dataframe")[0].value.columns)
+    assert "과장" in columns and "사원" in columns, columns
 
 
 def test_org_outliers_need_enough_turns(result_file, tmp_path):
@@ -1109,10 +1133,10 @@ def test_the_case_tab_can_narrow_to_one_case(result_file, tmp_path):
     at = render(log)
 
     def position(at):
-        return next(m.value for m in at.tabs[3].markdown
+        return next(m.value for m in at.tabs[2].markdown
                     if m.value.startswith("**") and "/" in m.value)
 
-    pick = next(s for s in at.tabs[3].selectbox if s.label == "케이스")
+    pick = next(s for s in at.tabs[2].selectbox if s.label == "케이스")
     # value 는 원값, options 는 format_func 을 거친 문자열이다.
     assert pick.value == "(전체)", pick.value
     assert any(str(o).startswith("전체 (") for o in pick.options), pick.options
@@ -1129,11 +1153,73 @@ def test_the_case_tab_can_narrow_to_one_case(result_file, tmp_path):
 
     # format_func 이 view 를 잡고 있으면 좁힌 뒤의 건수로 라벨을 그려서
     # "전체 (8건)" 이 "전체 (2건)" 이 된다 - 고르는 자리가 고른 결과를 보여준다.
-    pick = next(s for s in at.tabs[3].selectbox if s.label == "케이스")
+    pick = next(s for s in at.tabs[2].selectbox if s.label == "케이스")
     assert f"전체 ({len(SPREAD)}건)" in pick.options, pick.options
 
     pick.set_value("(전체)"); at.run()
     assert position(at).endswith(f"/ {len(SPREAD)}**"), position(at)
+
+
+def test_the_case_tab_can_search(result_file, tmp_path):
+    """503건에서 특정 대화를 찾는 방법이 이전/다음뿐이었다.
+
+    사람이 친 말(불만)까지 훑어야 찾아진다 - 정리된 질문은 판정자가 다시 쓴
+    것이라 원래 표현이 남아 있지 않다.
+    """
+    payload = json.loads(result_file.read_text(encoding="utf-8"))
+    turns = [t for u in payload["analysis_results"]
+             for c in u["conversations"] for t in c["turns"]]
+    turns[0]["current_query"] = "출입증 재발급이 왜 이렇게 오래 걸리나요"
+    log = tmp_path / "search.json"
+    log.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    at = render(log)
+    box = next(b for b in at.tabs[2].text_input if b.label == "찾기")
+    box.set_value("출입증"); at.run()
+
+    position = next(m.value for m in at.tabs[2].markdown
+                    if m.value.startswith("**") and "/" in m.value)
+    assert position.endswith("/ 1**"), position
+
+    next(b for b in at.tabs[2].text_input if b.label == "찾기").set_value("없는말")
+    at.run()
+    assert any("없는말" in str(i.value) for i in at.tabs[2].info), \
+        [i.value for i in at.tabs[2].info]
+
+
+def test_the_case_tab_can_sort_suspect_first(result_file, tmp_path):
+    """이 화면을 여는 이유의 절반이 "라벨이 맞나" 다.
+
+    파일 순서는 사실상 무작위라, 의심스러운 것부터 훑으면 같은 시간에 더 잡는다.
+    폐기된 인용은 판정자가 문서에 없는 문장을 지어냈다는 뜻이라 제일 앞이다.
+    """
+    payload = json.loads(result_file.read_text(encoding="utf-8"))
+    turns = [t for u in payload["analysis_results"]
+             for c in u["conversations"] for t in c["turns"]]
+    suspect = turns[-1]
+    suspect["classification"]["evidence"]["sufficiency"] = {
+        "verdict": "sufficient", "missing": "", "evidence": [],
+        "dropped_evidence": [{"reason": "not_found", "quote": "지어낸 문장"}]}
+    log = tmp_path / "sort.json"
+    log.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    at = render(log)
+    order = next(x for x in at.tabs[2].selectbox if x.label == "정렬")
+    assert order.value == "로그 순서", order.value
+
+    order.set_value("의심스러운 순"); at.run()
+    # 맨 앞으로 왔으면 상세에 그 폐기 인용이 보인다.
+    assert any("지어낸 문장" in str(e.value) for e in at.tabs[2].error), \
+        [e.value for e in at.tabs[2].error]
+
+
+def test_distribution_lets_you_see_the_false_positives(result_file, tmp_path):
+    """분모에서 뺐는데 볼 방법이 없으면 "필터를 고치라" 가 숫자로만 남는다."""
+    at = render(_with_cases(result_file, tmp_path, SPREAD))
+    frames = [f.value for f in at.tabs[0].get("dataframe")]
+    fp = [f for f in frames if "후속 발화" in getattr(f, "columns", [])]
+    assert fp, [list(getattr(f, "columns", [])) for f in frames]
+    assert len(fp[0]) == SPREAD.count("case0"), fp[0]
 
 
 def test_the_case_filter_lists_cases_in_number_order(result_file, tmp_path):
@@ -1167,7 +1253,7 @@ def test_narrow_columns_box_sooner_than_the_wide_one(result_file, tmp_path):
     넘쳐도 안 잡히고, 넓은 칸은 안 넘쳤는데 잘린 것처럼 보인다.
     """
     def hints(at):
-        return [str(c.value) for c in at.tabs[3].caption if "스크롤" in str(c.value)]
+        return [str(c.value) for c in at.tabs[2].caption if "스크롤" in str(c.value)]
 
     payload = json.loads(result_file.read_text(encoding="utf-8"))
     turns = [t for u in payload["analysis_results"]
@@ -1198,7 +1284,7 @@ def test_a_long_answer_is_boxed_and_scrolls(result_file, tmp_path):
     두면 상자 아래가 비어서 더 읽기 나쁘다.
     """
     def scroll_hint(at):
-        return [c.value for c in at.tabs[3].caption if "스크롤" in str(c.value)]
+        return [c.value for c in at.tabs[2].caption if "스크롤" in str(c.value)]
 
     payload = json.loads(result_file.read_text(encoding="utf-8"))
     turns = [t for u in payload["analysis_results"]
@@ -1227,7 +1313,7 @@ def test_the_judged_answer_gets_the_widest_column(result_file):
     at = render(result_file)
     assert not at.exception
 
-    weights = [round(c.proto.weight, 3) for c in at.tabs[3].get("column")
+    weights = [round(c.proto.weight, 3) for c in at.tabs[2].get("column")
                if getattr(getattr(c, "proto", None), "weight", None)]
     assert [0.2, 0.6, 0.2] in [weights[i:i + 3] for i in range(len(weights) - 2)], (
         f"1:3:1 인 줄이 없다: {weights}")
