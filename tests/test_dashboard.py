@@ -570,10 +570,15 @@ def test_heatmap_headers_get_the_tooltip(result_file, tmp_path):
     import re
 
     labelled = [c for c in tips
-                if re.fullmatch(r"case\d+", c) or c in ("unclassified", "out_of_taxonomy")]
+                if re.fullmatch(r"TYPE\d+/case\d+", c)
+                or c in ("unclassified", "out_of_taxonomy")]
     assert labelled, f"판정 라벨 열에 툴팁이 없다. 붙은 것: {sorted(tips)}"
-    for cid in labelled:
-        assert tips[cid].startswith(f"{cid} ·"), tips[cid]
+    for name in labelled:
+        cid = name.rsplit("/", 1)[-1]
+        # 머리글에는 TYPE5 까지만 보인다. 번호가 무엇을 뜻하는지는 툴팁이 말한다.
+        if name != cid:
+            assert tips[name].startswith(name.split("/")[0] + " "), tips[name]
+        assert f"{cid} ·" in tips[name], tips[name]
 
     # 제일 헷갈리는 열이다. "분류 실패"를 "문제 없음"으로 읽으면 집계를 잘못 읽는다.
     if "unclassified" in tips:
@@ -913,12 +918,14 @@ def test_org_table_carries_a_baseline_row(result_file, tmp_path):
 
     counts = tab.get("dataframe")[0].value
     assert counts.index[0] == "■ 전체", list(counts.index)
-    assert int(counts.loc["■ 전체", "case20"]) == 6, counts
+    # 머리글이 type/case 다 - 열 열일곱 개에서 지금 어느 묶음인지 놓치지 않게.
+    assert "TYPE5/case20" in counts.columns, list(counts.columns)
+    assert int(counts.loc["■ 전체", "TYPE5/case20"]) == 6, counts
 
     # 관측÷기대에서 기준선은 정의상 1.0× 다. 그게 맨 위에 있어야 아래 숫자가
     # 무엇에 대한 배수인지 설명 없이 읽힌다.
     lift = tab.get("dataframe")[1].value
-    assert lift.loc["■ 전체", "case20"].startswith("1.0×"), lift.loc["■ 전체"]
+    assert lift.loc["■ 전체", "TYPE5/case20"].startswith("1.0×"), lift.loc["■ 전체"]
 
 
 def test_org_surfaces_what_is_unusual_not_what_is_common(result_file, tmp_path):
@@ -941,6 +948,37 @@ def test_org_surfaces_what_is_unusual_not_what_is_common(result_file, tmp_path):
 
     # case20 은 어느 부서에서도 흔하므로 이상치가 아니다.
     assert not [r for _, r in outliers.iterrows() if "case20" in r["무엇이"]], outliers
+
+
+def test_org_can_group_by_type(result_file, tmp_path):
+    """case 는 열이 열일곱 개라 한 화면에 안 들어오고, 옆 칸과 한 건씩 나뉘어
+    편중이 흐려진다. type 으로 묶으면 일곱 열이라 다 보이고 표본도 커진다.
+
+    "TYPE5 가 통째로 많다" 는 case 단위로는 잘 안 보이는 신호다.
+    """
+    log = _org_payload(result_file, tmp_path, [
+        ("A팀", "case20", 6), ("A팀", "case22", 6),      # 둘 다 TYPE5
+        ("B팀", "case12", 6), ("B팀", "case13", 6)])     # 둘 다 TYPE3
+    at = render(log)
+
+    columns = list(at.tabs[1].get("dataframe")[0].value.columns)
+    assert "TYPE5/case20" in columns and "TYPE5/case22" in columns, columns
+
+    next(r for r in at.tabs[1].radio if "type별" in r.options).set_value("type별")
+    at.run()
+
+    tab = at.tabs[1]
+    grouped = list(tab.get("dataframe")[0].value.columns)
+    assert not [c for c in grouped if "case" in c], grouped
+    assert any("TYPE5" in c for c in grouped), grouped
+
+    # 열 순서는 묶기를 바꿔도 같은 규칙을 따른다 - TYPE3 이 TYPE5 앞이다.
+    types = [c for c in grouped if c.startswith("TYPE")]
+    assert types == sorted(types, key=lambda c: int(c.split(" ")[0][4:])), types
+
+    counts = tab.get("dataframe")[0].value
+    a_type5 = [c for c in grouped if c.startswith("TYPE5")][0]
+    assert int(counts.loc["A팀", a_type5]) == 12, counts
 
 
 def test_org_outliers_need_enough_turns(result_file, tmp_path):

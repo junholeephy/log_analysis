@@ -251,24 +251,80 @@ def heat(value: float) -> str:
     return f"background-color: rgb({r},{g},{b}); color: {text}"
 
 
+def column_label(case_id: str) -> str:
+    """`TYPE5/case20` — 열 머리글에 type 을 함께 적는다.
+
+    case 는 번호순이라 같은 type 이 이어 붙지만, 열이 열일곱 개면 지금 어느 묶음을
+    보고 있는지 놓친다. type 이 앞에 있으면 경계가 보이고, "이 부서는 TYPE5 가
+    통째로 많다" 같은 읽기가 열 단위 합계 없이도 된다.
+    """
+    case = tx.get(case_id)
+    return f"{case.type_id}/{case_id}" if case else case_id
+
+
+def type_label(case_id: str) -> str:
+    """`도메인 관련 Retrieve Context 문제` — type 으로 묶어 볼 때의 열 머리글.
+
+    열이 일곱 개뿐이라 이름을 그대로 쓸 자리가 있다. case 열은 열일곱 개라
+    번호만 쓰고 툴팁으로 펼치지만, 여기서는 이름이 바로 보이는 편이 낫다.
+    """
+    case = tx.get(case_id)
+    return f"{case.type_id} · {case.type_name}" if case else case_id
+
+
+def case_of(column: str) -> str:
+    """열 머리글에서 case id 만 꺼낸다. 툴팁·정렬이 이걸로 붙는다."""
+    return column.rsplit("/", 1)[-1]
+
+
+def type_of(column: str) -> str:
+    """열 머리글에서 TYPE id 만 꺼낸다. 없으면 빈 문자열."""
+    head = column.split("/", 1)[0].split(" · ", 1)[0]
+    return head if head.startswith("TYPE") and head[4:].isdigit() else ""
+
+
+def column_order(name: str):
+    """type 번호가 먼저, 그 안에서 case 번호. 두 모양 다 이 키로 정렬된다.
+
+    문자열로 두면 TYPE1 뒤에 TYPE10 이 아니라 case10 이 case2 앞에 오는 것과
+    같은 일이 난다. 묶기를 바꿔도 열 순서가 같은 규칙을 따라야 한다.
+    """
+    kind = type_of(name)
+    return (int(kind[4:]) if kind else 99, tx.sort_key(case_of(name)))
+
+
 def case_tooltips(columns, numeric: bool = True) -> dict:
     """case 열 머리글에 설명을 매단다.
 
-    표에는 case3 만 찍힌다. 이름을 다 적으면 열이 넓어져 한 화면에 안 들어오고,
-    번호만 있으면 무엇인지 알 수 없다 - 머리글은 짧게 두고 마우스를 올렸을 때
-    펼친다.
+    머리글에는 TYPE5/case20 까지만 찍는다. 이름을 다 적으면 열이 넓어져 한 화면에
+    안 들어오고, 번호만 있으면 무엇인지 알 수 없다 - 머리글은 짧게 두고 마우스를
+    올렸을 때 펼친다. type 은 번호(TYPE5)만 보이므로 툴팁이 그 이름도 말한다.
     """
     # unclassified · out_of_taxonomy 도 붙인다. 오히려 이 둘이 제일 헷갈린다 -
     # "분류 실패"를 "문제 없음"으로 읽으면 집계 전체를 잘못 읽는다.
     known = set(tx.CASES) | {tx.UNCLASSIFIED, tx.OUT_OF_TAXONOMY}
     column = st.column_config.NumberColumn if numeric else st.column_config.TextColumn
-    return {c: column(c, help=tx.tooltip(c))
-            for c in columns if isinstance(c, str) and c in known}
+    tips = {}
+    for name in columns:
+        if not isinstance(name, str):
+            continue
+        case = tx.get(case_of(name))
+        if case:
+            # 머리글에는 TYPE5 까지만 보인다. 번호가 무엇을 뜻하는지는 여기서.
+            tips[name] = column(name, help=f"{case.type_id} {case.type_name}\n\n"
+                                           f"{tx.tooltip(case_of(name))}")
+        elif type_of(name):
+            members = ", ".join(tx.label(c) for c, v in tx.CASES.items()
+                                if v.type_id == type_of(name))
+            tips[name] = column(name, help=f"{type_of(name)} — 이 묶음의 case: {members}")
+        elif case_of(name) in known:
+            tips[name] = column(name, help=tx.tooltip(case_of(name)))
+    return tips
 
 
-def crosstab(df: pd.DataFrame, axis: str) -> pd.DataFrame:
-    table = pd.crosstab(df[axis], df["case"])
-    table = table[tx.ordered(table.columns)]
+def crosstab(df: pd.DataFrame, axis: str, column: str = "case") -> pd.DataFrame:
+    table = pd.crosstab(df[axis], df[column])
+    table = table[sorted(table.columns, key=column_order)]
     table["계"] = table.sum(axis=1)
     return table.sort_values("계", ascending=False)
 
@@ -621,10 +677,16 @@ def _by_org(view: pd.DataFrame, org: dict) -> None:
         st.info("실패로 분류된 턴이 없습니다.")
         return
 
-    picker = st.columns([2, 3])
+    picker = st.columns([2, 3, 2])
     with picker[0]:
         axis = st.radio("기준", list(ORG_AXES), horizontal=True,
                         label_visibility="collapsed")
+    with picker[2]:
+        # case 는 열이 열일곱 개라 한 화면에 안 들어오고, 옆 칸과 한 건씩 나뉘어
+        # 편중이 흐려진다. type 으로 묶으면 일곱 열이라 다 보이고 표본도 커져서
+        # 배수가 덜 흔들린다 - "TYPE5 가 통째로 많다" 는 case 단위로는 잘 안 보인다.
+        grouping = st.radio("묶기", ["case별", "type별"], horizontal=True,
+                            label_visibility="collapsed")
     org_for_axis = org.get(axis)
     level_label = {"major": "대분류", "middle": "중분류", "item": "소분류"}
     if org_for_axis and org_for_axis["field"]:
@@ -642,7 +704,9 @@ def _by_org(view: pd.DataFrame, org: dict) -> None:
         if org_for_axis:
             st.caption("이 축에 붙는 분류 체계를 찾지 못해 원래 값으로 표시한다.")
 
-    table = crosstab(table_source, axis)
+    to_column = column_label if grouping == "case별" else type_label
+    table = crosstab(table_source.assign(_열=table_source["case"].map(to_column)),
+                     axis, "_열")
     counts = table.drop(columns="계")
     share = counts.div(table["계"], axis=0)
     ratio = counts / expected(counts)
