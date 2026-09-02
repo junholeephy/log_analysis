@@ -716,6 +716,50 @@ def test_dashboard_deps_are_not_in_the_main_requirements():
 # process_flow.md 가 코드보다 앞서 나가지 않도록
 # ---------------------------------------------------------------------------
 
+def test_case_ids_sort_by_number_not_by_string():
+    """문자열로 정렬하면 case10 이 case2 앞에 온다.
+
+    30개짜리 목록에서 이걸 만나면 "정렬이 안 돼 있다"로 읽고 원하는 번호를 눈으로
+    훑게 된다. 실제로 대시보드 사이드바가 그 상태였다 - 표는 번호순인데 고르는
+    자리는 아니어서, 표에서 본 케이스를 목록에서 못 찾았다.
+    """
+    from ragdiag import taxonomy as tx
+
+    shuffled = ["case21", "case2", "case10", "case0", "unclassified", "case9"]
+    assert tx.ordered(shuffled) == [
+        "case0", "case2", "case9", "case10", "case21", "unclassified"], tx.ordered(shuffled)
+
+    # taxonomy 밖의 값은 뒤로. 사이에 끼면 그것도 순서가 없어 보인다.
+    assert tx.ordered(list(tx.CASES)) == list(tx.CASES)
+
+
+def test_one_type_does_not_use_two_words_for_the_same_thing():
+    """진리표에 `case21` 검색 미수행 과 `case20` Retrieve 실패 가 나란히 있었다.
+
+    같은 것을 두 단어로 부르면 읽는 사람이 서로 다른 것으로 읽는다. 타입 이름이
+    규격에서 온 "도메인 관련 Retrieve Context 문제" 라 거기에 맞춘다.
+    """
+    from ragdiag import taxonomy as tx
+
+    names = [c.name for c in tx.CASES.values() if c.type_id == "TYPE5"]
+    used = {w for name in names for w in ("검색", "retrieve", "Retrieve") if w in name}
+    assert used <= {"Retrieve"}, f"TYPE5 이름이 어휘를 섞는다: {sorted(used)} — {names}"
+
+
+def test_every_case_traces_back_to_v1_or_is_listed_as_new():
+    """어떤 라벨이 어디서 왔는지 되짚을 수 있어야 한다.
+
+    빠진 것이 있으면 v1 에 있었다고 잘못 읽는다. case0 이 실제로 빠져 있었다 -
+    규격에도 없고 우리가 만든 자리인데 목록에 없어서 출처가 사라졌다.
+    """
+    from ragdiag import taxonomy as tx
+
+    from_v1 = set(tx.V1_TO_CURRENT.values())
+    unexplained = [c for c in tx.CASES
+                   if c not in from_v1 and c not in tx.NEW_SINCE_V1]
+    assert not unexplained, f"출처가 없는 case: {tx.ordered(unexplained)}"
+
+
 def test_process_flow_case_names_match_the_taxonomy():
     """문서가 든 case 이름이 실제와 달라지면 읽는 사람이 잘못 배운다."""
     import re
@@ -1055,7 +1099,7 @@ def test_process_flow_states_when_sufficiency_runs():
 
     "도메인 질문일 때만" 이라고만 적으면 도메인 여부를 누가 어떻게 정하는지
     알 수 없다 — 실제로 그 질문을 받았다. rag_chunks 유무로 정한다고 오해하면
-    case21(검색 미수행)이 통째로 사라진다.
+    case21(Retrieve 미수행)이 통째로 사라진다.
     """
     import inspect
     import re

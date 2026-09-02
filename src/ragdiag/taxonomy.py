@@ -64,7 +64,7 @@ _ROWS = [
     ("case14", "이전 턴 맥락 상실", "TYPE3", "사용자의 의도를 파악하지 못함", "category_2", "medium", True),
     ("case15", "복합 질문 일부만 답변", "TYPE3", "사용자의 의도를 파악하지 못함", "category_2", "medium", True),
     ("case16", "말투·어조 불이행", "TYPE3", "사용자의 의도를 파악하지 못함", "category_2", "medium", True),
-    ("case17", "실행할 수 없는 수준", "TYPE3", "사용자의 의도를 파악하지 못함", "category_2", "medium", True),
+    ("case17", "두루뭉술한 답변", "TYPE3", "사용자의 의도를 파악하지 못함", "category_2", "medium", True),
 
     # category_2 · TYPE4 할루시네이션
     ("case18", "문서와 어긋나는 주장", "TYPE4", "할루시네이션 답변", "category_2", "medium", True),
@@ -72,9 +72,9 @@ _ROWS = [
 
     # category_2 · TYPE5 Retrieve Context
     ("case20", "Retrieve 실패", "TYPE5", "도메인 관련 Retrieve Context 문제", "category_2", "medium", True),
-    ("case21", "검색 미수행", "TYPE5", "도메인 관련 Retrieve Context 문제", "category_2", "high", True),
+    ("case21", "Retrieve 미수행", "TYPE5", "도메인 관련 Retrieve Context 문제", "category_2", "high", True),
     ("case22", "Retrieve 성공, 생성 실패", "TYPE5", "도메인 관련 Retrieve Context 문제", "category_2", "medium", True),
-    ("case23", "구 문서 retrieve", "TYPE5", "도메인 관련 Retrieve Context 문제", "category_2", "medium", False),
+    ("case23", "구 문서 Retrieve", "TYPE5", "도메인 관련 Retrieve Context 문제", "category_2", "medium", False),
     ("case24", "출처/인용 표기 오류", "TYPE5", "도메인 관련 Retrieve Context 문제", "category_2", "high", True),
 
     # category_2 · TYPE6 일반 질문
@@ -121,14 +121,15 @@ _DESC = {
     "case12": "표·불릿 등 요구한 형식으로 내지 않았다. "
               "애초에 낼 수 없는 형식을 요구한 것은 case2.",
     "case13": "물은 것과 다른 것을 답했다. 의도 파악 실패. "
-              "맞게 답했으나 실행으로 이어지지 않는 것은 case17.",
+              "맞게 답했는데 두루뭉술해서 다음 행동을 알 수 없는 것은 case17.",
     "case14": "답변이 앞 턴의 맥락을 잊거나 잘못 이었다. "
               "검색이 실패해도 이렇게 보이므로, 문서 증거가 있는 case20·case22 을 먼저 가른다.",
     "case15": "여러 의도 중 일부만 답했다 — 고칠 곳은 모델이다. "
               "사용자가 복합 질문을 한 것 자체는 case3.",
     "case16": "말투·어조·용어 사용에 대한 요구를 지키지 않았다.",
     "case17": "내용은 맞으나 사용자가 다음에 무엇을 할지 알 수 없다. "
-              "아예 다른 것을 답한 것은 case13.",
+              "아예 다른 것을 답한 것은 case13. "
+              "문서에 답이 없어서 두루뭉술한 것은 case20 — 증상은 같고 고칠 곳이 반대다.",
     "case18": "검색된 문서와 어긋나는 주장을 했다. "
               "문서 밖의 허구는 대조할 것이 없어 판정 대상이 아니다.",
     "case19": "같은 질문에 매번 다르게 답하거나 이전 답변과 상충한다. "
@@ -137,7 +138,8 @@ _DESC = {
               "서비스가 '검색 없이 답할 수 있다'고 판단했을 수 있고, 그 판단이 틀린 것이라면 "
               "고칠 곳은 검색 트리거다. 가져왔는데 빗나간 case20 과 고칠 곳이 다르다.",
     "case20": "가져온 청크에 답이 없다. 검색기가 못 찾은 것인지 문서가 애초에 없는 것인지는 "
-              "코퍼스 전체를 봐야 갈린다 — 특정 부서에 몰리면 문서 부재 쪽이다. 검색 결과가 0건인 것은 case21 이다.",
+              "코퍼스 전체를 봐야 갈린다 — 특정 부서에 몰리면 문서 부재 쪽이다. 검색 결과가 0건인 것은 case21 이다. "
+              "답변이 두루뭉술한 것은 case17 과 같지만, 이쪽은 문서에 답이 없어서다.",
     "case22": "청크에 답이 있는데 답변이 쓰지 않았다. "
               "'인사팀에 문의하세요' 같은 회피성 안내도 거절이 아니라 여기다.",
     "case23": "최신 문서 대신 구 문서를 가져왔다. "
@@ -175,6 +177,25 @@ UNDIAGNOSABLE = {c.case_id for c in CASES.values() if not c.diagnosable}
 UNCLASSIFIED = "unclassified"
 # taxonomy 에 해당 항목이 아예 없을 때. 쌓이면 케이스를 추가하라는 신호다.
 OUT_OF_TAXONOMY = "out_of_taxonomy"
+
+
+def sort_key(case_id: str) -> tuple[int, int, str]:
+    """case 번호를 **숫자로** 정렬한다.
+
+    문자열로 정렬하면 case10 이 case2 앞에 온다. 30개짜리 목록에서 이걸 만나면
+    "정렬이 안 돼 있다"로 읽고 원하는 번호를 눈으로 훑게 된다.
+
+    taxonomy 밖의 값(unclassified 등)은 뒤로 보낸다 - 번호가 없으므로 사이에
+    끼면 그것도 순서가 없어 보인다.
+    """
+    if case_id.startswith("case") and case_id[4:].isdigit():
+        return (0, int(case_id[4:]), "")
+    return (1, 0, case_id)
+
+
+def ordered(case_ids) -> list[str]:
+    """case 목록을 번호순으로. 고르는 자리와 보는 자리가 같은 순서여야 한다."""
+    return sorted(case_ids, key=sort_key)
 
 
 def get(case_id: str) -> Optional[TaxonomyCase]:
@@ -238,7 +259,7 @@ def describe(case_id: str) -> dict:
 #   v1 (원본 taxonomy.txt) -> v2 타입 순서대로 재번호
 #                          -> v3 판정 불가 케이스 제거
 #                          -> v4 case9(서비스 자원 부족 응답) 삽입, 이후 한 칸씩 밀림
-#                          -> v5 case21(검색 미수행) 삽입, 이후 한 칸씩 밀림
+#                          -> v5 case21(Retrieve 미수행) 삽입, 이후 한 칸씩 밀림
 #
 # v4 를 왜 넣었나: v2 는 "서비스 끊김은 답변이 없어 로그에 턴 자체가 안 남는다"고
 # 보고 TYPE2 를 사실상 비워 뒀다. 실제 배포에서는 자원을 확보하지 못하면 서비스가
@@ -272,9 +293,6 @@ V1_TO_CURRENT = {
     "case26": "case29",   # 인젝션
 }
 
-# 이름을 지우지 않고 남긴다. 구 이름으로 참조하는 코드가 있을 수 있다.
-V1_TO_V3 = V1_TO_CURRENT
-
 # v1 에 있었으나 이 로그로는 판정할 수 없어 뺀 것. 키는 v1 번호다.
 V1_DROPPED = {
     "case7": "서비스 끊김 - 답변이 없으면 로그에 턴 자체가 안 남음",
@@ -286,9 +304,12 @@ V1_DROPPED = {
 }
 
 # v1 에 대응이 없는 것. 현재 번호로 적는다.
-# case15~17 은 v3, case9 는 v4, case21 은 v5 에서 생겼다.
-NEW_SINCE_V1 = {"case9", "case15", "case16", "case17", "case21"}
-V3_NEW = NEW_SINCE_V1
+# case15~17 은 v3, case9 는 v4, case21 은 v5, case0 은 이 구현에서 생겼다.
+#
+# case0 은 taxonomy_v2.txt 에도 없다. 빠져 있으면 "이 라벨은 어디서 왔나"를
+# 되짚을 때 v1 에 있었다고 잘못 읽는다 - 실제로는 필터가 재현율 쪽으로 넓게
+# 잡아서 우리가 만든 자리다.
+NEW_SINCE_V1 = {"case0", "case9", "case15", "case16", "case17", "case21"}
 
 
 def migrate(v1_case_id: str) -> Optional[str]:

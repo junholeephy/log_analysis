@@ -305,5 +305,5 @@ def _route_domain(obs, judgment, citation, grounding, done) -> Classification:
     # 문서도 충분하고 답변도 썼는데 불만이다. 두 갈래로 갈린다.
     if not obs.answer_actionable:
         # 물은 것은 맞게 답했으나 행동으로 이어지지 않는 경우.
-        return done("case17", "문서는 충분하나 답변이 실행할 수 있는 수준이 아님")
+        return done("case17", "문서는 충분하나 답변이 두루뭉술해 다음 행동을 알 수 없음")
     return done("case13", "문서는 충분하고 활용했으나 사용자 기대와 다름")

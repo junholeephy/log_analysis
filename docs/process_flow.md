@@ -68,7 +68,7 @@ python <저장소>/src/run.py \
 |  | `case14` | 이전 턴 맥락 상실 | medium |
 |  | `case15` | 복합 질문 일부만 답변 | medium |
 |  | `case16` | 말투·어조 불이행 | medium |
-|  | `case17` | 실행할 수 없는 수준 | medium |
+|  | `case17` | 두루뭉술한 답변 | medium |
 
 **TYPE4 · 할루시네이션 답변** — 고칠 곳: 생성 프롬프트
 
@@ -82,9 +82,9 @@ python <저장소>/src/run.py \
 | | case | 이름 | 신뢰도 |
 |---|---|---|---|
 |  | `case20` | Retrieve 실패 | medium |
-|  | `case21` | 검색 미수행 | high |
+|  | `case21` | Retrieve 미수행 | high |
 |  | `case22` | Retrieve 성공, 생성 실패 | medium |
-| ✗ | `case23` | 구 문서 retrieve | medium |
+| ✗ | `case23` | 구 문서 Retrieve | medium |
 |  | `case24` | 출처/인용 표기 오류 | high |
 
 **TYPE6 · 일반 질문** — 고칠 곳: 모델 자체 · 도구 연동
@@ -642,7 +642,7 @@ near-miss 가 전부 partial 로 새어 "문서는 어느 정도 있었다"가 �
 | 7 | 언어·길이·포맷 요구를 지켰나 | 코드 | `case10` `case11` `case12` — 지켰는데도 불만이면 `case13` |
 | 8 | 말투·어조에 대한 불만인가 | 관측 | `case16` 말투·어조 불이행 |
 | 9 | 질문 성격이 도메인이 아닌가 | 관측 | `case25` `case26` `case27` |
-| 10 | `rag_chunks` 가 비어 있나 | 코드 | `case21` 검색 미수행 |
+| 10 | `rag_chunks` 가 비어 있나 | 코드 | `case21` Retrieve 미수행 |
 | 11 | 문서가 요구를 충족했나 | LLM + 코드 | `case20` Retrieve 실패 |
 | 12 | 답변이 그 문서를 썼나 | LLM | 안 씀 `case22` · 어긋남 `case18` |
 | 13 | 문서도 답변도 멀쩡한데 불만 | 관측 | 실행 불가 `case17` · 의도 불일치 `case13` |
@@ -666,12 +666,12 @@ near-miss 가 전부 partial 로 새어 "문서는 어느 정도 있었다"가 �
 
 | `n_chunks` | `verdict` | 인용 생존 | `answer_used_rag` | `answer_actionable` | → case |
 |---|---|---|---|---|---|
-| **0** | insufficient · partial | — | — | — | `case21` 검색 미수행 |
+| **0** | insufficient · partial | — | — | — | `case21` Retrieve 미수행 |
 | 1↑ | insufficient · partial | — | — | — | `case20` Retrieve 실패 |
 | 1↑ | **sufficient** | **0** | — | — | `case20` Retrieve 실패 ← **강등** |
 | 1↑ | sufficient | 1↑ | `ignored` | — | `case22` Retrieve 성공, 생성 실패 |
 | 1↑ | sufficient | 1↑ | `contradicted` | — | `case18` 문서와 어긋나는 주장 |
-| 1↑ | sufficient | 1↑ | `used` | `false` | `case17` 실행할 수 없는 수준 |
+| 1↑ | sufficient | 1↑ | `used` | `false` | `case17` 두루뭉술한 답변 |
 | 1↑ | sufficient | 1↑ | `used` | `true` | `case13` 의도와 다른 답변 |
 
 세 줄이 이 표의 전부다.
@@ -724,10 +724,10 @@ near-miss 가 전부 partial 로 새어 "문서는 어느 정도 있었다"가 �
 | `case14` | 이전 턴 맥락 상실 | medium | 관측 |
 | `case15` | 복합 질문 일부만 답변 | medium | 관측 |
 | `case16` | 말투·어조 불이행 | medium | 관측 |
-| `case17` | 실행할 수 없는 수준 | medium | 관측 + LLM |
+| `case17` | 두루뭉술한 답변 | medium | 관측 + LLM |
 | `case18` | 문서와 어긋나는 주장 | medium | LLM(⑨) |
 | `case20` | Retrieve 실패 | medium | LLM(⑦) + 인용 |
-| `case21` | 검색 미수행 | high | 코드 (빈 리스트) |
+| `case21` | Retrieve 미수행 | high | 코드 (빈 리스트) |
 | `case22` | Retrieve 성공, 생성 실패 | medium | LLM(⑦+⑨) + 인용 |
 | `case24` | 출처/인용 표기 오류 | high | 코드 · **부가로만** |
 | `case25` | 상식 질문 오답 | **low** | 관측만 |
@@ -748,7 +748,7 @@ near-miss 가 전부 partial 로 새어 "문서는 어느 정도 있었다"가 �
 
 ### 헷갈리기 쉬운 셋
 
-**`case17` 실행할 수 없는 수준** — 내용은 **맞는데** 사용자가 다음에 무엇을 할지
+**`case17` 두루뭉술한 답변** — 내용은 **맞는데** 사용자가 다음에 무엇을 할지
 알 수 없는 경우다. ⑤의 `answer_actionable` 이 `false` 일 때만 여기로 온다.
 
 | 답변 | 판정 | 왜 |
@@ -758,11 +758,14 @@ near-miss 가 전부 partial 로 새어 "문서는 어느 정도 있었다"가 �
 | "연차 이월은 팀장 승인 후 그룹웨어에서" | 정상 | 절차·경로가 있다 |
 
 `case13`(의도와 다른 답변)과 다르다. **`case13` 은 물은 것과 다른 걸 답한 것이고,
-`case17` 은 물은 것을 맞게 답했는데 실행으로 이어지지 않는 것**이다. 고칠 곳도
+`case17` 은 물은 것을 맞게 답했는데 두루뭉술한 것**이다. 고칠 곳도
 다르다 — `case13` 은 의도 이해, `case17` 은 답변의 구체성이다.
 
-`case17` 은 문서도 충분하고 답변이 그 문서를 썼을 때만 나온다(12번). 문서에 답이
-없어서 두루뭉술한 것은 `case20` 이지 `case17` 이 아니다.
+**`case20` 도 증상은 똑같이 두루뭉술하다.** 이름이 증상이라 헷갈리기 쉬운데, 갈리는
+것은 원인이다 — 문서에 답이 **있는데** 답변이 두루뭉술하면 `case17`, 문서에 답이
+**없어서** 두루뭉술하면 `case20` 이다. 그래서 `case17` 은 문서도 충분하고 답변이
+그 문서를 썼을 때만 나온다(12번). 고칠 곳이 정반대라 이 구분이 값을 한다 —
+`case17` 은 답변 구체화, `case20` 은 문서 보강이다.
 
 **`case3` · `case15`** — `case3` 은 사용자가 복합 질문을 한 것(질문 유도로 고친다),
 `case15` 는 모델이 그중 일부만 답한 것(생성으로 고친다)이다.
