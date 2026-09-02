@@ -333,7 +333,7 @@ TEMPLATES = {
          "주시면 되겠습니다. 재발급 수수료가 부과되는 점 참고 부탁드립니다.",
          "짧게 말해달라니까요."),
     ],
-    # 맞지만 실행할 수 없는 수준                                        → case17
+    # 맞지만 두루뭉술해서 다음 행동을 알 수 없다                         → case17
     "not_actionable": [
         ("퇴직연금은 어떻게 운용하나요?",
          ["당사는 확정기여형(DC) 퇴직연금 제도를 운영한다.",
@@ -654,9 +654,15 @@ DEPT_PROFILE = {
               "multi_q_user": 1, "context_lost": 1, "normal": 1},
 }
 
-# 직급은 부서와 무관하게 섞는다. 조직 축을 둘 다 켰을 때 서로 독립인 편이
-# 필터가 제대로 좁히는지 보기 좋다.
-GRADES = ["사원", "주임", "대리", "과장", "차장", "부장", "수석연구원", "Staff Engineer"]
+# 직급은 **db_position_name** 에 들어간다. job_grade 가 아니다 - 이름이 비슷해서
+# 그쪽에 넣고 있었고, 그러면 대시보드의 직급 축이 빈다.
+# 부서와 무관하게 섞는다. 조직 축을 둘 다 켰을 때 서로 독립인 편이 필터가
+# 제대로 좁히는지 보기 좋다.
+POSITIONS = ["사원", "주임", "대리", "과장", "차장", "부장", "수석연구원", "Staff Engineer"]
+
+# job_grade 는 화면에 쓰지 않는 인사 코드값이다. 직급 이름과 다른 모양으로 두어야
+# 둘을 헷갈려 다시 붙이는 일이 없다.
+JOB_GRADES = ["G1", "G2", "G3", "G4", "M1", "M2"]
 
 JOBS = {
     "해외영업팀": "해외영업", "국내영업팀": "국내영업", "브랜드마케팅팀": "마케팅",
@@ -760,10 +766,10 @@ def generate(n: Optional[int] = None, seed: int = 0,
             users.append({
                 "user_id": f"EMP-{dept[:2]}{index:02d}",
                 "db_login_id": "",
-                "job_grade": rng.choice(GRADES),
+                "job_grade": rng.choice(JOB_GRADES),
                 "db_dept_name": dept,
                 "db_job_name": JOBS[dept],
-                "db_position_name": rng.choice(["팀원", "파트장"]),
+                "db_position_name": rng.choice(POSITIONS),
                 "conversations": conversations,
             })
 

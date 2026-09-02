@@ -84,7 +84,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir",
                         help="여기서 가장 최근 conv_parsed_*.json 을 고른다")
     parser.add_argument("--dept-class", help="부서 분류 체계 JSON")
-    parser.add_argument("--job-class", help="직급 분류 체계 JSON")
+    parser.add_argument("--job-class",
+                        help="직무·직급 분류 체계 JSON (어느 축인지는 값으로 판별)")
     known, _ = parser.parse_known_args(sys.argv[1:])
 
     # 설정 파일도 읽는다. 여기 적어둔 값이 무시되면 "설정했는데 안 먹는다"가
@@ -152,7 +153,10 @@ def load(path: str) -> pd.DataFrame:
                 suf = evidence.get("sufficiency") or {}
                 rows.append({
                     "부서": user.get("db_dept_name", "-"),
-                    "직급": user.get("job_grade", "-"),
+                    # 직급은 db_position_name 이다. job_grade 가 아니다 -
+                    # 이름이 비슷해서 그쪽을 읽고 있었고, 그러면 직급 상자가
+                    # 엉뚱한 값으로 채워진다.
+                    "직급": user.get("db_position_name", "-"),
                     "직무": user.get("db_job_name", "-"),
                     "대화": conv.get("conversation_id", "-"),
                     "턴": turn.get("turn"),
@@ -189,11 +193,20 @@ def load_org(dept_path: str | None, job_path: str | None, records: list[dict]):
     from ragdiag.org import detect_field, load_classification
 
     result = {}
-    for label, path in (("부서", dept_path), ("직급", job_path)):
+    for path in (dept_path, job_path):
         if not path or not Path(path).exists():
             continue
         table = load_classification(path)
         chosen, scores = detect_field(records, table)
+        # 어느 축인지는 **판별 결과**가 정한다. 예전에는 두 번째 파일을 무조건
+        # "직급"에 붙였는데, job_class 는 보통 직무(db_job_name) 체계라 상자는
+        # 직급이라 써 놓고 직무를 걸러 주고 있었다. 파일 이름은 아무것도 보장하지
+        # 않는다 - 그래서 값으로 판별해 놓고 그 결과를 쓰지 않으면 판별이 무의미하다.
+        label = LOG_FIELD_TO_COLUMN.get(chosen or "")
+        if not label:
+            result[Path(path).stem] = {"table": table, "field": None, "scores": scores,
+                                       "orphan": chosen}
+            continue
         result[label] = {"table": table, "field": chosen, "scores": scores}
     return result
 
@@ -205,8 +218,15 @@ def flat_records(path: str) -> list[dict]:
             for u in raw.get("analysis_results", [])]
 
 
-LOG_FIELD_TO_COLUMN = {"db_dept_name": "부서", "job_grade": "직급",
-                       "db_job_name": "직무", "db_position_name": "직위"}
+# 판별된 로그 필드 -> 화면의 축. job_grade 는 여기 없다 - 직급은
+# db_position_name 이고, job_grade 는 이 화면이 쓰지 않는 필드다. 없는 필드에
+# 체계가 붙으면 라벨을 지어내지 말고 "어느 축에도 못 붙였다"고 말해야 한다.
+LOG_FIELD_TO_COLUMN = {"db_dept_name": "부서", "db_position_name": "직급",
+                       "db_job_name": "직무"}
+
+# 사이드바에서 좁힐 수 있는 조직 축. 조직 탭의 기준 라디오와 같은 순서다 -
+# 다르면 표에서 본 축을 고르는 자리에서 못 찾는다.
+ORG_AXES = ("부서", "직급", "직무")
 
 
 
@@ -248,10 +268,7 @@ def case_tooltips(columns, numeric: bool = True) -> dict:
 
 def crosstab(df: pd.DataFrame, axis: str) -> pd.DataFrame:
     table = pd.crosstab(df[axis], df["case"])
-    order = sorted(table.columns,
-                   key=lambda c: (0, int(c[4:])) if c.startswith("case") and c[4:].isdigit()
-                   else (1, 0))
-    table = table[order]
+    table = table[tx.ordered(table.columns)]
     table["계"] = table.sum(axis=1)
     return table.sort_values("계", ascending=False)
 
@@ -359,11 +376,12 @@ def main() -> None:
 
     with st.sidebar:
         st.header("좁히기")
-        depts = cascade("부서")
-        grades = cascade("직급")
+        narrowed = {axis: cascade(axis) for axis in ORG_AXES}
         # 번호만 보고 무엇인지 아는 사람은 없다. 고르는 자리에 이름을 붙이고,
         # 고른 뒤에는 옆 케이스와 가르는 기준까지 펼쳐 준다.
-        cases = st.multiselect("case", sorted(df["case"].unique()),
+        # 문자열로 정렬하면 case10 이 case2 앞에 온다. 표(crosstab)와 순서가
+        # 어긋나서, 표에서 본 케이스를 고르는 자리에서 못 찾는다.
+        cases = st.multiselect("case", tx.ordered(df["case"].unique()),
                                format_func=tx.label)
         for cid in cases:
             if tx.desc(cid):
@@ -381,6 +399,9 @@ def main() -> None:
                     st.caption(f"· {label} ← `{info['field']}` {cov.rate:.0%}")
                     if cov.unmapped:
                         st.caption(f"  체계에 없는 값 {len(cov.unmapped)}종 → (미분류)")
+                elif info.get("orphan"):
+                    st.caption(f"· {label} → `{info['orphan']}` 에 붙었지만 "
+                               f"화면에 그 축이 없다")
                 else:
                     st.caption(f"· {label} 매칭 실패 — 원래 값으로 표시")
         st.divider()
@@ -392,7 +413,7 @@ def main() -> None:
     view = df
     # None 은 "안 좁혔다", 빈 집합은 "골랐는데 해당 없음"이다. 둘을 같게 다루면
     # 조건을 걸었는데 전체가 나온다.
-    for column, chosen in [("부서", depts), ("직급", grades),
+    for column, chosen in [*narrowed.items(),
                            ("case", cases or None), ("신뢰도", confs or None)]:
         if chosen is not None:
             view = view[view[column].isin(chosen)]
@@ -467,17 +488,121 @@ def main() -> None:
         _cases(view)
 
 
+def bar_height(bars: int) -> int:
+    """막대 하나에 26px.
+
+    고정 높이를 주면 3종일 때는 막대가 통통해지고 20종일 때는 라벨이 겹친다.
+    종 수는 필터에 따라 매번 달라진다.
+    """
+    return max(160, 26 * bars + 60)
+
+
 def _distribution(view: pd.DataFrame) -> None:
     st.subheader("무엇이 얼마나")
-    left, right = st.columns(2)
-    with left:
-        st.caption("case 별")
-        counts = view.groupby(["case", "case명"]).size().reset_index(name="건수")
-        counts["라벨"] = counts["case"] + " " + counts["case명"]
-        st.bar_chart(counts.set_index("라벨")["건수"], horizontal=True)
-    with right:
-        st.caption("type 별")
-        st.bar_chart(view["type"].replace("", "(미분류)").value_counts(), horizontal=True)
+
+    # 분모에서 둘을 뺀다.
+    #
+    # case0 은 실패가 아니고(필터가 넓게 잡아 딸려온 턴), unclassified 는 판정이
+    # 실패한 것이라 어느 유형인지 모른다. 둘을 섞어 두면 "case20 22%" 가 "실패 중
+    # 22%" 로 읽히는데 실제로는 "판정된 턴 중 22%" 다. 다른 숫자를 같은 말로
+    # 읽게 만드는 것이라, 보기 좋고 나쁘고의 문제가 아니다.
+    is_zero = view["case"] == "case0"
+    is_unjudged = view["case"].isin([tx.UNCLASSIFIED, tx.OUT_OF_TAXONOMY])
+    failures = view[~is_zero & ~is_unjudged]
+
+    head = st.columns(3)
+    head[0].metric("실패", f"{len(failures):,}건",
+                   help="아래 차트의 분모다. 아래 둘을 뺀 수다.")
+    head[1].metric("필터 오탐", f"{int(is_zero.sum()):,}건",
+                   help="case0 — 후속 발화가 앞 답변을 문제 삼지 않는다. "
+                        "챗봇이 아니라 필터를 볼 것.")
+    head[2].metric("판정 실패", f"{int(is_unjudged.sum()):,}건",
+                   help="어느 유형인지 모르는 턴. 유형별 집계에 넣으면 "
+                        "'없는 유형'이 하나 생긴 것처럼 읽힌다.")
+
+    if failures.empty:
+        st.info("실패로 분류된 턴이 없습니다.")
+        return
+
+    counts = (failures.groupby(["case", "case명", "신뢰도"])
+              .size().reset_index(name="건수"))
+    counts["라벨"] = counts["case"] + " · " + counts["case명"]
+    counts["신뢰"] = counts["신뢰도"].map(CONF_LABEL).fillna("—")
+
+    # 둘을 나란히 두면 19종짜리 가로 막대가 반 폭에 눌려 라벨이 잘린다. 이 탭에서
+    # 읽는 것은 "무엇이 제일 많나" 하나인데, 그걸 보려고 잘린 라벨을 짚어야 했다.
+    # 세로로 쌓으면 스크롤이 늘지만 한 눈에 읽힌다 - 스크롤이 더 싸다.
+    #
+    # 색은 신뢰도다. case25(상식 오답)는 판정자의 사전지식에 기대고 case8(출력
+    # 잘림)은 코드가 판정하는데, 같은 길이의 막대로 나란히 있으면 같은 무게로
+    # 읽힌다. "이 숫자는 덜 믿어라"가 차트 안에 있어야 한다.
+    st.caption("case 별 — 많은 것부터 · 색은 신뢰도")
+    st.bar_chart(counts, x="라벨", y="건수", color="신뢰", horizontal=True,
+                 sort="-건수", x_label="", y_label="건수",
+                 height=bar_height(len(counts)))
+
+    # 위 차트를 type 으로 묶은 것이다. 그냥 막대로 그리면 위와 같은 말을 한 번 더
+    # 하는 셈이라, case 로 쌓아서 "TYPE5 가 크고 그 안은 case20 이 대부분" 까지
+    # 한 번에 읽히게 한다.
+    st.caption("type 별 — case 를 쌓은 것")
+    by_type = (failures.assign(type=failures["type"].replace("", "(미분류)"))
+               .groupby(["type", "case"]).size().reset_index(name="건수"))
+    st.bar_chart(by_type, x="type", y="건수", color="case", horizontal=True,
+                 stack=True, sort="-건수", x_label="", y_label="건수",
+                 height=bar_height(by_type["type"].nunique()))
+
+    _pareto(counts)
+
+
+def _pareto(counts: pd.DataFrame) -> None:
+    """상위 몇 종이 실패의 절반인가.
+
+    19종을 다 고칠 수는 없다. 막대만 보면 "case20 이 제일 많다"까지는 알겠는데
+    다음에 무엇을 할지는 안 나온다 - 몇 개를 고치면 어디까지 덮이는지가 그 답이다.
+
+    순위를 x 축으로 둔다. case 이름을 축에 두면 위 막대 차트와 순서가 어긋날 때
+    두 그림이 다른 이야기를 하게 되는데, 순위는 어긋날 수가 없다.
+    """
+    ranked = counts.sort_values("건수", ascending=False).reset_index(drop=True)
+    total = int(ranked["건수"].sum())
+    curve = pd.DataFrame({
+        "상위 n종": range(1, len(ranked) + 1),
+        "누적 비율": (ranked["건수"].cumsum() / total).round(3),
+    })
+
+    def cover(n: int) -> str:
+        return f"{curve['누적 비율'][min(n, len(curve)) - 1]:.0%}"
+
+    st.caption(f"누적 — 상위 3종이 실패의 **{cover(3)}**, "
+               f"5종이 **{cover(5)}**, 10종이 **{cover(10)}** ({len(ranked)}종 중)")
+    st.line_chart(curve, x="상위 n종", y="누적 비율", height=220)
+
+
+# 전사 기준선 행의 이름. 부서 이름과 섞이지 않게 표시를 붙인다.
+BASELINE = "■ 전체"
+
+# 개별 케이스 탭에서 "유형을 안 좁혔다"를 뜻하는 값. case id 와 겹치지 않는다.
+ALL_CASES = "(전체)"
+
+# 관측÷기대가 이 값이면 색이 꽉 찬다. 2배까지는 흔하고 3배부터가 눈에 띄는
+# 편중이라, 여기서 포화시켜야 상위가 다 같은 색으로 뭉개지지 않는다.
+LIFT_FULL = 3.0
+
+# 이상치 목록에 올릴 최소 턴 수. 기대가 0.2인데 3건 나오면 15배가 되지만
+# 그건 표본이 말하는 것이 아니라 우연이 말하는 것이다.
+MIN_OUTLIER_TURNS = 5
+
+
+def expected(counts: pd.DataFrame) -> pd.DataFrame:
+    """부서 규모와 전사 case 비율만으로 예상되는 건수.
+
+    "이 부서에 case20 이 많다"는 그 부서가 크기만 해도 성립한다. 규모를 빼고
+    남는 것이 편중이다.
+    """
+    rows, cols = counts.sum(axis=1), counts.sum(axis=0)
+    total = float(cols.sum()) or 1.0
+    return pd.DataFrame({c: rows * (cols[c] / total) for c in counts.columns},
+                        index=counts.index)
 
 
 def _by_org(view: pd.DataFrame, org: dict) -> None:
@@ -486,9 +611,19 @@ def _by_org(view: pd.DataFrame, org: dict) -> None:
         "**이 표가 이 도구의 핵심이다.** case20(Retrieve 실패)는 '검색기가 못 찾음'과 "
         "'코퍼스에 문서가 없음'을 합친 라벨이라 로그만으로는 가를 수 없다. "
         "특정 부서에 몰려 있으면 후자, 즉 그 도메인 문서가 비어 있다는 뜻이다.")
+
+    # 실패만 센다. case0 은 실패가 아니고 unclassified 는 어느 유형인지 모르는데,
+    # **그 비중이 부서마다 다르다.** 분모에 남겨 두면 부서마다 다르게 왜곡되어
+    # 부서 간 비교 자체가 흔들린다 - 이 탭의 존재 이유가 그 비교다.
+    dropped = view["case"].isin(["case0", tx.UNCLASSIFIED, tx.OUT_OF_TAXONOMY])
+    failures = view[~dropped]
+    if failures.empty:
+        st.info("실패로 분류된 턴이 없습니다.")
+        return
+
     picker = st.columns([2, 3])
     with picker[0]:
-        axis = st.radio("기준", ["부서", "직급", "직무"], horizontal=True,
+        axis = st.radio("기준", list(ORG_AXES), horizontal=True,
                         label_visibility="collapsed")
     org_for_axis = org.get(axis)
     level_label = {"major": "대분류", "middle": "중분류", "item": "소분류"}
@@ -497,37 +632,124 @@ def _by_org(view: pd.DataFrame, org: dict) -> None:
             level = st.radio(
                 "층", ["major", "middle", "item"], index=0, horizontal=True,
                 format_func=lambda x: level_label[x], label_visibility="collapsed")
-        table_source = view.assign(
-            **{axis: view[axis].map(
+        table_source = failures.assign(
+            **{axis: failures[axis].map(
                 lambda v: org_for_axis["table"].rollup(v, level))})
         st.caption(f"{level_label[level]} 기준 · "
                    f"{org_for_axis['field']} 필드로 매칭")
     else:
-        table_source = view
+        table_source = failures
         if org_for_axis:
             st.caption("이 축에 붙는 분류 체계를 찾지 못해 원래 값으로 표시한다.")
 
     table = crosstab(table_source, axis)
-    st.dataframe(table, use_container_width=True,
+    counts = table.drop(columns="계")
+    share = counts.div(table["계"], axis=0)
+    ratio = counts / expected(counts)
+
+    st.caption(f"실패 {len(failures):,}건 기준 · "
+               f"case0·판정 실패 {int(dropped.sum()):,}건은 뺐다")
+    st.dataframe(baseline_row(table, table.sum(axis=0)),
+                 use_container_width=True,
                  column_config=case_tooltips(table.columns))
 
-    counts_only = table.drop(columns="계")
-    share = counts_only.div(table["계"], axis=0)
+    # 색이 무엇을 가리킬지 고르게 한다.
+    #
+    # 비율로 칠하면 상위가 전부 case20 이 된다 - 전사 실패의 4분의 1이라 어느
+    # 부서를 봐도 크게 나오기 때문이다. 그건 분포 탭에서 이미 아는 사실이고,
+    # 여기서 알고 싶은 것은 "이 부서에서 **유독** 많은가"다.
+    mode = st.radio("색 기준", ["관측÷기대", "행 내 비율"], horizontal=True,
+                    label_visibility="collapsed")
+    if mode == "관측÷기대":
+        text = _cells(ratio, counts, lambda v: f"{v:.1f}×")
+        paint = (ratio / LIFT_FULL).clip(upper=1.0)
+        body = baseline_row(text, _cells(_ones(ratio), counts, lambda v: f"{v:.1f}×",
+                                         totals=counts.sum(axis=0)))
+        paint = baseline_row(paint, pd.Series(1.0 / LIFT_FULL, index=ratio.columns))
+        st.caption(f"**관측÷기대** — 부서 규모와 전사 case 비율로 예상되는 건수 대비. "
+                   f"1.0× 가 평균이고 {LIFT_FULL:g}× 에서 색이 꽉 찬다 · 괄호는 건수")
+    else:
+        body = baseline_row(_cells(share, counts, "{:.0%}".format),
+                            _cells(_global_share(counts), counts,
+                                   "{:.0%}".format, totals=counts.sum(axis=0)))
+        paint = baseline_row(share, _global_share(counts))
+        st.caption("**행 내 비율** — 그 부서 실패 중 몇 %인가 · 괄호는 건수")
 
-    # 비율만 있으면 "50%" 가 2건 중 1건인지 40건 중 20건인지 알 수 없다. 성향을
-    # 보려고 비율을 쓰지만, 몇 건 위에서 나온 비율인지 모르면 그 성향을 믿을
-    # 수 없다. 색은 비율이 정하고 괄호가 표본 크기를 말한다.
-    def with_count(ratio, count):
-        return pd.Series(
-            ["—" if not c else f"{p:.0%} ({int(c)})" for p, c in zip(ratio, count)],
-            index=ratio.index)
-
-    st.caption("행 내 비율 · 괄호는 건수 — 몇 건 위에서 나온 비율인지 함께 본다 · "
-               "열 머리글에 마우스를 올리면 무슨 문제인지 나온다")
+    st.caption("맨 윗줄이 전사 기준선이다 — 없으면 61% 가 높은지 낮은지 "
+               "나머지 행을 눈으로 평균 내야 한다 · 열 머리글에 마우스를 올리면 "
+               "무슨 문제인지 나온다")
     st.dataframe(
-        share.combine(counts_only, with_count).style.apply(
-            lambda _: share.map(heat), axis=None),
-        use_container_width=True, column_config=case_tooltips(share.columns, numeric=False))
+        body.style.apply(lambda _: paint.map(heat), axis=None),
+        use_container_width=True,
+        column_config=case_tooltips(body.columns, numeric=False))
+
+    _outliers(counts, ratio, axis)
+
+
+def _ones(like: pd.DataFrame) -> pd.Series:
+    return pd.Series(1.0, index=like.columns)
+
+
+def _global_share(counts: pd.DataFrame) -> pd.Series:
+    cols = counts.sum(axis=0)
+    return cols / (float(cols.sum()) or 1.0)
+
+
+def _cells(values, counts: pd.DataFrame, fmt, totals=None):
+    """값과 건수를 한 칸에 넣는다.
+
+    비율만 있으면 "50%" 가 2건 중 1건인지 40건 중 20건인지 알 수 없다. 성향을
+    보려고 비율을 쓰지만, 몇 건 위에서 나온 비율인지 모르면 그 성향을 믿을 수 없다.
+    """
+    if isinstance(values, pd.Series):     # 기준선 한 줄
+        return pd.Series({c: "—" if not totals[c] else f"{fmt(values[c])} ({int(totals[c])})"
+                          for c in values.index})
+    return values.combine(counts, lambda col, n: pd.Series(
+        ["—" if not c else f"{fmt(v)} ({int(c)})" for v, c in zip(col, n)],
+        index=col.index))
+
+
+def baseline_row(table, row):
+    """맨 위에 전사 기준선을 붙인다.
+
+    61% 가 높은지 낮은지 판단하려면 나머지 열네 행을 눈으로 평균 내야 했다.
+    한 줄이면 모든 행이 그것과 비교된다.
+    """
+    head = pd.DataFrame([row], index=[BASELINE])[table.columns]
+    return pd.concat([head, table])
+
+
+def _outliers(counts: pd.DataFrame, ratio: pd.DataFrame, axis: str) -> None:
+    """유독 많은 것만 뽑아 목록으로.
+
+    코퍼스 탭은 문서팀에 그대로 넘길 목록을 낸다. 이 탭은 표만 냈다 - 285칸을
+    눈으로 훑어 편중을 찾는 일이 읽는 사람 몫이었는데, 그건 계산할 수 있는 것이다.
+    """
+    found = [{axis: group, "무엇이": tx.label(case),
+              "배수": round(float(ratio.loc[group, case]), 1),
+              "턴": int(counts.loc[group, case]),
+              "전사에서는": f"{_global_share(counts)[case]:.0%}"}
+             for group in counts.index for case in counts.columns
+             if counts.loc[group, case] >= MIN_OUTLIER_TURNS
+             and ratio.loc[group, case] >= 1.5]
+
+    st.subheader("유독 많은 것")
+    if not found:
+        st.info(f"턴 {MIN_OUTLIER_TURNS}건 이상이면서 기대의 1.5배를 넘는 조합이 없습니다.")
+        return
+
+    st.caption(f"기대의 1.5배를 넘고 턴이 {MIN_OUTLIER_TURNS}건 이상인 것만. "
+               "표본이 작으면 배수는 쉽게 커지므로 건수를 함께 본다.")
+    st.dataframe(
+        pd.DataFrame(found).sort_values("배수", ascending=False),
+        use_container_width=True, hide_index=True,
+        column_config={
+            "배수": st.column_config.NumberColumn(
+                "기대 대비", format="%.1f×",
+                help="부서 규모와 전사 case 비율로 예상되는 건수 대비"),
+            "턴": st.column_config.NumberColumn("턴"),
+            "전사에서는": st.column_config.TextColumn(
+                "전사 비율", help="이 case 가 전체 실패에서 차지하는 비율")})
 
 
 def _corpus_gaps(view: pd.DataFrame) -> None:
@@ -593,10 +815,34 @@ def _cases(view: pd.DataFrame) -> None:
     st.caption("**행을 누르면** 그 케이스의 판정 근거가 아래에 펼쳐진다. "
                "집계만 보고 근거를 못 보면 '왜 이 라벨이지'에서 막힌다.")
 
+    state = st.session_state
+
+    # 한 유형만 훑는 것과 전부 섞어 훑는 것은 다른 일이다. "case20 이 왜 이렇게
+    # 많지"는 case20 만 연달아 봐야 답이 나오고, "이 데이터가 대체로 어떤가"는
+    # 섞어 봐야 한다. 사이드바 case 필터로도 좁힐 수 있지만 그건 모든 탭에 걸려서,
+    # 분포와 조직 탭까지 한 유형으로 좁아진다 - 비교 대상이 사라진다.
+    per_case = view["case"].value_counts()
+    # format_func 은 나중에 불린다. view 를 그대로 잡아 두면 아래에서 좁힌 뒤의
+    # 건수로 라벨을 그려서 "전체 (8건)" 이 "전체 (2건)" 이 된다 - 고르는 자리가
+    # 고른 결과를 보여주는 셈이라, 무엇을 고를지 판단할 근거가 사라진다.
+    whole = len(view)
+    picked = st.selectbox(
+        "케이스", [ALL_CASES] + tx.ordered(per_case.index),
+        format_func=lambda c: (f"전체 ({whole:,}건)" if c == ALL_CASES
+                               else f"{tx.label(c)} ({per_case[c]:,}건)"),
+        label_visibility="collapsed")
+    if picked != state.get("case_pick"):
+        # 고른 유형이 바뀌면 행이 통째로 달라진다. 자리를 그대로 두면 엉뚱한
+        # 케이스를 보고 있게 되고, 표의 체크는 옛 자리에 남는다.
+        state.case_pick = picked
+        state.case_idx = 0
+        state.case_nonce = state.get("case_nonce", 0) + 1
+    if picked != ALL_CASES:
+        view = view[view["case"] == picked]
+
     # 열 열 개를 늘어놓으면 좁은 화면에서 질문이 끝까지 밀려 안 보인다.
     # 고르는 데 필요한 것만 남기고 나머지는 아래 상세가 편다.
     total = len(view)
-    state = st.session_state
     state.setdefault("case_idx", 0)
     # 표를 새 위젯으로 만들면 선택이 지워진다. 버튼으로 옮겼는데 표에는 옛 행이
     # 계속 칠해져 있으면 어느 쪽이 지금 보고 있는 것인지 알 수 없다.
@@ -673,12 +919,38 @@ def _navigate(state, total: int, where: str) -> bool:
     return moved
 
 
-# 판정 대상 답변 상자. 넘치면 이 높이 안에서 스크롤한다.
+# 앞 질문 · 답변 · 불만 상자. 넘치면 이 높이 안에서 스크롤한다.
 ANSWER_BOX_PX = 300
-# 3/5 폭에서 그 높이에 대략 들어가는 글자 수 - 한글 40자쯤이 한 줄, 여덟 줄에
-# 문단 사이가 붙어 300px 다. 둘은 같이 움직여야 한다: 상자가 글자보다 크면
-# 짧은 답변 아래가 비고, 작으면 안 넘쳐도 잘린 것처럼 보인다.
-ANSWER_FITS = 300
+
+# 폭 1칸이 그 높이에 담는 글자 수. 세 상자가 1:3:1 이라 좁은 칸은 한 줄에
+# 3분의 1밖에 안 들어간다 - 같은 임계값을 쓰면 좁은 칸은 넘쳐도 안 잡히고,
+# 넓은 칸은 안 넘쳤는데 잘린 것처럼 보인다. 그래서 폭에 비례시킨다.
+# 한글 40자쯤이 3칸 폭 한 줄, 여덟 줄에 문단 사이가 붙어 300px 다.
+FITS_PER_WEIGHT = 100
+
+
+def _bordered(text: str) -> None:
+    with st.container(border=True):
+        st.write(text)
+
+
+def boxed(text: str, weight: int, paint) -> None:
+    """폭에 비해 길면 고정 높이 안에서 스크롤한다.
+
+    긴 글 하나가 세로로 늘어나면 양옆 상자는 저 위에 남고 아래 Step 1·2·3 이
+    화면 밖으로 밀린다 - 판정 경로를 보려고 연 패널인데 정작 경로가 안 보인다.
+
+    streamlit 에 max-height 가 없어서(높이는 고정이거나 내용에 맞추거나 둘뿐)
+    넘칠 때만 상자를 씌운다. 짧은 글까지 고정 높이로 두면 아래가 비어서 더
+    읽기 나쁘다.
+    """
+    if len(text) <= FITS_PER_WEIGHT * weight:
+        paint(text)
+        return
+    with st.container(height=ANSWER_BOX_PX, border=False):
+        paint(text)
+    # 잘린 상자에 아무 표시가 없으면 "여기서 끝났나"로 읽힌다.
+    st.caption(f"{len(text):,}자 — 상자 안에서 스크롤")
 
 
 def detail(row: pd.Series) -> None:
@@ -715,33 +987,17 @@ def detail(row: pd.Series) -> None:
     with asked:
         st.markdown("**앞 질문**")
         st.caption("이 질문에 대한 답이 판정 대상이다")
-        with st.container(border=True):
-            st.write(prior[-1] if prior else "—")
+        boxed(prior[-1] if prior else "—", 1, _bordered)
         if len(prior) > 1:
             st.caption(f"그 앞에 {len(prior) - 1}개 더 (아래 접힘 상자)")
     with said:
         st.markdown("**비판받은 답변**")
         st.caption("이것이 판정 대상이다")
-        answer = original.get("llm_ans_on_last_q", "") or "—"
-        # 셋 중 이것만 길이가 안 잡힌다. 질문과 불만은 사람이 친 것이라 짧고,
-        # 답변은 모델이 낸 것이라 문단 몇 개가 그냥 나온다. 길어지면 양옆 상자는
-        # 저 위에 남고 아래 Step 1·2·3 이 화면 밖으로 밀려서, 판정 경로를 보려고
-        # 연 패널인데 정작 경로가 안 보인다.
-        #
-        # streamlit 에 max-height 가 없다 - 높이는 고정이거나 내용에 맞추거나
-        # 둘뿐이다. 그래서 넘칠 때만 상자에 담는다. 짧은 답변까지 고정 높이로
-        # 두면 상자 아래가 비어서 더 읽기 나쁘다.
-        if len(answer) > ANSWER_FITS:
-            with st.container(height=ANSWER_BOX_PX, border=False):
-                st.info(answer)
-            # 잘린 상자에 아무 표시가 없으면 "답변이 여기서 끝났나"로 읽힌다.
-            st.caption(f"{len(answer):,}자 — 상자 안에서 스크롤")
-        else:
-            st.info(answer)
+        boxed(original.get("llm_ans_on_last_q", "") or "—", 3, st.info)
     with complained:
         st.markdown("**사용자의 불만**")
         st.caption("이 발화가 라벨을 정한다")
-        st.warning(original.get("current_query", "") or "—")
+        boxed(original.get("current_query", "") or "—", 1, st.warning)
 
     st.info(f"**판정 근거** — {row['판정근거']}")
     if row["부가"]:

@@ -12,6 +12,7 @@ src/ 는 안 올라가서 `import ragdiag` 가 자기 자신을 못 찾는다.
 """
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -85,6 +86,58 @@ def render(result_file, *extra, monkeypatch=None):
     at.run = run_with_args
     at.run()
     return at
+
+
+# 스텁 판정은 모든 턴을 같은 case 로 만든다. 분포를 재려면 섞어야 한다.
+SPREAD = ["case20", "case20", "case12", "case9", "case0", "case0",
+          "unclassified", "case25"]
+
+
+def _with_cases(result_file, tmp_path, cases):
+    """fixture 결과의 case 만 갈아끼운 사본. 경로를 돌려준다."""
+    payload = json.loads(Path(result_file).read_text(encoding="utf-8"))
+    turns = [t for u in payload["analysis_results"]
+             for c in u["conversations"] for t in c["turns"]]
+    assert len(turns) == len(cases), f"턴 {len(turns)}개에 case {len(cases)}개"
+    for turn, case in zip(turns, cases):
+        turn["classification"]["case_id"] = case
+        turn["classification"]["case_name"] = case
+    out = tmp_path / "spread.json"
+    out.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return out
+
+
+def _org_payload(result_file, tmp_path, plan):
+    """fixture 한 사람을 본떠 부서·case 를 원하는 대로 깔아 놓은 결과 파일.
+
+    fixture 는 8턴뿐이라 편중을 심을 자리가 없다. 한 칸에 5건 이상 넣으면서
+    부서 간 대비까지 만들려면 그보다 커야 한다. plan 은 (부서, case, 건수) 목록.
+    """
+    payload = json.loads(Path(result_file).read_text(encoding="utf-8"))
+    template = payload["analysis_results"][0]
+    turn = template["conversations"][0]["turns"][0]
+
+    users, n = [], 0
+    for dept, case, count in plan:
+        turns = []
+        for _ in range(count):
+            n += 1
+            copy = json.loads(json.dumps(turn))
+            copy["turn"] = 2
+            copy["classification"]["case_id"] = case
+            copy["classification"]["case_name"] = case
+            turns.append(copy)
+        user = json.loads(json.dumps({k: v for k, v in template.items()
+                                      if k != "conversations"}))
+        user["db_dept_name"] = dept
+        user["user_id"] = f"EMP-{n:03d}"
+        user["conversations"] = [{"conversation_id": f"C-{n:04d}", "turns": turns}]
+        users.append(user)
+
+    payload["analysis_results"] = users
+    out = tmp_path / "org.json"
+    out.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return out
 
 
 def test_dashboard_lives_directly_under_src():
@@ -491,7 +544,7 @@ def test_case_columns_carry_their_meaning_as_a_tooltip():
     assert tooltip("unclassified"), "분류 실패에도 무언가는 나와야 한다"
 
 
-def test_heatmap_headers_get_the_tooltip(result_file):
+def test_heatmap_headers_get_the_tooltip(result_file, tmp_path):
     """히트맵 열이 case 다. 번호만 있으면 이 표를 못 읽는다.
 
     dashboard.py 는 streamlit 밖에서 import 하면 종료하므로(그게 맞다) 실제로
@@ -499,7 +552,9 @@ def test_heatmap_headers_get_the_tooltip(result_file):
     """
     import json
 
-    at = render(result_file)
+    # 스텁 판정은 실패가 아닌 한 유형만 낸다. 그러면 조직 탭이 "실패 없음"으로
+    # 빠져서 히트맵 자체가 안 그려진다. 실패를 깔아 두고 잰다.
+    at = render(_with_cases(result_file, tmp_path, SPREAD))
     assert not at.exception
 
     tips = {}
@@ -525,25 +580,37 @@ def test_heatmap_headers_get_the_tooltip(result_file):
         assert "문제 없음" in tips["unclassified"], tips["unclassified"]
 
 
-def test_ratio_table_shows_the_count_too(result_file):
-    """35% 가 2건 중 1건인지 40건 중 20건인지 모르면 그 성향을 믿을 수 없다."""
+def test_ratio_table_shows_the_count_too(result_file, tmp_path):
+    """35% 가 2건 중 1건인지 40건 중 20건인지 모르면 그 성향을 믿을 수 없다.
+
+    색 기준을 무엇으로 두든 건수는 붙어 있어야 한다 - 표본 크기를 모르면
+    2.0× 도 40% 도 똑같이 못 믿는다.
+    """
     import re
 
-    at = render(result_file)
+    def cells(at):
+        out = []
+        for frame in at.dataframe:
+            data = frame.value
+            data = data.data if hasattr(data, "data") else data
+            out += [str(v) for row in data.values for v in row]
+        return out
+
+    at = render(_with_cases(result_file, tmp_path, SPREAD))
     assert not at.exception
 
-    # 열 이름으로 표를 고르지 않는다 - 데이터에 따라 case 열이 하나도 없고
-    # unclassified 만 있을 수 있다. 모든 표의 셀을 훑는다.
-    cells = []
-    for frame in at.dataframe:
-        data = frame.value
-        data = data.data if hasattr(data, "data") else data
-        cells += [str(v) for row in data.values for v in row]
+    seen = cells(at)
+    lifts = [c for c in seen if re.fullmatch(r"[\d.]+× \(\d+\)", c)]
+    assert lifts, f"관측÷기대에 건수가 없다. 본 것: {sorted(set(seen))[:12]}"
 
-    ratios = [c for c in cells if re.fullmatch(r"\d+% \(\d+\)", c)]
-    assert ratios, f"비율에 건수가 없다. 본 것: {sorted(set(cells))[:12]}"
+    # 색 기준을 비율로 돌려도 마찬가지다.
+    next(r for r in at.tabs[1].radio if "관측÷기대" in r.options).set_value("행 내 비율")
+    at.run()
+    seen = cells(at)
+    ratios = [c for c in seen if re.fullmatch(r"\d+% \(\d+\)", c)]
+    assert ratios, f"비율에 건수가 없다. 본 것: {sorted(set(seen))[:12]}"
     # 0 건은 0% 로 채우지 않는다 - 빈 칸이 많으면 눈이 갈 데를 못 찾는다.
-    assert "0% (0)" not in cells
+    assert "0% (0)" not in seen
 
 
 # ---------------------------------------------------------------------------
@@ -815,6 +882,270 @@ def test_only_one_row_is_checked(result_file):
             break
         button("next-top").click(); at.run()
         assert len(_checked_row(at)) == 1, _checked_row(at)
+
+
+def test_org_counts_only_failures(result_file, tmp_path):
+    """case0 과 판정 실패의 비중은 **부서마다 다르다.**
+
+    분모에 남겨 두면 부서마다 다르게 왜곡되어 부서 간 비교 자체가 흔들린다 -
+    이 탭의 존재 이유가 그 비교다. 실데이터에서 부서별로 9.9%p 까지 갈렸다.
+    """
+    log = _org_payload(result_file, tmp_path, [
+        ("A팀", "case20", 6), ("A팀", "case0", 6),
+        ("B팀", "case20", 6), ("B팀", "unclassified", 2)])
+    tab = render(log).tabs[1]
+
+    counts = tab.get("dataframe")[0].value
+    assert "case0" not in counts.columns, list(counts.columns)
+    assert "unclassified" not in counts.columns, list(counts.columns)
+    assert int(counts.loc["■ 전체", "계"]) == 12, counts
+
+    # 분모가 실패면 두 부서 다 case20 100% 다. 전체 분모면 50% 와 75% 로 갈린다.
+    assert int(counts.loc["A팀", "계"]) == 6, counts
+    assert int(counts.loc["B팀", "계"]) == 6, counts
+
+
+def test_org_table_carries_a_baseline_row(result_file, tmp_path):
+    """61% 가 높은지 낮은지 판단하려면 나머지 열네 행을 눈으로 평균 내야 했다."""
+    log = _org_payload(result_file, tmp_path, [
+        ("A팀", "case20", 6), ("B팀", "case12", 6)])
+    tab = render(log).tabs[1]
+
+    counts = tab.get("dataframe")[0].value
+    assert counts.index[0] == "■ 전체", list(counts.index)
+    assert int(counts.loc["■ 전체", "case20"]) == 6, counts
+
+    # 관측÷기대에서 기준선은 정의상 1.0× 다. 그게 맨 위에 있어야 아래 숫자가
+    # 무엇에 대한 배수인지 설명 없이 읽힌다.
+    lift = tab.get("dataframe")[1].value
+    assert lift.loc["■ 전체", "case20"].startswith("1.0×"), lift.loc["■ 전체"]
+
+
+def test_org_surfaces_what_is_unusual_not_what_is_common(result_file, tmp_path):
+    """색을 비율로 칠하면 상위가 전부 case20 이 된다.
+
+    전사 실패의 4분의 1이라 어느 부서를 봐도 크게 나오기 때문이다. 그건 분포
+    탭에서 이미 아는 사실이고, 여기서 알고 싶은 것은 "이 부서에서 유독 많은가"다.
+    실데이터에서 비율 상위 8칸 중 5칸이 case20 이었다.
+    """
+    log = _org_payload(result_file, tmp_path, [
+        ("흔한팀", "case20", 20), ("흔한팀", "case8", 1),
+        ("특이팀", "case20", 5), ("특이팀", "case8", 6)])
+    tab = render(log).tabs[1]
+
+    outliers = tab.get("dataframe")[2].value
+    top = outliers.iloc[0]
+    assert top["부서"] == "특이팀", outliers
+    assert "case8" in top["무엇이"], outliers
+    assert top["배수"] > 1.5, outliers
+
+    # case20 은 어느 부서에서도 흔하므로 이상치가 아니다.
+    assert not [r for _, r in outliers.iterrows() if "case20" in r["무엇이"]], outliers
+
+
+def test_org_outliers_need_enough_turns(result_file, tmp_path):
+    """기대가 0.2인데 3건 나오면 15배가 되지만, 그건 표본이 아니라 우연이다."""
+    log = _org_payload(result_file, tmp_path, [
+        ("A팀", "case20", 20), ("A팀", "case8", 1),
+        ("B팀", "case8", 2), ("B팀", "case20", 1)])
+    tab = render(log).tabs[1]
+
+    assert len(tab.get("dataframe")) == 2, "표본이 작은 조합이 목록에 올랐다"
+    assert any("이상" in str(c.value) for c in tab.info), [c.value for c in tab.info]
+
+
+def test_a_scheme_lands_on_the_axis_its_values_match(result_file, tmp_path):
+    """붙는 자리는 판별 결과가 정한다. 파일 이름이 정하는 것이 아니다.
+
+    두 번째 파일을 무조건 "직급"에 붙이고 있었다. job_class 는 보통 직무
+    (db_job_name) 체계라, 상자에는 직급이라 써 놓고 직무를 걸러 주고 있었다.
+    값으로 판별해 놓고 그 결과를 쓰지 않으면 판별 자체가 무의미하다.
+    """
+    payload = json.loads(result_file.read_text(encoding="utf-8"))
+    users = payload["analysis_results"]
+    for i, user in enumerate(users):
+        user["db_job_name"] = ["해외영업", "인사운영"][i % 2]
+        user["db_position_name"] = ["과장", "차장"][i % 2]
+    log = tmp_path / "org.json"
+    log.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    # 값이 db_job_name 과 맞는 체계다. 이름은 job_class 지만 직무 체계다.
+    scheme = tmp_path / "job.json"
+    scheme.write_text(json.dumps({"job_classes": [
+        {"id": 1, "name": "사업", "subclasses": [{"name": "영업", "items": ["해외영업"]}]},
+        {"id": 2, "name": "경영지원", "subclasses": [{"name": "인사", "items": ["인사운영"]}]},
+    ]}, ensure_ascii=False), encoding="utf-8")
+
+    at = render(log, "--job-class", str(scheme))
+    keys = {w.key for w in at.sidebar.multiselect}
+    assert "직무:대분류" in keys, f"직무 축에 안 붙었다: {sorted(keys)}"
+    assert "직급:대분류" not in keys, f"직무 체계가 직급 상자로 갔다: {sorted(keys)}"
+
+
+def test_the_rank_axis_reads_db_position_name(result_file, tmp_path):
+    """직급은 db_position_name 이다. job_grade 가 아니다.
+
+    이름이 비슷해서 job_grade 를 읽고 있었는데, 그쪽은 이 화면이 쓰지 않는
+    인사 코드값이라 직급 상자가 엉뚱한 값으로 채워진다.
+    """
+    payload = json.loads(result_file.read_text(encoding="utf-8"))
+    for user in payload["analysis_results"]:
+        user["job_grade"] = "G3"
+        user["db_position_name"] = "과장"
+    log = tmp_path / "rank.json"
+    log.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    picker = next(m for m in render(log).sidebar.multiselect if m.label == "직급")
+    assert list(picker.options) == ["과장"], picker.options
+
+
+def test_distribution_charts_get_a_full_row_each(result_file, tmp_path):
+    """반 폭에 나란히 두면 19종짜리 가로 막대의 라벨이 잘린다.
+
+    이 탭에서 읽는 것은 "무엇이 제일 많나" 하나인데, 그걸 보려고 잘린 라벨을
+    짚어야 했다. 세로로 쌓으면 스크롤이 늘지만 한 눈에 읽힌다 - 스크롤이 더 싸다.
+    """
+    tab = render(_with_cases(result_file, tmp_path, SPREAD)).tabs[0]
+    # 맨 위 지표 줄은 열을 쓴다. 재려는 것은 **차트**가 열에 갇혔는가다.
+    assert not [c for c in tab.get("column") if c.get("vega_lite_chart")], \
+        "차트가 아직 열에 나뉘어 있다"
+
+    specs = [json.loads(c.proto.spec) for c in tab.get("vega_lite_chart")]
+    assert len(specs) == 3, [s.get("height") for s in specs]   # case · type · 누적
+
+    # 종 수는 필터에 따라 매번 달라진다. 고정 높이를 주면 3종일 때 막대가
+    # 통통해지고 20종일 때 라벨이 겹친다.
+    failures = {c for c in SPREAD if c not in ("case0", "unclassified")}
+    assert specs[0]["height"] == 26 * len(failures) + 60, specs[0]["height"]
+
+    # 정렬 기준이 서로 다르면 같은 데이터가 다른 이야기로 읽힌다.
+    for spec in specs[:2]:
+        assert spec["encoding"]["y"]["sort"] == {"field": "건수", "order": "descending"}, spec
+
+
+def test_distribution_drops_non_failures_from_the_denominator(result_file, tmp_path):
+    """case0 은 실패가 아니고 unclassified 는 어느 유형인지 모르는 턴이다.
+
+    섞어 두면 "case20 22%" 가 "실패 중 22%" 로 읽히는데 실제로는 "판정된 턴 중
+    22%" 다. 다른 숫자를 같은 말로 읽게 만드는 것이라, 보기 좋고 나쁘고가 아니다.
+    """
+    tab = render(_with_cases(result_file, tmp_path, SPREAD)).tabs[0]
+
+    counted = {c: SPREAD.count(c) for c in set(SPREAD)}
+    shown = {m.label: m.value for m in tab.metric}
+    assert shown["필터 오탐"] == f"{counted['case0']}건", shown
+    assert shown["판정 실패"] == f"{counted['unclassified']}건", shown
+    assert shown["실패"] == f"{len(SPREAD) - counted['case0'] - counted['unclassified']}건", shown
+
+    # 지표만 맞고 차트는 그대로일 수 있다. 막대 수로 확인한다 - 높이가 종 수에
+    # 비례하므로, 뺀 둘이 막대로 남아 있으면 높이가 어긋난다.
+    failures = {c for c in SPREAD if c not in ("case0", "unclassified")}
+    height = json.loads(tab.get("vega_lite_chart")[0].proto.spec)["height"]
+    assert height == 26 * len(failures) + 60, f"막대 {len(failures)}개가 아니다: {height}"
+
+
+def test_distribution_colors_carry_confidence_and_composition(result_file, tmp_path):
+    """case25(상식 오답)는 판정자의 사전지식에 기대고 case8(출력 잘림)은 코드가
+    판정한다. 같은 길이의 막대로 나란히 있으면 같은 무게로 읽힌다.
+
+    type 차트는 case 차트의 롤업이라, 그냥 막대면 같은 말을 한 번 더 한다.
+    """
+    tab = render(_with_cases(result_file, tmp_path, SPREAD)).tabs[0]
+    specs = [json.loads(c.proto.spec) for c in tab.get("vega_lite_chart")]
+
+    assert specs[0]["encoding"]["color"]["field"] == "신뢰", specs[0]["encoding"]
+    assert specs[1]["encoding"]["color"]["field"] == "case", specs[1]["encoding"]
+
+    # 상위 몇 종이 절반인지 - 막대만으로는 안 나오는 답이다.
+    assert any("누적" in str(c.value) for c in tab.caption), [c.value for c in tab.caption]
+
+
+def test_the_case_tab_can_narrow_to_one_case(result_file, tmp_path):
+    """한 유형만 훑는 것과 섞어 훑는 것은 다른 일이다.
+
+    "case20 이 왜 이렇게 많지"는 case20 만 연달아 봐야 답이 나오고, "이 데이터가
+    대체로 어떤가"는 섞어 봐야 한다. 사이드바 case 필터로도 좁힐 수 있지만
+    그건 모든 탭에 걸려서 분포·조직 탭까지 한 유형이 된다 - 비교 대상이 사라진다.
+    """
+    log = _with_cases(result_file, tmp_path, SPREAD)
+    at = render(log)
+
+    def position(at):
+        return next(m.value for m in at.tabs[3].markdown
+                    if m.value.startswith("**") and "/" in m.value)
+
+    pick = next(s for s in at.tabs[3].selectbox if s.label == "케이스")
+    # value 는 원값, options 는 format_func 을 거친 문자열이다.
+    assert pick.value == "(전체)", pick.value
+    assert any(str(o).startswith("전체 (") for o in pick.options), pick.options
+    assert position(at).endswith(f"/ {len(SPREAD)}**"), position(at)
+
+    # 유형별 건수가 고르는 자리에 있어야 한다 - 없으면 골라 보고서야 안다.
+    assert any("case20" in str(o) for o in pick.options), pick.options
+
+    pick.set_value("case20"); at.run()
+    assert position(at).endswith(f"/ {SPREAD.count('case20')}**"), position(at)
+
+    # 자리를 그대로 두면 엉뚱한 케이스를 보고 있게 된다.
+    assert position(at).startswith("**1 /"), position(at)
+
+    # format_func 이 view 를 잡고 있으면 좁힌 뒤의 건수로 라벨을 그려서
+    # "전체 (8건)" 이 "전체 (2건)" 이 된다 - 고르는 자리가 고른 결과를 보여준다.
+    pick = next(s for s in at.tabs[3].selectbox if s.label == "케이스")
+    assert f"전체 ({len(SPREAD)}건)" in pick.options, pick.options
+
+    pick.set_value("(전체)"); at.run()
+    assert position(at).endswith(f"/ {len(SPREAD)}**"), position(at)
+
+
+def test_the_case_filter_lists_cases_in_number_order(result_file, tmp_path):
+    """표는 번호순인데 고르는 자리가 아니면, 표에서 본 케이스를 못 찾는다.
+
+    sorted() 는 문자열로 정렬해서 case10 을 case2 앞에 놓는다. 두 자리가 같은
+    키를 쓰게 해서 맞춘다.
+    """
+    # fixture 는 스텁 판정이라 case 가 한 종류뿐이다. 그대로 재면 문자열 정렬로
+    # 되돌려도 통과한다 - 어긋나려면 case2 와 case10 이 같이 있어야 한다.
+    payload = json.loads(result_file.read_text(encoding="utf-8"))
+    turns = [t for u in payload["analysis_results"]
+             for c in u["conversations"] for t in c["turns"]]
+    for turn, case in zip(turns, ["case10", "case2", "case21", "case9"] * 4):
+        turn["classification"]["case_id"] = case
+    mixed = tmp_path / "mixed_cases.json"
+    mixed.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    picker = next(m for m in render(mixed).sidebar.multiselect if m.label == "case")
+    # options 는 format_func 을 거친 뒤라 "case2 · 지원하지 않는 포맷 요구" 로 온다.
+    numbers = [int(m.group(1)) for m in
+               (re.match(r"case(\d+)", str(o)) for o in picker.options) if m]
+    assert len(numbers) >= 4, f"섞인 case 가 안 들어갔다: {picker.options}"
+    assert numbers == sorted(numbers), f"번호순이 아니다: {picker.options}"
+
+
+def test_narrow_columns_box_sooner_than_the_wide_one(result_file, tmp_path):
+    """세 상자가 1:3:1 이라 담기는 글자 수가 다르다.
+
+    좁은 칸은 한 줄에 3분의 1밖에 안 들어간다. 같은 임계값을 쓰면 좁은 칸은
+    넘쳐도 안 잡히고, 넓은 칸은 안 넘쳤는데 잘린 것처럼 보인다.
+    """
+    def hints(at):
+        return [str(c.value) for c in at.tabs[3].caption if "스크롤" in str(c.value)]
+
+    payload = json.loads(result_file.read_text(encoding="utf-8"))
+    turns = [t for u in payload["analysis_results"]
+             for c in u["conversations"] for t in c["turns"]]
+    # 넓은 칸(3)에는 안 넘치고 좁은 칸(1)에는 넘치는 길이.
+    middling = "가나다라마바사아자차카타파하 " * 12          # 180자
+    for turn in turns:
+        turn["llm_ans_on_last_q"] = middling
+        turn["current_query"] = middling
+        turn["pre_queries"] = [middling]
+    log = tmp_path / "middling.json"
+    log.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    found = hints(render(log))
+    assert len(found) == 2, f"앞 질문·불만만 상자에 담겨야 한다: {found}"
+    assert all("180자" in h for h in found), found
 
 
 def test_a_long_answer_is_boxed_and_scrolls(result_file, tmp_path):
