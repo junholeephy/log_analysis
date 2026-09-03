@@ -44,6 +44,15 @@ def _check(checks: dict[str, Check], name: str) -> Optional[Check]:
     return checks.get(name)
 
 
+# (불만 라벨, 검증기 이름, case). 요구를 어긴 것은 불만이 그쪽을 가리키면 주
+# 라벨이 되고, 아니면 secondary 로 남는다.
+REQUEST_CASES = [
+    ("format", "format", "case12"),
+    ("language", "language", "case10"),
+    ("length", "length", "case11"),
+]
+
+
 def _requested_but_broken(checks: dict[str, Check], name: str) -> Optional[bool]:
     """코드 검증 결과를 삼값으로. None 이면 그런 요구가 없었다는 뜻이다."""
     check = _check(checks, name)
@@ -75,14 +84,33 @@ def secondary_from(obs: Observation, checks: dict[str, Check]) -> list[str]:
         extra.append("case24")         # 인용 표기 오류
     # 실제 질문은 도메인과 계산이 겹치는 경우가 흔하다("5영업일 뒤가 언제냐").
     # question_domain 은 하나만 고를 수 있으므로, 등식 오류는 부가로 따로 잡는다.
-    arithmetic = _check(checks, "arithmetic")
-    if arithmetic is not None and arithmetic.violated:
-        extra.append("case26")         # 계산 오류
+    for name in ("arithmetic", "dates"):
+        wrong = _check(checks, name)
+        if wrong is not None and wrong.violated and "case26" not in extra:
+            extra.append("case26")     # 계산 오류 — 날짜도 계산이다
     if obs.answer_used_history == "ignored":
         extra.append("case14")         # 이전 턴 맥락 상실
     # 복합 질문인데 일부만 답한 것은 다른 원인과 함께 성립한다.
     if obs.question_multi_intent and not obs.answer_covers_all_intents:
         extra.append("case15")         # 복합 질문 일부만 답변
+
+    # 표로 달라고 했는데 줄글로 왔고 사용자는 **내용**을 불평한 경우.
+    # 전에는 complaint_target 이 그쪽을 가리킬 때만 봐서, 어긴 사실이 통째로
+    # 사라졌다. 물어야 할 것은 "불만이 포맷에 관한 것인가"가 아니라
+    # "포맷 요구가 있었고 어겼는가"다 - 앞은 판단이고 뒤는 사실이다.
+    for target, check_name, case_id in REQUEST_CASES:
+        if obs.complaint_target == target:
+            continue               # 주 라벨로 간다. 두 번 세지 않는다
+        if _requested_but_broken(checks, check_name) is True:
+            extra.append(case_id)
+
+    # 코드가 파싱되지 않는 것도 답변에 대한 사실이다. question_domain 이 code 로
+    # 읽혔을 때만 보면, 도메인 질문에 딸려 온 SQL 이 깨져 있어도 잡히지 않는다.
+    if obs.question_domain not in ("code", "tool_usage"):
+        for name, case_id in (("python_syntax", "case27"), ("sql_shape", "case27")):
+            broken = _check(checks, name)
+            if broken is not None and broken.violated and case_id not in extra:
+                extra.append(case_id)
     return extra
 
 
@@ -180,21 +208,26 @@ def route(
     if not obs.question_answerable_as_asked:
         return done("case1", "질문만으로 답을 특정할 수 없음")
 
-    # --- 2. 답이 없거나 끊김 --------------------------------------------------
+    # --- 2. 답이 끊겼나 --------------------------------------------------------
+    #
+    # **불만을 어떻게 읽었는지와 무관하다.** 답변이 잘렸다는 것은 답변에 대한
+    # 사실이지 불만에 대한 사실이 아닌데, 전에는 complaint_target 이
+    # "no_answer" 일 때만 이 검증을 봤다. 사용자가 "내용이 틀렸다"고 쓰면 답변이
+    # 중간에서 끊겨 있어도 case8 이 나오지 않았다 - 끊긴 답변의 내용이 틀려
+    # 보이는 것은 당연한데, 그걸 내용 문제로 세면 고칠 곳을 못 찾는다.
+    truncated = _check(checks, "truncated")
+    if truncated is not None and truncated.violated:
+        return done("case8", f"답변이 중간에 끊김 — {truncated.detail}")
     if obs.complaint_target == "no_answer":
-        truncated = _check(checks, "truncated")
-        if truncated is not None and truncated.violated:
-            return done("case8", f"답변이 중간에 끊김 — {truncated.detail}")
         return done(taxonomy.UNCLASSIFIED,
                     "답이 없다는 불만인데 답변은 온전함",
                     ["서비스 끊김일 수 있으나 로그로는 판정 불가 — 별도 텔레메트리 필요"])
 
     # --- 3. 형식·언어·길이 요청 불이행 -----------------------------------------
-    REQUEST_CASES = [
-        ("format", "format", "case12"),
-        ("language", "language", "case10"),
-        ("length", "length", "case11"),
-    ]
+    #
+    # 불만이 그것을 가리킬 때만 본다. 요구가 있었는데 어겼고 사용자가 다른 것을
+    # 불평한 경우는 secondary 로 잡는다 - 주 라벨은 사용자가 실제로 겪은 것이어야
+    # 하지만, 어긴 사실 자체는 사라지면 안 된다.
     for target, check_name, case_id in REQUEST_CASES:
         if obs.complaint_target != target:
             continue
@@ -229,9 +262,10 @@ def route(
                     ["판정자의 사전지식에 의존 — 표본 검토 필요"])
 
     if obs.question_domain == "calculation":
-        arithmetic = _check(checks, "arithmetic")
-        if arithmetic is not None and arithmetic.violated:
-            return done("case26", f"등식 오류 확인 — {arithmetic.detail}")
+        for name, what in (("arithmetic", "등식"), ("dates", "날짜")):
+            wrong = _check(checks, name)
+            if wrong is not None and wrong.violated:
+                return done("case26", f"{what} 오류 확인 — {wrong.detail}")
         result = done("case26", "계산 질문에 대한 불만")
         # 식을 명시하지 않은 계산은 코드로 검증할 수 없다. high 로 두면 안 된다.
         result.confidence = "medium"

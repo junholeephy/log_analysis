@@ -90,10 +90,11 @@ def test_no_answer_complaint_but_answer_is_intact():
 # 요청 불이행 — 코드 검증이 판정을 확정한다
 # ---------------------------------------------------------------------------
 
+# length 가 빠진 이유: 그 검증기는 재기만 하고 판정하지 않는다. 길이는 기준이
+# 사용자 머릿속에 있어 코드로 가릴 수 없다 - 아래 별도 테스트에서 잰다.
 @pytest.mark.parametrize("target,check_name,case_id", [
     ("format", "format", "case12"),
     ("language", "language", "case10"),
-    ("length", "length", "case11"),
 ])
 def test_verified_violation_gives_high_confidence(target, check_name, case_id):
     result = route(
@@ -104,8 +105,22 @@ def test_verified_violation_gives_high_confidence(target, check_name, case_id):
     assert result.confidence == "high"
 
 
+def test_a_length_complaint_never_gets_high_confidence():
+    """길이 검증기는 undetermined 만 낸다.
+
+    "세 줄 이내" 요구에 149자 만연체로 답한 것이 ok 로 통과하던 자리다. 코드가
+    가릴 수 없는 것을 가린 척하면 case11 이 case10·case12 와 같은 무게로
+    집계되고, 그 숫자를 보고 프롬프트를 고치러 간다.
+    """
+    result = route(obs(complaint_target="length"),
+                   checks(length=Check("length", "undetermined", "요구 max_lines ≤ 3 · 149자")))
+    assert result.primary_case == "case11"
+    assert result.confidence == "medium", result
+    assert any("코드" in n or "LLM" in n for n in result.notes), result.notes
+
+
 @pytest.mark.parametrize("target,check_name", [
-    ("format", "format"), ("language", "language"), ("length", "length"),
+    ("format", "format"), ("language", "language"),
 ])
 def test_requirement_met_but_still_complaining_is_intent_miss(target, check_name):
     """요구를 지켰는데도 불만이면 형식 문제가 아니라 기대와 다른 것이다."""
@@ -451,3 +466,58 @@ def test_taxonomy_doc_matches_the_reachable_cases():
 
 def test_undiagnosable_cases_are_never_reachable():
     assert not (reachable_cases() & taxonomy.UNDIAGNOSABLE)
+
+
+# ---------------------------------------------------------------------------
+# 코드가 아는 사실은 불만을 어떻게 읽었는지에 갇히면 안 된다
+# ---------------------------------------------------------------------------
+
+def test_a_truncated_answer_is_case8_whatever_the_complaint_says():
+    """답변이 잘렸다는 것은 **답변**에 대한 사실이지 불만에 대한 사실이 아니다.
+
+    전에는 complaint_target 이 "no_answer" 일 때만 이 검증을 봤다. 사용자가
+    "내용이 틀렸다"고 쓰면 답변이 중간에서 끊겨 있어도 case8 이 안 나왔는데,
+    끊긴 답변의 내용이 틀려 보이는 것은 당연하다 - 그걸 내용 문제로 세면
+    고칠 곳을 못 찾는다.
+    """
+    cut = Check("truncated", "violated", "종결 부호 없이 끝남: …'그리고 재발'")
+    for target in ("content_missing", "content_wrong", "no_answer", "tone"):
+        got = route(obs(complaint_target=target), checks(truncated=cut))
+        assert got.primary_case == "case8", f"{target} -> {got.primary_case}"
+
+
+def test_broken_code_counts_even_when_the_question_is_not_a_code_question():
+    """도메인 질문에 딸려 온 SQL 이 깨져 있어도 잡혀야 한다.
+
+    question_domain 이 code 로 읽혔을 때만 보면, 그 판단이 빗나가는 순간
+    결정적으로 알 수 있는 사실이 통째로 버려진다.
+    """
+    bad = Check("sql_shape", "violated", "GROUP BY 뒤가 비어 있음")
+    got = route(obs(question_domain="domain"), checks(sql_shape=bad))
+    assert "case27" in got.secondary_cases, got.secondary_cases
+
+    # code 질문이면 주 라벨로 간다. 두 번 세지 않는다.
+    got = route(obs(question_domain="code"), checks(sql_shape=bad))
+    assert got.primary_case == "case27" and "case27" not in got.secondary_cases, got
+
+
+def test_a_broken_format_request_survives_a_content_complaint():
+    """표로 달라고 했는데 줄글로 왔고 사용자는 내용을 불평한 경우.
+
+    물어야 할 것은 "불만이 포맷에 관한 것인가"(판단)가 아니라 "포맷 요구가
+    있었고 어겼는가"(사실)다. 전에는 앞을 물어서 어긴 사실이 통째로 사라졌다.
+    """
+    broke = Check("format", "violated", "요구 table 인데 해당 구조가 없음")
+    got = route(obs(complaint_target="content_missing"), checks(format=broke))
+    assert "case12" in got.secondary_cases, got.secondary_cases
+
+    # 불만이 포맷을 가리키면 주 라벨이다. secondary 로 중복되지 않는다.
+    got = route(obs(complaint_target="format"), checks(format=broke))
+    assert got.primary_case == "case12" and "case12" not in got.secondary_cases, got
+
+
+def test_a_kept_request_is_not_reported_as_broken():
+    """지킨 요구까지 부가로 달면 멀쩡한 답변이 결함으로 집계된다."""
+    kept = Check("length", "ok", "요구 max_chars ≤ 200 · 실제 150")
+    got = route(obs(complaint_target="content_missing"), checks(length=kept))
+    assert "case11" not in got.secondary_cases, got.secondary_cases
