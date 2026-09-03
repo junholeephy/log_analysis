@@ -9,6 +9,7 @@ import pytest
 from ragdiag.checks import (
     Check,
     LengthRequest,
+    check_dates,
     check_format,
     check_language,
     check_length,
@@ -19,6 +20,7 @@ from ragdiag.checks import (
     check_truncated,
     detect_language,
     extract_quotes,
+    extract_sources,
     find_pii,
     has_format,
     script_profile,
@@ -81,40 +83,48 @@ def test_no_length_request_is_not_applicable():
     assert check_length("아주 긴 답변" * 100, None).verdict == "not_applicable"
 
 
-def test_max_chars_violation():
-    check = check_length("가" * 500, LengthRequest("max_chars", 100))
-    assert check.verdict == "violated"
-    assert "실제 500" in check.detail
+def test_length_is_measured_but_never_judged():
+    """길이는 기준이 사용자 머릿속에 있어 코드로 가릴 수 없다.
 
+    503건 실측에서 길이를 요구한 20건이 전부 ok 로 나왔다. "세 줄 이내" 요구에
+    149자 만연체로 답한 것까지 통과했다 - 줄바꿈이 없어 1줄이라서다. 다른
+    검증기는 답이 텍스트 밖에 확정돼 있지만(언어는 스크립트, 날짜는 달력,
+    파이썬은 파서) 길이는 그런 것이 없다.
 
-def test_max_chars_within_limit():
-    assert check_length("가" * 50, LengthRequest("max_chars", 100)).verdict == "ok"
-
-
-def test_max_sentences_counts_korean_sentences():
-    answer = "첫 문장입니다. 둘째 문장입니다. 셋째 문장입니다."
-    assert check_length(answer, LengthRequest("max_sentences", 2)).verdict == "violated"
-    assert check_length(answer, LengthRequest("max_sentences", 3)).verdict == "ok"
-
-
-def test_vague_short_request_records_the_measurement():
-    """수치 없는 '짧게'는 임의 기준을 쓸 수밖에 없다.
-
-    그래서 실제 측정값을 detail에 남긴다. 나중에 기준을 바꿔도 LLM을 다시 돌리지 않고
-    저장된 값으로 재판정할 수 있어야 한다.
+    그래서 verdict 는 언제나 undetermined 다. "판정에 실패했다"가 아니라
+    "코드가 판정할 것이 아니다"라는 뜻이다.
     """
-    check = check_length("가" * 900, LengthRequest("vague_short"))
-    assert check.verdict == "violated"
-    assert "900자" in check.detail
-    assert "기준" in check.detail
+    long_run_on = ("연차유급휴가를 신청하시려면 먼저 그룹웨어에 접속하셔야 하며, "
+                   "인사 메뉴에서 휴가 신청을 선택하시고, 사유를 기재하신 다음, "
+                   "팀장님의 승인을 받으시면 됩니다.")
+    for request in (LengthRequest("max_lines", 3),
+                    LengthRequest("max_sentences", 5),
+                    LengthRequest("max_chars", 200),
+                    LengthRequest("vague_short"),
+                    LengthRequest("max_chars", None)):
+        got = check_length(long_run_on, request)
+        assert got.verdict == "undetermined", (request, got)
 
 
-def test_vague_short_within_threshold():
-    assert check_length("짧은 답변입니다.", LengthRequest("vague_short")).verdict == "ok"
+def test_length_records_what_was_asked_and_what_came():
+    """판정을 안 하는 대신, 사람이 볼 수 있게 남긴다.
+
+    실데이터에서 분포를 보고 기준을 정하게 되면 이 detail 만 읽으면 된다 -
+    LLM 을 다시 돌릴 필요가 없다.
+    """
+    got = check_length("가" * 900, LengthRequest("vague_short"))
+    assert "900자" in got.detail, got.detail
+    assert "짧게" in got.detail, got.detail
+
+    got = check_length("첫 문장입니다.\n둘째 문장입니다.", LengthRequest("max_chars", 200))
+    assert "max_chars ≤ 200" in got.detail, got.detail
+    assert "2문장" in got.detail and "2줄" in got.detail, got.detail
 
 
-def test_numeric_request_without_value_is_undetermined():
-    assert check_length("답변", LengthRequest("max_chars", None)).verdict == "undetermined"
+def test_no_length_request_still_records_the_measurement():
+    got = check_length("짧은 답변입니다.", None)
+    assert got.verdict == "not_applicable"
+    assert "9자" in got.detail, got.detail
 
 
 # ---------------------------------------------------------------------------
@@ -263,19 +273,60 @@ def test_fabricated_quote_is_caught():
     assert check.evidence
 
 
-def test_korean_quotation_marks_are_recognized():
-    answer = "규정은 「해외 출장 시 미주 지역의 1일 숙박비 상한은 250달러이다」 입니다."
-    assert check_quoted_spans(answer, CHUNKS).verdict == "ok"
+def test_a_document_name_is_not_compared_against_chunk_bodies():
+    """제목 부호 안은 문장이 아니라 문서 이름이다.
+
+    청크 본문에 문서명이 적혀 있을 리가 없어서, 한 통에 넣고 대조하면 **정확히
+    인용한 답변까지 위반**이 된다. 그동안 안 터진 것은 길이 덕이었다 -
+    「연차휴가 운영지침」은 정규화하면 8자라 10자 하한에 조용히 걸렸다.
+
+    청크에 출처 표기가 없으면 대조하지 않고 그렇게 적는다.
+    """
+    answer = '「정보보호정책 시행세칙」에 "국내 출장 식비는 1일 3만원을 상한으로 한다"고 되어 있습니다'
+    got = check_quoted_spans(answer, CHUNKS)
+    assert got.verdict == "ok", got
+    assert "대조 불가" in got.detail, got.detail
+
+
+def test_a_document_name_is_checked_against_the_chunk_header():
+    """운영 로그는 청크 앞에 출처를 붙여 보낸다.
+
+        "[정보보호정책 시행세칙 제7조] 사내 자료의 외부 반출은…"
+
+    그게 오면 문서명 검증이 저절로 켜진다. 부분 점수를 주지 않는 이유는 이름이
+    산문이 아니라 식별자라서다 - 「해외출장관리지침」과 「국내출장관리지침」은
+    아홉 자 중 여섯 자가 겹친다.
+    """
+    tagged = ["[정보보호정책 시행세칙 제7조] 사내 자료의 외부 반출은 보안심의를 거쳐야 한다."]
+    quote = '"사내 자료의 외부 반출은 보안심의를 거쳐야 한다"고 되어 있습니다'
+
+    assert check_quoted_spans(f"「정보보호정책 시행세칙」에 {quote}", tagged).verdict == "ok"
+
+    got = check_quoted_spans(f"「해외출장관리지침」에 {quote}", tagged)
+    assert got.verdict == "violated", got
+    assert any("해외출장관리지침" in e for e in got.evidence), got.evidence
+
+    # 짧은 이름도 봐야 한다. 문장 기준(10자)을 쓰면 「휴가규정」이 빠진다.
+    got = check_quoted_spans(f"「휴가규정」에 {quote}", tagged)
+    assert got.verdict == "violated", got
 
 
 def test_answer_without_quotes_is_not_applicable():
     assert check_quoted_spans("식비 상한은 3만원입니다.", CHUNKS).verdict == "not_applicable"
 
 
-def test_no_chunks_means_undetermined_not_violated():
-    # 대조할 문서가 없는 걸 위반으로 세면 안 된다.
+def test_no_chunks_but_a_quotation_is_a_violation():
+    """전에는 undetermined 였다. 뒤집은 이유를 남긴다.
+
+    "대조할 문서가 없는 걸 위반으로 세면 안 된다"가 옛 판단이었고, 대조 자체로
+    보면 맞다. 그런데 재는 것이 대조가 아니라 **출처 주장**이다 - 검색이 0건인데
+    문서를 인용했다면 가져올 곳이 없었는데 가져온 척한 것이다.
+
+    undetermined 로 두면 라우팅이 아무것도 하지 않아 이 신호가 조용히 사라진다.
+    case21(Retrieve 미수행)과 겹치는 자리라 특히 아깝다.
+    """
     answer = '"국내 출장 식비는 1일 3만원을 상한으로 한다"'
-    assert check_quoted_spans(answer, []).verdict == "undetermined"
+    assert check_quoted_spans(answer, []).verdict == "violated"
 
 
 def test_short_quotes_are_ignored():
@@ -387,3 +438,139 @@ def test_service_error_on_empty_answer_is_not_applicable():
     """빈 답변은 '서비스 오류'가 아니다. 잘림(case8) 쪽에서 볼 일이다."""
     assert check_service_error("").verdict == "not_applicable"
     assert check_service_error("   \n ").verdict == "not_applicable"
+
+
+def test_a_trailing_emoji_is_not_a_cut_off_answer():
+    """이모지로 끝나는 것은 완결의 신호다.
+
+    생성이 끊기면 토큰 중간에서 멈추지, 그 자리에 장식을 붙이고 멈추지 않는다.
+    한국어 답변은 마침표를 생략하고 이모지로 끝맺는 일이 흔한데, 그걸 잘림으로
+    세면 case8 이 부풀고 고칠 곳을 서비스 안정성 쪽으로 잘못 가리킨다.
+    """
+    for answer in ("도움이 되셨길 바랍니다 😊",     # 종결 부호 없음
+                   "확인해 보세요! 👍",            # 종결 부호 + 이모지
+                   "완료했습니다 ✅",
+                   "주의하세요 ⚠️",               # 이형 선택자가 뒤에 붙는다
+                   "가족 행사입니다 👨‍👩‍👧",          # ZWJ 로 이어진 것
+                   "한국 지사입니다 🇰🇷",           # 지역 표시 두 글자
+                   "잘 하셨어요 👍🏽"):             # 피부색 수정자
+        assert check_truncated(answer).verdict == "ok", answer
+
+
+def test_emoji_stripping_does_not_eat_a_closing_code_fence():
+    """백틱의 유니코드 범주가 Sk 다.
+
+    범주로 뭉뚱그려 벗겨냈다가 닫는 ``` 까지 떨어져서, 멀쩡히 닫힌 코드블록이
+    "코드블록이 닫히지 않음" 으로 뒤집혔다.
+    """
+    assert check_truncated("예시입니다.\n```python\nprint(1)\n```").verdict == "ok"
+    assert check_truncated("```sql\nSELECT 1").verdict == "violated"
+
+
+def test_an_emoji_does_not_rescue_a_sentence_cut_mid_word():
+    """이모지가 붙었다고 다 넘기면 검증기가 무력해진다."""
+    assert check_truncated("재발 방지를 위한").verdict == "violated"
+    assert check_truncated("").verdict == "undetermined"
+    # 이모지만 있는 답변은 쓸모없을지언정 끊긴 것은 아니다.
+    assert check_truncated("😊").verdict == "ok"
+
+
+# ---------------------------------------------------------------------------
+# 날짜  (case26 보강)
+# ---------------------------------------------------------------------------
+
+def test_a_date_that_is_not_on_the_calendar_is_caught():
+    """없는 날짜는 순수 할루시네이션이다.
+
+    사람이 오타로 "2월 30일"을 쓸 일은 드물고, 모델이 그럴듯한 숫자를 채울 때
+    나온다. 맥락과 무관하게 틀렸으므로 오탐이 원리적으로 없다.
+    """
+    for answer in ("건강검진은 2월 30일까지 신청하세요",
+                   "신청 마감은 13월 1일입니다",
+                   "2026-02-30 까지 제출",
+                   "2025년 2월 29일까지"):          # 2025는 평년
+        assert check_dates(answer).verdict == "violated", answer
+    assert check_dates("2024년 2월 29일까지").verdict == "ok"   # 윤년
+
+
+def test_periods_and_recurrences_are_not_dates():
+    """월과 일이 함께 있을 때만 날짜로 본다.
+
+    "30일 이내"(기간) · "매월 25일"(반복) · "5영업일"을 날짜로 읽으면 오탐이
+    쏟아진다. 실제 데이터에서 이쪽이 날짜 표현보다 훨씬 흔하다.
+    """
+    for answer in ("30일 이내에 신청하세요", "매월 25일에 지급됩니다",
+                   "정산은 5영업일 이내에 하세요", "제30일차 교육입니다"):
+        assert check_dates(answer).verdict == "not_applicable", answer
+
+
+def test_a_wrong_weekday_claim_is_caught():
+    assert check_dates("2026년 3월 13일은 금요일입니다").verdict == "ok"
+    got = check_dates("2026년 3월 13일은 목요일이니 참고하세요")
+    assert got.verdict == "violated", got
+    assert "금요일" in got.evidence[0], got.evidence
+
+
+def test_a_weekday_claim_without_a_year_is_not_judged():
+    """timestamp 의 연도를 갖다 쓰면 12월에 물어본 1월 일정에서 틀린다.
+
+    그 틀린 판정이 high 신뢰도로 나가는 것이 최악이라, 모르는 것은 모른다고 한다.
+    """
+    assert check_dates("3월 13일은 금요일입니다").verdict == "undetermined"
+    # 요일 주장이 없으면 연도가 없어도 달력 검사는 된다.
+    assert check_dates("3월 11일까지입니다").verdict == "ok"
+    assert check_dates("2월 30일까지입니다").verdict == "violated"
+
+
+def test_business_days_are_deliberately_not_judged():
+    """공휴일표 없이 주말만 빼면 설·추석에 조용히 틀린다.
+
+    틀린 판정이 high 신뢰도로 나가느니 안 보는 편이 낫다.
+    """
+    assert check_dates("출장 종료 후 5영업일 이내에 정산서를 제출한다").verdict \
+        == "not_applicable"
+
+
+def test_every_kind_of_quote_mark_is_recognised():
+    """모델이 어떤 부호를 쓸지 정해져 있지 않다.
+
+    큰따옴표만 보다가 작은따옴표·겹화살괄호로 인용한 답변을 통째로 놓쳤다.
+    여는 부호와 닫는 부호를 한 집합으로 묶어 짝이 어긋나도 잡는다 - 모델이
+    `“…"` 처럼 섞어 내는 일이 흔하다.
+    """
+    body = "모든 반출은 보안심의를 거친다"
+    for opened, closed in [('"', '"'), ("“", "”"), ("“", '"'),
+                           ("'", "'"), ("‘", "’")]:
+        assert extract_quotes(f"규정에 {opened}{body}{closed}고 되어 있습니다") == [body], \
+            (opened, closed)
+
+    # 제목 부호는 문장이 아니라 **문서 이름**이 들어가는 자리다. 대조 대상이
+    # 청크 본문이 아니라 머리의 출처 표기라 따로 뽑는다.
+    for opened, closed in [("「", "」"), ("『", "』"), ("《", "》"), ("〈", "〉")]:
+        assert extract_sources(f"{opened}휴가규정{closed}에 따르면") == ["휴가규정"], \
+            (opened, closed)
+        assert extract_quotes(f"{opened}{body}{closed}고 되어 있습니다") == []
+
+
+def test_an_apostrophe_is_not_a_quote():
+    """영어 축약형 둘 사이가 인용처럼 보인다.
+
+    "you don't need to worry, it isn't required" 는 두 어포스트로피 사이가
+    23자라, 가드가 없으면 인용으로 잡혀 원문에 없다고 판정된다.
+    """
+    assert extract_quotes("you don't need to worry, it isn't required") == []
+    # 강조가 이어져도 경계를 넘지 않는다.
+    assert extract_quotes("'연차 사용'과 '반차 사용'을 구분하세요") == []
+
+
+def test_quoting_with_no_search_results_is_a_violation():
+    """검색 결과가 0건인데 답변이 문서를 인용했다.
+
+    대조할 것이 없는 게 아니라 **가져올 곳이 없었는데 가져온 척한 것**이다.
+    전에는 undetermined 로 넘겨서 이 신호가 조용히 사라졌다.
+    """
+    got = check_quoted_spans('규정에 "미사용 연차는 이월한다"고 되어 있습니다', [])
+    assert got.verdict == "violated", got
+    assert "0건" in got.detail, got.detail
+    # 인용이 아예 없으면 여전히 해당 없음이다.
+    assert check_quoted_spans("이월 가능합니다", []).verdict == "not_applicable"

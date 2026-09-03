@@ -18,6 +18,8 @@ from __future__ import annotations
 import ast
 import json
 import re
+import unicodedata
+from datetime import date
 from dataclasses import dataclass, field
 from typing import Literal, Optional
 
@@ -101,18 +103,33 @@ def check_language(answer: str, requested: Optional[str]) -> Check:
 
 
 # ---------------------------------------------------------------------------
-# 길이  (case11)
+# 길이  (case11) — **재기만 하고 판정하지 않는다**
+#
+# 다른 검증기는 답이 텍스트 밖에 확정돼 있다. 언어는 스크립트 비율로, 날짜는
+# 달력으로, 파이썬은 파서로 정해진다. 길이는 그런 것이 없다 - 기준이 사용자
+# 머릿속에 있다.
+#
+#   "세 줄 이내로"   개행 3개? 60자×3? 요점 3개?   사람마다 다르다
+#   "다섯 문장으로"  한국어 만연체는 149자가 한 문장이다
+#   "짧게"          기준값이 없다. 정해도 임의값이다
+#
+# 실제로 그랬다. 503건에서 길이를 요구한 20건 전부 ok 가 나왔고, 그중 "세 줄
+# 이내" 요구에 149자 만연체로 답한 것까지 통과했다 - 줄바꿈이 없어 1줄이라서다.
+# VAGUE_SHORT_MAX_CHARS=400 은 최대 답변이 370자인 데이터에서 한 번도 걸리지
+# 않았다. **임의 상수 하나로 판정 실패를 덮은 것**이다.
+#
+# 그래서 측정만 남기고 판정을 버린다. verdict 는 언제나 undetermined 이고,
+# detail 에 세 측정값과 요구를 적는다. 라우팅에는 이미 경로가 있다 - 코드 근거가
+# 없으면 case 는 유지하되 신뢰도를 낮춘다. 틀린 ok 를 내는 것보다 낫다.
+#
+# 실데이터에서 분포를 보고 기준을 정하게 되면, 그때 이 detail 만 읽으면 된다.
+# LLM 을 다시 돌릴 필요가 없다.
 # ---------------------------------------------------------------------------
-
-# "짧게 답해줘"처럼 수치가 없는 요구를 판정하기 위한 기준값.
-# 임의로 정한 값이므로 실데이터로 보정해야 한다. 그때 LLM을 다시 돌리지 않아도 되도록
-# 판정 결과에 실제 측정값을 함께 남긴다.
-VAGUE_SHORT_MAX_CHARS = settings.VAGUE_SHORT_MAX_CHARS
-
-_SENTENCE_END = re.compile(r"[.!?。]|다\.|요\.")
 
 
 def count_sentences(text: str) -> int:
+    """마침표 기준. 한국어 만연체는 이 셈으로 한 문장이 된다 - 그래서 이 값으로
+    판정하지 않고 사람이 볼 수 있게 적기만 한다."""
     parts = [p for p in re.split(r"(?<=[.!?。])\s+", text.strip()) if p.strip()]
     return len(parts)
 
@@ -125,36 +142,32 @@ class LengthRequest:
     value: Optional[int] = None
 
 
-def check_length(answer: str, requested: Optional[LengthRequest]) -> Check:
-    """case11 — 짧게/N자 이내를 요구했는데 지키지 않음."""
-    if requested is None:
-        return Check("length", "not_applicable", "길이 요구 없음")
-
+def measure_length(answer: str) -> str:
     chars = len(answer.strip())
     lines = len([l for l in answer.splitlines() if l.strip()])
-    sentences = count_sentences(answer)
-    measured = f"{chars}자 · {sentences}문장 · {lines}줄"
+    return f"{chars}자 · {count_sentences(answer)}문장 · {lines}줄"
+
+
+def check_length(answer: str, requested: Optional[LengthRequest]) -> Check:
+    """case11 — 길이 요구를 **재기만 한다.** 위반 판정은 하지 않는다.
+
+    이 모듈의 다른 검증기와 성격이 다르다는 점이 중요하다. 여기서 나온
+    undetermined 는 "판정에 실패했다"가 아니라 "코드가 판정할 수 있는 것이
+    아니다"라는 뜻이다. case16(말투·어조)이 검증기 없이 관측에만 의존하는 것과
+    같은 자리인데, 길이는 숫자가 나온다는 이유로 검증기가 붙어 있었다.
+    """
+    measured = measure_length(answer)
+    if requested is None:
+        return Check("length", "not_applicable", f"길이 요구 없음 · {measured}")
 
     if requested.kind == "vague_short":
-        over = chars > settings.VAGUE_SHORT_MAX_CHARS
-        return Check(
-            "length",
-            "violated" if over else "ok",
-            f"모호한 짧게 요구 (기준 {settings.VAGUE_SHORT_MAX_CHARS}자) · {measured}",
-        )
-
-    if requested.value is None:
-        return Check("length", "undetermined", f"수치 요구인데 값이 없음 · {measured}")
-
-    actual = {"max_chars": chars, "max_sentences": sentences, "max_lines": lines}[
-        requested.kind
-    ]
-    over = actual > requested.value
-    return Check(
-        "length",
-        "violated" if over else "ok",
-        f"요구 {requested.kind} ≤ {requested.value} · 실제 {actual} · {measured}",
-    )
+        asked = "모호한 짧게 요구"
+    elif requested.value is None:
+        asked = f"{requested.kind} (값 없음)"
+    else:
+        asked = f"{requested.kind} ≤ {requested.value}"
+    return Check("length", "undetermined", f"요구 {asked} · {measured}",
+                 evidence=["길이 기준은 사용자마다 달라 코드로 판정하지 않는다"])
 
 
 # ---------------------------------------------------------------------------
@@ -213,6 +226,28 @@ def check_format(answer: str, requested: Optional[RequestedFormat]) -> Check:
 # 정상 종결로 볼 문자. 한국어 종결어미(다./요.)는 마침표가 붙으므로 별도 처리 불필요.
 _CLOSERS = tuple(".!?。」』】)]}…\"'`")
 
+# 이모지 하나를 이루는 글자들. 범주로 뭉뚱그리면 안 된다 - 백틱(`)이 Sk 라서
+# Sk 를 포함시켰다가 닫는 코드펜스(```)까지 벗겨 "코드블록이 닫히지 않음" 으로
+# 뒤집혔다. 실제로 이모지를 만드는 것만 적는다.
+#
+#   So        그림문자 본체 (😊 ✅ ⚠ 🇰 ★)
+#   FE0E/FE0F 이형 선택자 — ⚠️ 의 뒤쪽 한 글자
+#   200D      ZWJ — 👨‍👩‍👧 처럼 여러 글자를 잇는 것
+#   1F3FB~FF  피부색 수정자
+_EMOJI_JOINERS = {"\ufe0e", "\ufe0f", "\u200d"} | {chr(c) for c in range(0x1F3FB, 0x1F400)}
+
+
+def _is_pictograph(ch: str) -> bool:
+    return ch in _EMOJI_JOINERS or unicodedata.category(ch) == "So"
+
+
+def _strip_pictographs(text: str) -> str:
+    """끝에 붙은 이모지 장식을 떼어낸다. 이형 선택자·ZWJ 까지 함께 떨어진다."""
+    end = len(text)
+    while end and _is_pictograph(text[end - 1]):
+        end -= 1
+    return text[:end].rstrip()
+
 
 def check_truncated(answer: str) -> Check:
     """case8 — 답변이 문장 중간에서 끊김.
@@ -220,10 +255,21 @@ def check_truncated(answer: str) -> Check:
     한계: 정상 답변도 목록 항목이나 표로 끝나면 종결 부호가 없다. 그래서 그런
     구조를 먼저 걸러낸 뒤에만 잘림으로 본다. finish_reason 필드가 생기면
     이 휴리스틱은 필요 없어진다.
+
+    **이모지로 끝나는 것은 완결의 신호다.** 생성이 끊기면 토큰 중간에서 멈추지,
+    그 자리에 장식을 붙이고 멈추지 않는다. 그래서 종결 부호와 같은 무게로 본다 -
+    한국어 답변은 마침표를 생략하고 이모지로 끝맺는 일이 흔하다.
     """
-    text = answer.rstrip()
-    if not text:
+    raw = answer.rstrip()
+    if not raw:
         return Check("truncated", "undetermined", "답변이 비어 있음")
+
+    # 이모지를 떼고 본문을 본다. 떼지 않으면 "확인해 보세요! 👍" 처럼 마침표까지
+    # 있는 답변이 종결 부호 검사에서 떨어진다.
+    text = _strip_pictographs(raw)
+    ends_with_emoji = text != raw
+    if not text:
+        return Check("truncated", "ok", "이모지로만 이루어진 답변")
 
     last_line = text.splitlines()[-1].strip()
     # 목록·표·코드블록으로 끝나는 건 정상이다.
@@ -241,7 +287,11 @@ def check_truncated(answer: str) -> Check:
         return Check("truncated", "violated", "코드블록이 닫히지 않음")
 
     if text.endswith(_CLOSERS):
-        return Check("truncated", "ok", f"종결 부호로 끝남: {text[-1]!r}")
+        tail = " + 이모지" if ends_with_emoji else ""
+        return Check("truncated", "ok", f"종결 부호로 끝남: {text[-1]!r}{tail}")
+
+    if ends_with_emoji:
+        return Check("truncated", "ok", f"이모지로 끝남: {raw[len(text):].strip()!r}")
 
     return Check("truncated", "violated", f"종결 부호 없이 끝남: …{text[-20:]!r}")
 
@@ -336,10 +386,30 @@ def check_pii(text: str) -> Check:
 
 # verify.py 와 방향이 반대다. 거기서는 판정자의 인용을 검증하고, 여기서는
 # 챗봇 답변이 문서에서 가져왔다고 제시한 문장을 검증한다. 같은 대조 함수를 쓴다.
+#
+# 여는 부호와 닫는 부호를 한 문자 집합으로 묶어 섞여 있어도 잡는다 - 모델이
+# `“…"` 처럼 짝을 어긋나게 내는 일이 흔하다.
+#
+# 곧은 작은따옴표(')만 앞뒤로 가드를 둔다. 영어 축약형이 짝처럼 보이기 때문이다:
+#   "you don't need to worry, it isn't required"
+#      → 두 어포스트로피 사이가 23자라 인용으로 잡힌다.
+# 글자·숫자에 붙어 있으면 어포스트로피로 보고 넘어간다.
 _QUOTE_PATTERNS = [
-    re.compile(r"[“\"]([^”\"]{10,200})[”\"]"),
-    re.compile(r"[「『]([^」』]{10,200})[」』]"),
+    re.compile(r"[“\"]([^”\"]{10,200})[”\"]"),                    # 큰따옴표
+    re.compile(r"‘([^’‘]{10,200})’"),                              # 둥근 작은따옴표
+    re.compile(r"(?<![A-Za-z0-9])'([^']{10,200})'(?![A-Za-z0-9])"),  # 곧은 작은따옴표
 ]
+
+# 제목 부호. 한국어에서 이 안에 들어가는 것은 **문장이 아니라 문서 이름**이다.
+# 문장 인용과 통을 나누는 이유: 대조 대상이 다르다. 문장은 청크 본문과 맞춰야 하고
+# 문서명은 청크 머리의 출처 표기와 맞춰야 한다. 한 통에 넣고 본문과 대조하면
+# **정확히 인용한 답변까지 위반으로 나온다** - 본문에 문서명이 적혀 있을 리 없다.
+_SOURCE_PATTERNS = [re.compile(r"[「『《〈]([^」』》〉\n]{2,60})[」』》〉]")]
+
+# 청크 머리의 출처 표기. 본문 앞에 붙어서 온다:
+#   "[정보보호정책 시행세칙 제7조] 사내 자료의 외부 반출은 보안심의를 거쳐야 한다."
+# 어떤 괄호를 쓸지는 운영 로그가 정하므로 흔한 것을 모두 받는다.
+_CHUNK_SOURCE = re.compile(r"^\s*[\[\(「『《【]([^\]\)」』》】\n]{1,80})[\]\)」』》】]")
 ANSWER_QUOTE_MIN_CHARS = settings.ANSWER_QUOTE_MIN_CHARS
 # 옛 이름. verify.py 의 동명 상수와 재는 대상이 다르다 - 이쪽은 답변이 인용부호로
 # 제시한 문장, 저쪽은 판정자가 근거로 제출한 인용이다.
@@ -347,38 +417,87 @@ MIN_QUOTE_CHARS = ANSWER_QUOTE_MIN_CHARS
 
 
 def extract_quotes(answer: str) -> list[str]:
+    """답변이 인용부호로 제시한 **문장**. 제목 부호 안의 문서명은 빼고 센다."""
     quotes = []
     for pattern in _QUOTE_PATTERNS:
         quotes += [q.strip() for q in pattern.findall(answer)]
     return [q for q in quotes if len(normalize(q)) >= settings.ANSWER_QUOTE_MIN_CHARS]
 
 
-def check_quoted_spans(answer: str, chunks: list[str], threshold: float = 0.9) -> Check:
-    """case22의 검증 가능한 부분 — 답변이 인용부호로 제시한 문장이 실제 문서에 있는가.
+def extract_sources(answer: str) -> list[str]:
+    """답변이 제목 부호로 댄 **문서 이름**.
 
-    한계: 문서명·조항번호 같은 출처 표기는 검증할 수 없다. 청크에 문서 메타데이터가
-    없기 때문이다(case20와 같은 이유로 파킹). 여기서 잡는 것은 '문서에서 가져온 척한
-    문장'뿐이고, 그게 case22에서 실제로 확인 가능한 유일한 부분이다.
+    길이 하한이 문장 인용보다 훨씬 낮다. 「휴가규정」은 정규화하면 4자인데,
+    문장 기준(10자)을 그대로 쓰면 짧은 문서명이 조용히 빠진다 - 실제로
+    「연차휴가 운영지침」(8자)이 그래서 검증을 통째로 건너뛰고 있었다.
+    """
+    names = []
+    for pattern in _SOURCE_PATTERNS:
+        names += [n.strip() for n in pattern.findall(answer)]
+    return [n for n in names if len(normalize(n)) >= 2]
+
+
+def chunk_sources(chunks: list[str]) -> list[str]:
+    """청크 머리에 붙어 온 출처 표기. 없으면 빈 목록."""
+    found = []
+    for chunk in chunks:
+        m = _CHUNK_SOURCE.match(chunk)
+        if m:
+            found.append(m.group(1).strip())
+    return found
+
+
+def check_quoted_spans(answer: str, chunks: list[str], threshold: float = 0.9) -> Check:
+    """case24 — 답변이 문서에서 가져왔다고 제시한 것이 실제로 그런가.
+
+    두 가지를 따로 본다. **대조 대상이 다르기 때문이다.**
+
+    1. **문장 인용** (`"…"` `'…'`) → 청크 **본문**과 대조. 조사·띄어쓰기가 쉽게
+       달라지므로 최장 연속 일치율 90% 를 기준으로 한다.
+    2. **문서명** (`「」` `『』` `《》` `〈〉`) → 청크 **머리의 출처 표기**와 대조.
+       문서명은 산문이 아니라 식별자라 부분 점수를 주면 안 된다 - 「휴가규정」이
+       「휴가규정 시행세칙」에 1.0 으로 통과해 버린다. 대신 **포함 관계**로 본다:
+       출처 표기에는 조항까지 붙어 오므로("정보보호정책 시행세칙 제7조") 이름만
+       댄 인용도 맞다고 봐야 한다.
+
+    한 통에 넣고 본문과 대조하던 때는 **정확히 인용한 답변까지 위반**이 됐다.
+    청크 본문에 문서명이 적혀 있을 리가 없어서다. 그때 안 터진 것은 길이 덕이었다 -
+    「연차휴가 운영지침」은 정규화하면 8자라 10자 하한에 걸려 조용히 빠졌다.
+
+    청크에 출처 표기가 없으면 문서명은 **대조하지 않고 그렇게 적는다.** 운영 로그가
+    출처를 실어 보내기 시작하면 그때부터 저절로 켜진다.
     """
     quotes = extract_quotes(answer)
-    if not quotes:
+    sources = extract_sources(answer)
+    if not quotes and not sources:
         return Check("quoted_spans", "not_applicable", "답변에 인용된 문장이 없음")
     if not chunks:
-        return Check("quoted_spans", "undetermined", "대조할 문서가 없음")
+        # 검색 결과가 0건인데 답변이 문서를 인용했다. 대조할 것이 없는 게 아니라
+        # **가져올 곳이 없었는데 가져온 척한 것**이다. 전에는 undetermined 로 넘겨서
+        # 이 신호가 조용히 사라졌다 - case21(Retrieve 미수행)과 겹치는 자리다.
+        return Check("quoted_spans", "violated",
+                     f"검색 결과가 0건인데 인용 {len(quotes) + len(sources)}건",
+                     evidence=(quotes + sources)[:5])
 
-    missing = [q for q in quotes if max(match_ratio(q, c) for c in chunks) < threshold]
-    if not missing:
-        return Check("quoted_spans", "ok", f"인용 {len(quotes)}건 모두 원문과 일치")
-    return Check(
-        "quoted_spans",
-        "violated",
-        f"인용 {len(quotes)}건 중 {len(missing)}건이 원문에 없음",
-        evidence=missing[:5],
-    )
+    wrong = [f"문장: {q}" for q in quotes
+             if max(match_ratio(q, c) for c in chunks) < threshold]
+
+    known = [normalize(x) for x in chunk_sources(chunks)]
+    unchecked = ""
+    if sources and known:
+        wrong += [f"문서명: {n}" for n in sources
+                  if not any(normalize(n) in k for k in known)]
+    elif sources:
+        unchecked = f" · 문서명 {len(sources)}건은 대조 불가(청크에 출처 표기 없음)"
+
+    checked = len(quotes) + (0 if unchecked else len(sources))
+    if wrong:
+        return Check("quoted_spans", "violated",
+                     f"인용 {checked}건 중 {len(wrong)}건이 원문에 없음{unchecked}",
+                     evidence=wrong[:5])
+    return Check("quoted_spans", "ok", f"인용 {checked}건 모두 원문과 일치{unchecked}")
 
 
-# ---------------------------------------------------------------------------
-# 코드 답변  (case27, 파이썬만)
 # ---------------------------------------------------------------------------
 
 _CODE_BLOCK = re.compile(r"```(\w+)?\s*\n(.*?)```", re.S)
@@ -458,6 +577,110 @@ def check_arithmetic(answer: str, tolerance: float = 0.01) -> Check:
         return Check("arithmetic", "ok", f"등식 {len(equations)}개 확인")
     return Check("arithmetic", "violated",
                  f"등식 {len(equations)}개 중 {len(wrong)}개 오류", evidence=wrong[:5])
+
+
+# ---------------------------------------------------------------------------
+# 날짜  (case26 보강)
+#
+# check_arithmetic 과 나눠 둔 이유: 저쪽의 미덕은 **ok 가 진짜 ok** 라는 것이다.
+# 식을 계산하면 끝이라 가정이 없다. 날짜는 연도가 생략되는 등 판정할 수 없는
+# 경우가 훨씬 잦아서, 한 검증기에 섞으면 ok 가 "둘 다 맞다" 인지 "하나만 봤다"
+# 인지 구분되지 않는다.
+#
+# **답변 텍스트만 본다.** 청크도 기준일도 공휴일표도 쓰지 않는다. 로그에는
+# 계산의 기점이 없다 - 턴의 timestamp 는 "언제 물었나" 이지 기점이 아니다.
+# ---------------------------------------------------------------------------
+
+# "3월 13일" · "2026년 3월 13일". 월과 일이 **함께** 있을 때만 날짜로 본다 -
+# "30일 이내"(기간) · "매월 25일"(반복) · "제30일차"(순번)는 대상이 아니다.
+_DATE_KO = re.compile(
+    r"(?:(?P<year>\d{4})\s*년\s*)?(?P<month>\d{1,2})\s*월\s*(?P<day>\d{1,2})\s*일"
+)
+# "2026-02-30" · "2026/2/30". 연도가 붙어 있어야 날짜로 본다.
+_DATE_ISO = re.compile(r"(?P<year>\d{4})[-/](?P<month>\d{1,2})[-/](?P<day>\d{1,2})")
+
+_WEEKDAYS = "월화수목금토일"
+# 날짜 **바로 뒤**의 요일 주장만 본다. 떨어져 있으면 무엇에 대한 주장인지 모른다.
+_WEEKDAY_CLAIM = re.compile(r"[\s은는이가]*(?:요일은\s*)?(?P<weekday>[월화수목금토일])요일")
+
+
+def _valid_date(year: Optional[int], month: int, day: int) -> Optional[bool]:
+    """달력에 있는 날짜인가. 연도를 모르면 윤년을 가를 수 없어 None."""
+    if not 1 <= month <= 12:
+        return False
+    if year is None:
+        # 2월 29일은 연도에 따라 갈린다. 모르면 판정하지 않는다.
+        return None if (month, day) == (2, 29) else 1 <= day <= _LONGEST_MONTH[month]
+    try:
+        date(year, month, day)
+    except ValueError:
+        return False
+    return True
+
+
+# 연도를 모를 때 쓰는 월별 최대 일수. 2월은 위에서 따로 처리한다.
+_LONGEST_MONTH = {1: 31, 2: 29, 3: 31, 4: 30, 5: 31, 6: 30,
+                  7: 31, 8: 31, 9: 30, 10: 31, 11: 30, 12: 31}
+
+
+def _dates_in(answer: str):
+    """답변에 적힌 날짜를 (원문, 연도, 월, 일, 끝위치) 로. 연도는 없으면 None."""
+    found = []
+    for pattern in (_DATE_ISO, _DATE_KO):
+        for m in pattern.finditer(answer):
+            year = m.group("year")
+            found.append((m.group(0), int(year) if year else None,
+                          int(m.group("month")), int(m.group("day")), m.end()))
+    return found
+
+
+def check_dates(answer: str) -> Check:
+    """답변에 적힌 날짜가 달력에 있는지, 요일 주장이 맞는지 본다.
+
+    잡는 것 두 가지다.
+
+    1. **없는 날짜** — "2월 30일" · "13월 1일". 사람이 오타로 쓸 일은 드물고
+       모델이 그럴듯한 숫자를 채울 때 나온다. 맥락과 무관하게 틀렸으므로
+       오탐이 원리적으로 없다.
+    2. **요일 주장** — "2026년 3월 13일은 목요일입니다". 그레고리력 계산이라
+       확정적이다. 다만 **연도가 없으면 판정하지 않는다** - timestamp 의 연도를
+       갖다 쓰면 12월에 물어본 1월 일정에서 틀리고, 그 틀린 판정이 high 신뢰도로
+       나간다. 모르는 것을 아는 척하지 않는 편이 낫다.
+
+    영업일("5영업일 뒤")은 **일부러 보지 않는다.** 공휴일표 없이 주말만 빼면
+    설·추석에 조용히 틀린다.
+    """
+    dates = _dates_in(answer)
+    if not dates:
+        return Check("dates", "not_applicable", "답변에 날짜 표기가 없음")
+
+    wrong, unknown = [], 0
+    for text, year, month, day, end in dates:
+        ok = _valid_date(year, month, day)
+        if ok is False:
+            wrong.append(f"{text} — 달력에 없는 날짜")
+            continue
+        if ok is None:
+            unknown += 1
+            continue
+
+        claim = _WEEKDAY_CLAIM.match(answer, end)
+        if claim is None:
+            continue
+        if year is None:
+            unknown += 1
+            continue
+        actual = _WEEKDAYS[date(year, month, day).weekday()]
+        if claim.group("weekday") != actual:
+            wrong.append(f"{text}{claim.group(0)} — 실제 {actual}요일")
+
+    if wrong:
+        return Check("dates", "violated",
+                     f"날짜 {len(dates)}개 중 {len(wrong)}개 오류", evidence=wrong[:5])
+    if unknown:
+        return Check("dates", "undetermined",
+                     f"날짜 {len(dates)}개 · 연도가 없어 판정 불가 {unknown}개")
+    return Check("dates", "ok", f"날짜 {len(dates)}개 확인")
 
 
 # ---------------------------------------------------------------------------

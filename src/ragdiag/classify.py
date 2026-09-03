@@ -25,6 +25,7 @@ from ragdiag.checks import (
     Check,
     LengthRequest,
     check_arithmetic,
+    check_dates,
     check_injection,
     check_sql_shape,
     check_format,
@@ -81,6 +82,7 @@ def run_checks(case: Case, obs: Observation) -> dict[str, Check]:
         "python_syntax": check_python_syntax(case.llm_ans_on_last_q),
         "sql_shape": check_sql_shape(case.llm_ans_on_last_q),
         "arithmetic": check_arithmetic(case.llm_ans_on_last_q),
+        "dates": check_dates(case.llm_ans_on_last_q),
         "injection": check_injection(case.rag_chunks, case.llm_ans_on_last_q),
         "language": check_language(case.llm_ans_on_last_q, obs.requested_language or None),
         "format": check_format(

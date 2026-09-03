@@ -58,7 +58,9 @@ _ROWS = [
 
     # category_2 · TYPE3 의도 파악 실패
     ("case10", "요구 언어 불이행", "TYPE3", "사용자의 의도를 파악하지 못함", "category_2", "high", True),
-    ("case11", "요구 길이 불이행", "TYPE3", "사용자의 의도를 파악하지 못함", "category_2", "high", True),
+    # medium 이다. 길이만은 코드가 판정하지 않는다 - 기준이 사용자 머릿속에
+    # 있어 가릴 수 없다. case10(언어)·case12(포맷)와 같은 무게로 집계하면 안 된다.
+    ("case11", "요구 길이 불이행", "TYPE3", "사용자의 의도를 파악하지 못함", "category_2", "medium", True),
     ("case12", "요구 포맷 불이행", "TYPE3", "사용자의 의도를 파악하지 못함", "category_2", "high", True),
     ("case13", "의도와 다른 답변", "TYPE3", "사용자의 의도를 파악하지 못함", "category_2", "medium", True),
     ("case14", "이전 턴 맥락 상실", "TYPE3", "사용자의 의도를 파악하지 못함", "category_2", "medium", True),

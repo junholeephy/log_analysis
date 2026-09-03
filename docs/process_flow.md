@@ -62,7 +62,7 @@ python <저장소>/src/run.py \
 | | case | 이름 | 신뢰도 |
 |---|---|---|---|
 |  | `case10` | 요구 언어 불이행 | high |
-|  | `case11` | 요구 길이 불이행 | high |
+|  | `case11` | 요구 길이 불이행 | medium |
 |  | `case12` | 요구 포맷 불이행 | high |
 |  | `case13` | 의도와 다른 답변 | medium |
 |  | `case14` | 이전 턴 맥락 상실 | medium |
@@ -356,13 +356,14 @@ Step 1 이 내는 것        18개 (complaint_quote 만 기본값이 있고 나�
 | `service_error` | `llm_ans_on_last_q` | 자원 부족 확정 문구 (case9) |
 | `truncated` | `llm_ans_on_last_q` | 출력 잘림 (case8) |
 | `language` | `llm_ans_on_last_q` + `requested_language` | 요구 언어 불이행 (case10) |
-| `length` | `llm_ans_on_last_q` + `requested_length_*` | 요구 길이 불이행 (case11) |
+| `length` | `llm_ans_on_last_q` + `requested_length_*` | **재기만 한다** — 판정하지 않는다 (case11) |
 | `format` | `llm_ans_on_last_q` + `requested_format` | 요구 포맷 불이행 (case12) |
 | `pii` | **`pre_queries[-1]`** | 질문에 개인정보 포함 (case6) |
 | `quoted_spans` | `llm_ans_on_last_q` + `rag_chunks` | 답변이 제시한 인용문의 원문 대조 (case24) |
 | `python_syntax` | `llm_ans_on_last_q` | 파이썬 `ast.parse` (case27) |
 | `sql_shape` | `llm_ans_on_last_q` | SQL 구조 결함 (case27) |
 | `arithmetic` | `llm_ans_on_last_q` | 등식 재계산 (case26) |
+| `dates` | `llm_ans_on_last_q` | 없는 날짜·요일 주장 (case26) |
 | `injection` | `rag_chunks` + `llm_ans_on_last_q` | 문서의 숨은 지시를 수행했나 (case29) |
 
 `llm_ans_on_last_q` 는 **비판받은 답변**이다 — 불만 턴(N+1)의 답변이 아니라
@@ -381,6 +382,7 @@ Step 1 이 내는 것        18개 (complaint_quote 만 기본값이 있고 나�
 |---|---|
 | `pii` | `ok` · `violated` |
 | `service_error` `sql_shape` `arithmetic` `format` | `ok` · `violated` · `not_applicable` |
+| `dates` | `ok` · `violated` · `not_applicable` · `undetermined` |
 | `truncated` | `ok` · `violated` · `undetermined` |
 | `language` | `ok` · `violated` · `not_applicable` · `undetermined` |
 | `injection` | `violated` · `not_applicable` · `undetermined` |
@@ -417,10 +419,11 @@ LLM 이 없으니 판정은 전부 **문자열 규칙**이다. 세 갈래로 갈
 | `length` | 길이 요구 없음 | 수치 요구인데 값이 없음 | `vague_short` 는 400자 초과면 violated. 수치 요구는 글자·문장·줄 수를 세어 비교 |
 | `format` | 포맷 요구 없음 | — | 요구한 구조가 **2개 이상** 있으면 ok — 번호 목록·불릿·표(구분선 포함)·코드펜스·JSON 파싱 성공 |
 | `pii` | — | — | 정규식 5종(주민번호·휴대전화·이메일·카드·계좌) 중 하나라도 걸리면 violated |
-| `quoted_spans` | 답변에 인용부호로 감싼 문장이 없음 | 대조할 청크가 없음 | 인용마다 청크와의 최대 연속 일치율을 재서 **전부 90% 이상**이면 ok |
+| `quoted_spans` | 답변에 인용도 문서명도 없음 | — | **둘을 따로 본다.** 문장 인용(`"…"` `'…'`)은 청크 **본문**과 최대 연속 일치율 90%. 문서명(`「…」` `《…》`)은 청크 **머리의 출처 표기**와 포함 관계 — 출처 표기가 없으면 대조하지 않고 그렇게 적는다. **청크가 0건인데 인용했으면 violated** |
 | `python_syntax` | 파이썬 코드 블록 없음 | — | 블록마다 `ast.parse`. 하나라도 `SyntaxError` 면 violated |
 | `sql_shape` | SQL 코드 블록 없음 | — | 괄호 짝, `GROUP BY` 뒤 비어 있음, `SELECT` 인데 `FROM` 없음 — 구조적 결함만 본다 |
 | `arithmetic` | 검증 가능한 등식이 없음 | — | `A + B = C` 꼴을 정규식으로 뽑아 **재계산**. 오차 1% 넘으면 violated |
+| `dates` | 답변에 날짜 표기가 없음 | 연도가 없어 윤년·요일을 가를 수 없음 | `M월 D일`·`YYYY-MM-DD` 만 날짜로 본다. 달력에 없으면 violated, 날짜 뒤 요일 주장이 틀려도 violated |
 | `injection` | 문서에 지시문 패턴 없음 | 지시문은 있으나 답변에 흔적 없음 | 지시문 앞 20자가 답변에 나타나면 violated |
 
 **세 가지가 이 표의 요점이다.**
@@ -615,7 +618,7 @@ near-miss 가 전부 partial 로 새어 "문서는 어느 정도 있었다"가 �
 | 어디서 | 라우팅이 읽는 것 | 안 읽는 것 |
 |---|---|---|
 | ⑤ 관측 (18개 중 **10개**) | `complaint_target` `question_domain` `question_self_contained` `question_multi_intent` `question_answerable_as_asked` `answer_refused` `answer_covers_all_intents` `answer_actionable` `answer_used_history` `requests_unsupported_output` | `resolved_question` `unmet_need` `reasoning` `requested_language` `requested_length_kind` `requested_length_value` `requested_format` `complaint_quote` |
-| ⑥ 검증기 (11종 중 **8종**) | `service_error` `truncated` `pii` `quoted_spans` `arithmetic` `injection` + `language` `length` `format` | `python_syntax` `sql_shape` (`case27` 안에서 함께 읽는다) |
+| ⑥ 검증기 (12종 중 **12종**) | `service_error` `truncated` `pii` `quoted_spans` `arithmetic` `dates` `injection` + `language` `length` `format` `python_syntax` `sql_shape` | — |
 | ⑦ 충족도 | `verdict` | `evidence` `missing` `reasoning` |
 | ⑧ 인용 | `n_kept` `n_chunks` | `kept` `dropped` 의 내용 |
 | ⑨ 근거 활용 | `answer_used_rag` | `reasoning` |
@@ -639,7 +642,7 @@ near-miss 가 전부 partial 로 새어 "문서는 어느 정도 있었다"가 �
 | 4 | 챗봇이 낼 수 없는 형태를 요구했나 | 관측 | `case2` 지원하지 않는 포맷 요구 |
 | 5 | 질문만으로 답을 특정할 수 있나 | 관측 | `case1` 이해하기 어려운 질문 |
 | 6 | 답이 없거나 중간에 끊겼나 | 코드 | `case8` 출력 잘림 |
-| 7 | 언어·길이·포맷 요구를 지켰나 | 코드 | `case10` `case11` `case12` — 지켰는데도 불만이면 `case13` |
+| 7 | 언어·포맷 요구를 지켰나 | 코드 | `case10` `case12` — 지켰는데도 불만이면 `case13`. `case11`(길이)은 코드가 판정하지 않아 언제나 medium |
 | 8 | 말투·어조에 대한 불만인가 | 관측 | `case16` 말투·어조 불이행 |
 | 9 | 질문 성격이 도메인이 아닌가 | 관측 | `case25` `case26` `case27` |
 | 10 | `rag_chunks` 가 비어 있나 | 코드 | `case21` Retrieve 미수행 |
@@ -718,7 +721,7 @@ near-miss 가 전부 partial 로 새어 "문서는 어느 정도 있었다"가 �
 | `case8` | 출력 잘림 | high | 코드 |
 | `case9` | 서비스 자원 부족 응답 | high | 코드 · LLM 0회 |
 | `case10` | 요구 언어 불이행 | high | 관측 + 코드 |
-| `case11` | 요구 길이 불이행 | high | 관측 + 코드 |
+| `case11` | 요구 길이 불이행 | medium | 관측만 |
 | `case12` | 요구 포맷 불이행 | high | 관측 + 코드 |
 | `case13` | 의도와 다른 답변 | medium | 관측 |
 | `case14` | 이전 턴 맥락 상실 | medium | 관측 |
