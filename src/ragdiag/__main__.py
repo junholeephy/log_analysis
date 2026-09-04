@@ -120,7 +120,10 @@ def make_backend(args, config=None, trace=None):
             src[key] = flag_name or "--" + key.rsplit(".", 1)[-1].replace("_", "-")
             return flag
         if config is not None and config.get(key) is not None:
-            src[key] = f"설정 {key}"
+            # llm.env_file 로 끌어온 값은 그 사실을 적는다. "설정 llm.url" 로만
+            # 찍으면 어느 파일에 적힌 값인지 알 수 없어서, 고쳐도 안 먹는 이유를
+            # 못 찾는다 - 이 블록을 두는 이유가 그것이다.
+            src[key] = config.origins.get(key) or f"설정 {key}"
             return config.get(key)
         src[key] = "기본값"
         return default

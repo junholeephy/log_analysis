@@ -24,3 +24,6 @@ where = ["src"]
 # 운영 환경에서는 PYTHONPATH=BB/src 로 같은 일을 한다 - 공용 venv 를 건드리지 않는다.
 pythonpath = ["src"]
 testpaths = ["tests"]
+
+[project.scripts]
+ragdiag = "ragdiag.__main__:main"

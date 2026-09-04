@@ -474,10 +474,14 @@ def test_venv_peek_works_without_pyyaml(tmp_path):
 # {AA}/configs 쪽 이야기인데 자기 파일이 지켜진 줄 알게 된다.
 # ---------------------------------------------------------------------------
 
-def _fake_copy(tmp_path):
-    """sync 로 만들어진 사본을 흉내낸다. 표식은 VERSION 파일이다."""
+def _fake_copy(tmp_path, under=""):
+    """sync 로 만들어진 사본을 흉내낸다. 표식은 VERSION 파일이다.
+
+    under 로 중간 폴더를 끼울 수 있다. {AA}/{BB} 만 상정하면 {AA}/tools/vendor/{BB}
+    에서 깨지는 안내를 못 잡는다.
+    """
     work = tmp_path / "work"
-    copy = work / "log_analysis"
+    copy = work / under / "log_analysis" if under else work / "log_analysis"
     (copy / "configs").mkdir(parents=True)
     (copy / "VERSION").write_text("v9.9 abc1234\n", encoding="utf-8")
     (work / "configs").mkdir()
@@ -501,13 +505,20 @@ def test_dev_repo_is_not_treated_as_a_copy(tmp_path):
     assert synced_copy_root(repo / "configs" / "env.yaml", root=repo) is None
 
 
-def test_config_inside_a_copy_is_refused(tmp_path, monkeypatch):
-    """설정은 언제나 {AA} 에 둔다. 경고로 끝내면 이번 실행은 돌고 다음에 사라진다."""
+@pytest.mark.parametrize("under", ["", "tools/vendor"])
+def test_config_inside_a_copy_is_refused(tmp_path, monkeypatch, under):
+    """설정은 언제나 {AA} 에 둔다. 경고로 끝내면 이번 실행은 돌고 다음에 사라진다.
+
+    작업 폴더는 **실행 위치**다. 전에는 사본의 부모를 {AA} 로 쳤는데, 그건
+    {AA}/{BB} 일 때만 맞다 - {AA}/tools/vendor/{BB} 면 중간 폴더에 설정을
+    만들라고 안내하고, 거기서 실행하라고 한다.
+    """
     import ragdiag.config as mod
 
-    work, copy = _fake_copy(tmp_path)
+    work, copy = _fake_copy(tmp_path, under)
     cfg = copy / "configs" / "env.yaml"
     cfg.write_text("run:\n  workers: 2\n", encoding="utf-8")
+    monkeypatch.chdir(work)          # {AA} 에서 실행한다
 
     real = mod.synced_copy_root
     monkeypatch.setattr(mod, "synced_copy_root",
@@ -520,6 +531,10 @@ def test_config_inside_a_copy_is_refused(tmp_path, monkeypatch):
     assert f"mv {cfg} {work / 'configs' / 'env.yaml'}" in message, (
         "어디로 옮기라는지 명령 그대로 적어야 한다\n" + message)
     assert f"cd {work}" in message, "실행 위치도 알려줘야 한다"
+    # 사본까지의 경로는 실행 위치 기준이어야 한다. 사본 이름만 찍으면
+    # 중간 폴더가 낀 구조에서 그 경로가 존재하지 않는다.
+    entry = f"{under}/log_analysis" if under else "log_analysis"
+    assert f"python {entry}/src/run.py" in message, message
 
 
 def test_work_folder_config_is_found_without_the_flag(tmp_path):
@@ -814,3 +829,129 @@ def test_out_flag_overrides_the_timestamp(tmp_path):
         cwd=tmp_path)
     assert proc.returncode == 0, proc.stderr
     assert fixed.exists(), "--out 경로에 안 썼다"
+
+
+# ---------------------------------------------------------------------------
+# llm.env_file — 다른 프로젝트의 env.yaml 참조
+# ---------------------------------------------------------------------------
+
+def _serving(tmp_path, **over):
+    """vllm 주소·모델·키를 들고 있는 남의 설정 파일."""
+    block = {"base_url": "http://gpu-01:8000", "model": "qwen3.5-32b",
+             "api_key": "sk-serving"}
+    block.update(over)
+    file = tmp_path / "serving.yaml"
+    file.write_text(yaml.safe_dump({"vllm": block, "other": {"x": 1}},
+                                   allow_unicode=True), encoding="utf-8")
+    return file
+
+
+def test_env_file_fills_empty_llm_values(tmp_path, monkeypatch):
+    """여러 프로젝트가 같은 vllm 을 쓴다. 주소를 두 벌로 두면 한쪽만 고치고
+    "왜 옛 서버로 가지" 를 한참 찾게 된다."""
+    monkeypatch.chdir(tmp_path)
+    serving = _serving(tmp_path)
+    cfg = tmp_path / "env.yaml"
+    cfg.write_text(yaml.safe_dump({"llm": {"env_file": serving.name}}),
+                   encoding="utf-8")
+
+    loaded = load(cfg)
+    assert loaded.get("llm.url") == "http://gpu-01:8000"
+    assert loaded.get("llm.model") == "qwen3.5-32b"
+    assert loaded.get("llm.key") == "sk-serving"
+
+
+def test_a_direct_value_beats_the_referenced_one(tmp_path, monkeypatch):
+    """참조는 "따로 안 적으면 저기 걸 쓴다" 이지 "저기 걸로 덮어쓴다" 가 아니다."""
+    monkeypatch.chdir(tmp_path)
+    serving = _serving(tmp_path)
+    cfg = tmp_path / "env.yaml"
+    cfg.write_text(yaml.safe_dump({"llm": {
+        "env_file": serving.name, "url": "http://직접:9000"}}), encoding="utf-8")
+
+    loaded = load(cfg)
+    assert loaded.get("llm.url") == "http://직접:9000"
+    # 안 적은 것만 끌어온다.
+    assert loaded.get("llm.model") == "qwen3.5-32b"
+
+
+def test_the_referenced_value_beats_the_environment(tmp_path, monkeypatch):
+    """우선순위: CLI > 설정의 직접값 > env_file 참조값 > 환경변수.
+
+    참조값이 **설정 자리**에 앉으므로 make_backend 의 pick() 순서가 그대로
+    이 순서가 된다 - 배선을 따로 하지 않는다.
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("LLM_API_URL", "http://환경변수:7000")
+    serving = _serving(tmp_path)
+    cfg = tmp_path / "env.yaml"
+    cfg.write_text(yaml.safe_dump({"llm": {"env_file": serving.name}}),
+                   encoding="utf-8")
+
+    loaded = load(cfg)
+    assert loaded.get("llm.url") == "http://gpu-01:8000"
+
+
+def test_env_file_records_where_the_value_came_from(tmp_path, monkeypatch):
+    """"설정 llm.url" 로만 찍으면 어느 파일의 값인지 알 수 없다.
+
+    실행 조건 블록을 두는 이유가 "어느 쪽이 이겼는지" 를 보여주는 것이라,
+    출처를 잃으면 설정을 고쳐도 안 먹는 이유를 못 찾는다.
+    """
+    monkeypatch.chdir(tmp_path)
+    serving = _serving(tmp_path)
+    cfg = tmp_path / "env.yaml"
+    cfg.write_text(yaml.safe_dump({"llm": {"env_file": serving.name}}),
+                   encoding="utf-8")
+
+    origin = load(cfg).origins["llm.url"]
+    assert "serving.yaml" in origin and "vllm.base_url" in origin, origin
+
+
+def test_a_named_section_is_honoured(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    file = tmp_path / "serving.yaml"
+    file.write_text(yaml.safe_dump({"sglang": {"base_url": "http://s:8000"}}),
+                    encoding="utf-8")
+    cfg = tmp_path / "env.yaml"
+    cfg.write_text(yaml.safe_dump({"llm": {
+        "env_file": file.name, "env_file_section": "sglang"}}), encoding="utf-8")
+
+    assert load(cfg).get("llm.url") == "http://s:8000"
+
+
+def test_a_missing_env_file_dies_before_computing(tmp_path, monkeypatch):
+    """30분 돌린 뒤에 죽으면 사이클 하나를 버린다."""
+    monkeypatch.chdir(tmp_path)
+    cfg = tmp_path / "env.yaml"
+    cfg.write_text(yaml.safe_dump({"llm": {"env_file": "없는파일.yaml"}}),
+                   encoding="utf-8")
+
+    with pytest.raises(ConfigError) as e:
+        load(cfg)
+    assert "없는파일.yaml" in str(e.value)
+    assert "실행 위치" in str(e.value), str(e.value)
+
+
+def test_a_missing_section_says_what_is_in_the_file(tmp_path, monkeypatch):
+    """오타 하나로 조용히 빈 값이 되면 서버가 없다는 에러를 나중에 본다."""
+    monkeypatch.chdir(tmp_path)
+    serving = _serving(tmp_path)
+    cfg = tmp_path / "env.yaml"
+    cfg.write_text(yaml.safe_dump({"llm": {
+        "env_file": serving.name, "env_file_section": "vllmm"}}), encoding="utf-8")
+
+    with pytest.raises(ConfigError) as e:
+        load(cfg)
+    assert "vllmm" in str(e.value)
+    assert "vllm" in str(e.value) and "other" in str(e.value), str(e.value)
+
+
+def test_no_env_file_means_nothing_changes(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    cfg = tmp_path / "env.yaml"
+    cfg.write_text(yaml.safe_dump({"llm": {"url": "http://직접:9000"}}),
+                   encoding="utf-8")
+    loaded = load(cfg)
+    assert loaded.origins == {}
+    assert loaded.get("llm.model") is None

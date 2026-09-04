@@ -48,6 +48,20 @@ SPEC: dict[str, tuple[type | tuple, bool]] = {
     "paths.job_class": (str, False),
 
     "llm.backend": (str, False),
+
+    # 다른 프로젝트의 env.yaml 을 가리킨다. vllm 주소·모델·키를 이미 그쪽에
+    # 적어 두었으면 여기에 다시 적지 않는다 - 두 벌이 되면 한쪽만 고치고
+    # "왜 옛 서버로 가지" 를 한참 찾게 된다.
+    #
+    #   llm:
+    #     env_file: ../serving/configs/env.yaml
+    #     env_file_section: vllm        # 기본값
+    #
+    # 그 파일에서 <section>.base_url / model / api_key 를 가져온다.
+    # **비어 있을 때만 채운다** - 여기 직접 적은 값이 언제나 이긴다.
+    "llm.env_file": (str, False),
+    "llm.env_file_section": (str, False),
+
     "llm.url": (str, False),
     "llm.key": (str, False),
     "llm.model": (str, False),
@@ -113,10 +127,26 @@ def flatten(tree: dict, prefix: str = "") -> dict[str, Any]:
     return out
 
 
+# llm.env_file 이 채워 주는 것. 설정 키 ← 그 파일의 키.
+ENV_FILE_KEYS = {
+    "llm.url": "base_url",
+    "llm.model": "model",
+    "llm.key": "api_key",
+}
+
+DEFAULT_ENV_FILE_SECTION = "vllm"
+
+
 @dataclass
 class Config:
     values: dict[str, Any] = field(default_factory=dict)
     source: str = "(기본값)"
+    # 키 → 그 값이 어디서 왔는지. llm.env_file 로 채운 것만 담는다.
+    #
+    # 없으면 화면에 "설정 llm.url" 로만 찍혀서 **외부 파일에서 온 값인지 알 수
+    # 없다.** 실행 조건 블록을 두는 이유가 그것이라(어느 쪽이 이겼는지가 안
+    # 보이면 설정을 고쳐도 안 먹는 이유를 알 수 없다) 출처를 잃으면 안 된다.
+    origins: dict[str, str] = field(default_factory=dict)
 
     def get(self, key: str, default: Any = None) -> Any:
         value = self.values.get(key)
@@ -172,6 +202,28 @@ def validate(values: dict[str, Any]) -> list[str]:
     return problems
 
 
+def _work_folder_hint(copy: Path, file: Path) -> str:
+    """설정을 어디에 두고 어떻게 실행하라는 안내.
+
+    작업 폴더({AA})는 **실행 위치**다. 이 저장소의 다른 모든 경로가 그 규칙을
+    따르고(run.py · DEFAULT_CONFIG · sync.sh 의 pwd), 코드가 {AA} 를 알 다른
+    방법도 없다 - 아는 것은 사본({BB})의 위치뿐이다.
+
+    전에는 사본의 **부모**를 {AA} 로 쳤다. {AA}/{BB} 일 때만 맞고, 중간에 폴더가
+    끼면({AA}/tools/vendor/{BB}) 엉뚱한 자리에 설정을 만들라고 안내한다.
+    """
+    import os
+
+    work = Path.cwd()
+    try:
+        entry = os.path.relpath(copy, work)
+    except ValueError:              # 다른 드라이브. 상대 경로가 없다
+        entry = str(copy)
+    return (f"    mv {file} {work / 'configs' / file.name}\n"
+            f"    cd {work}\n"
+            f"    python {entry}/src/run.py --config configs/{file.name} ...")
+
+
 def synced_copy_root(path: Path, root: Optional[Path] = None) -> Optional[Path]:
     """이 경로가 sync 로 만들어진 사본 안에 있나. 있으면 사본 루트를 돌려준다.
 
@@ -192,6 +244,81 @@ def synced_copy_root(path: Path, root: Optional[Path] = None) -> Optional[Path]:
     return root
 
 
+def _read_yaml(file: Path, what: str) -> dict:
+    """YAML 하나를 읽어 dict 로. 문제는 계산 전에 던진다."""
+    try:
+        import yaml
+    except ImportError:
+        raise ConfigError(
+            "PyYAML 이 필요합니다.\n"
+            "  pip install PyYAML\n"
+            "  (설정 파일을 안 쓸 거면 --config 를 빼고 실행하세요)")
+    try:
+        tree = yaml.safe_load(file.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as e:
+        raise ConfigError(f"{file} 를 읽을 수 없습니다:\n  {e}")
+    if not isinstance(tree, dict):
+        raise ConfigError(f"{what}의 최상위는 키:값 이어야 합니다: {file}")
+    return tree
+
+
+def merge_env_file(values: dict[str, Any]) -> dict[str, str]:
+    """llm.env_file 이 가리키는 YAML 에서 주소·모델·키를 끌어온다.
+
+    **비어 있을 때만 채운다.** 여기 직접 적은 llm.url 이 언제나 이긴다 - 참조는
+    "따로 안 적으면 저기 걸 쓴다" 이지 "저기 걸로 덮어쓴다" 가 아니다.
+
+    make_backend 의 우선순위(CLI > 설정 > 환경변수)에서 이 값은 **설정 자리**에
+    앉는다. 그래서 배선을 따로 하지 않아도 요구한 순서가 그대로 나온다:
+
+        CLI 플래그 > 설정의 llm.* 직접값 > llm.env_file 참조값 > 환경변수
+
+    상대 경로는 **실행 위치 기준**이다. 이 저장소의 다른 경로가 전부 그러므로
+    (run.py 의 규칙) 여기만 다르게 두면 규칙이 둘이 된다.
+
+    돌려주는 것은 채운 키의 출처다. 화면에 "설정 llm.url" 로만 찍히면 외부
+    파일에서 온 값인지 알 수 없다.
+    """
+    reference = values.get("llm.env_file")
+    if not reference:
+        return {}
+
+    file = Path(reference).expanduser()
+    if not file.exists():
+        raise ConfigError(
+            f"llm.env_file 이 가리키는 파일이 없습니다: {file}\n"
+            f"  찾은 곳: {file.resolve().parent}\n"
+            f"  상대 경로는 실행 위치({Path.cwd()}) 기준입니다. "
+            f"헷갈리면 절대 경로로 적으세요.")
+
+    section = values.get("llm.env_file_section") or DEFAULT_ENV_FILE_SECTION
+    tree = _read_yaml(file, "llm.env_file")
+    block = tree.get(section)
+    if block is None:
+        raise ConfigError(
+            f"llm.env_file 에 '{section}' 섹션이 없습니다: {file}\n"
+            f"  그 파일의 최상위 키: {', '.join(map(str, tree)) or '(없음)'}\n"
+            f"  다른 이름이면 llm.env_file_section 으로 지정하세요.")
+    if not isinstance(block, dict):
+        raise ConfigError(
+            f"llm.env_file 의 '{section}' 은 키:값 이어야 합니다: {file}")
+
+    origins: dict[str, str] = {}
+    for key, name in ENV_FILE_KEYS.items():
+        if values.get(key):
+            continue                      # 직접 적은 값이 이긴다
+        found = block.get(name)
+        if found is None or found == "":
+            continue
+        if not isinstance(found, str):
+            raise ConfigError(
+                f"llm.env_file 의 {section}.{name}: 문자열이어야 하는데 "
+                f"{type(found).__name__} 가 왔습니다 ({file})")
+        values[key] = found
+        origins[key] = f"{file} 의 {section}.{name}"
+    return origins
+
+
 def load(path: Optional[str | Path]) -> Config:
     """설정을 읽고 검증한다. 문제가 있으면 계산을 시작하기 전에 던진다."""
     if path is None:
@@ -202,33 +329,18 @@ def load(path: Optional[str | Path]) -> Config:
         copy = synced_copy_root(file)
         if copy is not None:
             # 사본 안을 가리키고 있다. 여기에 만들라고 하면 다음 sync 때 지워진다.
+            work = Path.cwd()
             raise ConfigError(
                 f"설정 파일이 없습니다: {file}\n"
                 f"  여기는 sync 로 만들어진 사본 안이라 다음 교체 때 지워집니다.\n"
-                f"  설정은 작업 폴더에 둡니다: {copy.parent / 'configs' / file.name}\n"
+                f"  설정은 작업 폴더에 둡니다: {work / 'configs' / file.name}\n"
                 f"  거기서 실행하세요:\n"
-                f"    cd {copy.parent}\n"
-                f"    python {copy.name}/src/run.py --config configs/{file.name} ...")
+                + _work_folder_hint(copy, file))
         raise ConfigError(
             f"설정 파일이 없습니다: {file}\n"
             f"  configs/env.example.yaml 을 복사해 쓰세요.")
 
-    try:
-        import yaml
-    except ImportError:
-        raise ConfigError(
-            "PyYAML 이 필요합니다.\n"
-            "  pip install PyYAML\n"
-            "  (설정 파일을 안 쓸 거면 --config 를 빼고 실행하세요)")
-
-    try:
-        tree = yaml.safe_load(file.read_text(encoding="utf-8")) or {}
-    except yaml.YAMLError as e:
-        raise ConfigError(f"{file} 를 읽을 수 없습니다:\n  {e}")
-    if not isinstance(tree, dict):
-        raise ConfigError(f"{file} 의 최상위는 키:값 이어야 합니다.")
-
-    values = flatten(tree)
+    values = flatten(_read_yaml(file, "설정"))
     problems = validate(values)
     if problems:
         raise ConfigError(
@@ -240,16 +352,18 @@ def load(path: Optional[str | Path]) -> Config:
     if copy is not None:
         # 경고로 끝내면 이번 실행은 돌고 다음 sync 에 사라진다. 그 사이에 값이
         # {AA} 쪽과 갈라져도 알 방법이 없다 - 설정은 언제나 {AA} 에 둔다.
+        work = Path.cwd()
         raise ConfigError(
             f"설정이 사본 안에 있습니다: {file}\n"
             f"  {copy} 는 sync 때마다 통째로 교체됩니다. 여기 둔 설정은 다음\n"
-            f"  교체에 사라지고, 그때까지 {copy.parent / 'configs' / file.name} 와\n"
+            f"  교체에 사라지고, 그때까지 {work / 'configs' / file.name} 와\n"
             f"  갈라져 있어도 드러나지 않습니다.\n\n"
             f"  설정은 언제나 작업 폴더에 둡니다:\n"
-            f"    mv {file} {copy.parent / 'configs' / file.name}\n"
-            f"    cd {copy.parent}\n"
-            f"    python {copy.name}/src/run.py --config configs/{file.name} ...")
-    return Config(values=values, source=str(file))
+            + _work_folder_hint(copy, file))
+    # 검증을 통과한 뒤에 끌어온다. 오타가 있는 설정으로 남의 파일까지 읽으면
+    # 에러가 두 파일에 걸쳐 나와서 어느 쪽을 고칠지 흐려진다.
+    origins = merge_env_file(values)
+    return Config(values=values, source=str(file), origins=origins)
 
 
 def _install_labels(config: "Config") -> list[str]:
